@@ -1,0 +1,2 @@
+"""Hotspot update DAG placeholder."""
+

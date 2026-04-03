@@ -1,0 +1,59 @@
+# Data files
+data/raw/*.csv
+data/raw/*.parquet
+data/raw/*.gz
+*.csv
+*.parquet
+!data/sample/*.csv
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+command.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Checkpoints (store in GCS only)
+checkpoints/
+savepoints/
+mlflow-artifacts/
+
+# Data Lake local
+lake/bronze/*
+lake/silver/*
+lake/gold/*
+!data/sample/*
+
+# ML outputs
+ml/experiments/
+ml/models/local/
+mlruns/
+
+# Spark/Flink
+spark-warehouse/
+derby.log
+flink-checkpoints/
