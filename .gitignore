@@ -57,3 +57,12 @@ mlruns/
 spark-warehouse/
 derby.log
 flink-checkpoints/
+
+# GCP Keys
+.gcp/*.json
+*.p12
+
+# Windows
+Thumbs.db
+Desktop.ini
+*.log
