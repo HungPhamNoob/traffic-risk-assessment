@@ -30,7 +30,7 @@ jobs:
       - name: Run linters
         run: |
           black --check . --exclude=venv
-          flake8 . --exclude=venv,.venv
+          flake8 . --exclude=venv,.venv --config=.flake8
       
       - name: Run unit tests
         run: pytest tests/ -v --tb=short --cov=. --cov-report=xml
