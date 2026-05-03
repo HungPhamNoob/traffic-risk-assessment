@@ -2,8 +2,8 @@
 # Cài đặt: pip install -r requirements.txt
 
 # === Core ===
-python>=3.10,<3.12
-pip>=23.0
+# python>=3.10,<3.12
+# pip>=23.0
 
 # === Data Processing ===
 pandas>=2.0.0
