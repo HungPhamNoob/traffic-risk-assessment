@@ -1,0 +1,16 @@
+# .flake8
+[flake8]
+# ⚠️ QUAN TRỌNG: Dùng 88 để khớp với Black default
+max-line-length = 88
+extend-ignore = 
+    # Bỏ qua whitespace trước ':' (Black tự xử lý)
+    E203,
+    # Bỏ qua line break trước binary operator (Black tự xử lý)
+    W503,
+exclude = 
+    .git,__pycache__,.venv,venv,*.egg-info,build,dist
+
+# Per-file ignores cho DAGs có SQL dài
+per-file-ignores =
+    orchestration/dags/*.py:E501
+    serving/app/routers/*.py:E501

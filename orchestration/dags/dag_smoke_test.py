@@ -1,6 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
+from datetime import timedelta
 import logging
 
 default_args = {
@@ -28,9 +28,7 @@ def test_postgres_connection(**context):
     cur = conn.cursor()
     cur.execute("SELECT postgis_version();")
     version = cur.fetchone()[0]
-    logging.info( # noqa: E501
-        f"✅ PostGIS version: {version}"
-    )
+    logging.info(f"✅ PostGIS version: {version}")  # noqa: E501
     return {"postgis_ok": True}
 
 

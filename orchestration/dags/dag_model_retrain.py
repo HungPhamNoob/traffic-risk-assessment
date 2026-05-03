@@ -27,7 +27,6 @@ def train_and_register(ti, **context):
             "python",
             "ml/train_h2o.py",
             "--input",
-            
             feature_path,
             "--mlflow-uri",
             "http://mlflow:5000",
