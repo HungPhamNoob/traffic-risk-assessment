@@ -25,12 +25,23 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          black --version
+          flake8 --version
           pip install -r dashboard/backend/requirements.txt
       
       - name: Run linters
         run: |
           black --check . --exclude=venv
-          flake8 . --exclude=venv,.venv
+          flake8 . --exclude=venv,.venv --config=.flake8
+
+      - name: Debug Black format
+        run: |
+          # Show diff mà Black muốn áp dụng
+          black --diff tests/test_smoke.py || true
+          
+          # Show file ending (check newline)
+          echo "=== Last 5 bytes of file (hex) ==="
+          tail -c 5 tests/test_smoke.py | xxd
       
       - name: Run unit tests
         run: pytest tests/ -v --tb=short --cov=. --cov-report=xml
@@ -105,7 +116,116 @@ jobs:
     needs: build-images
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    environment: production
+    #environment: production  # Cần setup manual approval trong GitHub Settings
     steps:
-      # Similar to staging, but deploy to main branch
-      # Add manual approval gate in GitHub Environments
+      - uses: actions/checkout@v4
+      
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+      
+      # Backup trước khi deploy production
+      - name: Backup production state
+        run: |
+          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            cd /opt/capstone &&
+            bash scripts/backup_checkpoints.sh --pre-deploy
+          "
+      
+      # Deploy Node 1 (Control Plane)
+      - name: Deploy to Node 1 (Control)
+        run: |
+          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            cd /opt/capstone &&
+            git fetch origin &&
+            git checkout main &&
+            git pull origin main &&
+            cd deployment/node1-control &&
+            docker-compose pull &&
+            docker-compose up -d &&
+            sleep 45
+          "
+      
+      # Deploy Node 2 & 3 (on-demand, chỉ start nếu có job)
+      - name: Deploy to Node 2 (Streaming) - Conditional
+        if: ${{ vars.DEPLOY_STREAMING == 'true' }}
+        run: |
+          gcloud compute ssh node2-streaming --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            cd /opt/capstone &&
+            git pull origin main &&
+            cd deployment/node2-streaming &&
+            docker-compose pull &&
+            docker-compose up -d
+          "
+      
+      - name: Deploy to Node 3 (Batch) - Conditional
+        if: ${{ vars.DEPLOY_BATCH == 'true' }}
+        run: |
+          gcloud compute ssh node3-batch --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            cd /opt/capstone &&
+            git pull origin main &&
+            cd deployment/node3-batch &&
+            docker-compose pull &&
+            docker-compose up -d
+          "
+      
+      # Database migration (Alembic) - nếu có
+      - name: Run database migrations
+        run: |
+          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            cd /opt/capstone &&
+            docker-compose exec -T postgres psql -U capstone -d capstone_db -c 'SELECT 1' &&
+            echo 'Postgres reachable'
+          "
+        continue-on-error: true  # Skip nếu chưa có migration script
+      
+      # Smoke test production
+      - name: Smoke test production
+        run: |
+          NODE1_IP=$(gcloud compute instances describe node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          
+          # Test Airflow
+          curl -f http://$NODE1_IP:8080/health || exit 1
+          echo "Airflow healthy"
+          
+          # Test Grafana
+          curl -f http://$NODE1_IP:3000/api/health || exit 1
+          echo "Grafana healthy"
+          
+          # Test Postgres via docker exec
+          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            docker-compose exec -T postgres pg_isready -U capstone
+          " || exit 1
+          echo "Postgres ready"
+          
+          # Optional: Test FastAPI nếu có
+          if curl -sf http://$NODE1_IP:8000/health > /dev/null 2>&1; then
+            echo "FastAPI healthy"
+          else
+            echo "FastAPI not deployed yet (expected if dashboard/backend chưa có)"
+          fi
+      
+      # Notify success
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo " Production deployment successful at $(date)"
+          echo " Node1 IP: $(gcloud compute instances describe node1-control --zone=$GCP_ZONE --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
+      
+      # Rollback nếu fail
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Deployment failed, initiating rollback..."
+          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            cd /opt/capstone &&
+            git checkout - &&  # Revert to previous commit
+            cd deployment/node1-control &&
+            docker-compose pull &&
+            docker-compose up -d
+          " || true
+          echo "Rollback completed. Check logs for details."

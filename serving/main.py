@@ -13,5 +13,4 @@ app.include_router(whatif_router, prefix="/whatif", tags=["whatif"])
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
-	return {"status": "ok"}
-
+    return {"status": "ok"}

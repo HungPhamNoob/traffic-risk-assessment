@@ -1,7 +1,6 @@
 def main() -> None:
-	print("US producer placeholder")
+    print("US producer placeholder")
 
 
 if __name__ == "__main__":
-	main()
-
+    main()
