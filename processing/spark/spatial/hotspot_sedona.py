@@ -1,3 +1,2 @@
 def run_hotspot_job() -> None:
-	print("Hotspot Sedona placeholder")
-
+    print("Hotspot Sedona placeholder")
