@@ -25,12 +25,23 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          black --version
+          flake8 --version
           pip install -r dashboard/backend/requirements.txt
       
       - name: Run linters
         run: |
           black --check . --exclude=venv
           flake8 . --exclude=venv,.venv --config=.flake8
+
+      - name: Debug Black format
+        run: |
+          # Show diff mà Black muốn áp dụng
+          black --diff tests/test_smoke.py || true
+          
+          # Show file ending (check newline)
+          echo "=== Last 5 bytes of file (hex) ==="
+          tail -c 5 tests/test_smoke.py | xxd
       
       - name: Run unit tests
         run: pytest tests/ -v --tb=short --cov=. --cov-report=xml
