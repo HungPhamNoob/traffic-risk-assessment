@@ -23,7 +23,10 @@ def test_postgres_connection(**context):
     import psycopg2
 
     conn = psycopg2.connect(
-        host="postgres", database="capstone_db", user="capstone", password="changeme"  # Lấy từ env
+        host="postgres",
+        database="capstone_db",
+        user="capstone",
+        password="changeme",  # Lấy từ env
     )
     cur = conn.cursor()
     cur.execute("SELECT postgis_version();")
