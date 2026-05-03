@@ -19,7 +19,6 @@ def test_python_version():
 def test_requirements_importable():
     """Verify core packages có thể import"""
     try:
-        # Fix F401: Thêm noqa để báo flake8 đây là intentional import
         import pandas  # noqa: F401
         import numpy  # noqa: F401
 
