@@ -29,15 +29,41 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+  
+    # Thêm vào docker-compose.yml (trên cùng level với postgres)
+  airflow-db:
+    image: postgres:15-alpine
+    container_name: node1-airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow123
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   airflow:
     image: apache/airflow:2.9.0-python3.10
     container_name: node1-airflow
     depends_on:
-      postgres: { condition: service_healthy }
+      airflow-db:
+        condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow123@airflow-db/airflow
       - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
@@ -155,5 +181,6 @@ networks:
 
 volumes:
   postgres_data:
+  airflow_pg_data:
   prometheus_data:
   grafana_data:
