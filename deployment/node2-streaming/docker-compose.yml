@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: apache/kafka:3.6.1
+    container_name: node2-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP}:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${NODE2_INTERNAL_IP}:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /tmp/kafka-logs
+    volumes:
+      - kafka_data:/tmp/kafka-logs
+      - ./config/kafka-server.properties:/etc/kafka/server.properties:ro
+    networks:
+      - capstone-net
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  flink-jobmanager:
+    image: apache/flink:1.19.0-scala_2.12-java11
+    container_name: node2-flink-jm
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+    volumes:
+      - ../../processing/flink:/opt/flink/usrlib:ro
+      - flink_data:/opt/flink/checkpoints
+    networks:
+      - capstone-net
+    depends_on:
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/overview"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  flink-taskmanager:
+    image: apache/flink:1.19.0-scala_2.12-java11
+    container_name: node2-flink-tm
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 1536m
+    volumes:
+      - ../../processing/flink:/opt/flink/usrlib:ro
+      - flink_data:/opt/flink/checkpoints
+    networks:
+      - capstone-net
+    depends_on:
+      - flink-jobmanager
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+    restart: on-failure
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  redis:
+    image: redis:7-alpine
+    container_name: node2-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - capstone-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  capstone-net:
+    driver: bridge
+    name: capstone-net
+
+volumes:
+  kafka_data:
+  flink_data:
+  redis_data:
