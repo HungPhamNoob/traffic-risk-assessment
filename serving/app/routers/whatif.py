@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/whatif", tags=["what-if"])  # noqa: E501
 
 
 class WhatIfRequest(BaseModel):

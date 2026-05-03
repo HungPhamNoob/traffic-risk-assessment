@@ -28,7 +28,9 @@ def test_postgres_connection(**context):
     cur = conn.cursor()
     cur.execute("SELECT postgis_version();")
     version = cur.fetchone()[0]
-    logging.info(f"✅ PostGIS version: {version}")
+    logging.info( # noqa: E501
+        f"✅ PostGIS version: {version}"
+    )
     return {"postgis_ok": True}
 
 

@@ -1,6 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.google.cloud.operators.gcs import GCSToGCSOperator
+#from airflow.providers.google.cloud.operators.gcs import GCSToGCSOperator
 from datetime import datetime, timedelta
 import logging
 

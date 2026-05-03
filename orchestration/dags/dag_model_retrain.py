@@ -1,6 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 default_args = {
     "owner": "hung",
@@ -27,6 +27,7 @@ def train_and_register(ti, **context):
             "python",
             "ml/train_h2o.py",
             "--input",
+            
             feature_path,
             "--mlflow-uri",
             "http://mlflow:5000",

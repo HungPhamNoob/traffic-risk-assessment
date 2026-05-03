@@ -1,7 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 default_args = {
     "owner": "hieu",
@@ -31,16 +31,22 @@ def update_postgis(ti, **context):
     with hook.get_conn() as conn:
         with conn.cursor() as cur:
             # Clear previous hotspots for today
-            cur.execute("DELETE FROM hotspots WHERE date = %s", (context["ds"],))
+            cur.execute(
+                "DELETE FROM hotspots WHERE date = %s", 
+                (context["ds"],)
+            )
 
             # Insert new hotspots
             for h in hotspots:
                 cur.execute(
                     """
-                    INSERT INTO hotspots (lat, lon, risk_score, date, geom)
-                    VALUES (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))
-                """,
-                    (h["lat"], h["lon"], h["risk"], context["ds"], h["lon"], h["lat"]),
+                    INSERT INTO hotspots 
+                    (lat, lon, risk_score, date, geom)
+                    VALUES (%s, %s, %s, %s, ST_SetSRID
+                    (ST_MakePoint(%s, %s), 4326))
+                    """,
+                    (h["lat"], h["lon"], h["risk"], 
+                     context["ds"], h["lon"], h["lat"]),
                 )
 
     return {"updated": len(hotspots)}
