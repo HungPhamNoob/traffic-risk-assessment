@@ -107,5 +107,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: production
     steps:
-      # Similar to staging, but deploy to main branch
-      # Add manual approval gate in GitHub Environments
+      - name: Production deploy placeholder
+        run: |
+          echo "🔐 Production deploy requires manual approval"
+          echo "✅ Staging validated: ${{ needs.deploy-staging.result }}"
+          # TODO: Add production deploy steps after staging sign-off
