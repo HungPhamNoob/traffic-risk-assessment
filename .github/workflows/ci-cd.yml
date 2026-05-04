@@ -89,11 +89,14 @@ jobs:
           cache-to: type=gha,mode=max
       
       - name: Build and push Spark worker image (if needed)
+        if: ${{ hashFiles('processing/spark/Dockerfile') != '' }}
         uses: docker/build-push-action@v5
         with:
           context: ./processing/spark
           push: true
-          tags: gcr.io/${{ env.GCP_PROJECT_ID }}/spark-worker:${{ github.sha }}
+          tags: us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/spark-worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy-staging:
     needs: build-images
