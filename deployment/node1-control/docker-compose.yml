@@ -173,6 +173,43 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+    
+  fastapi-app:
+    build:
+      context: ../../dashboard/backend
+      dockerfile: Dockerfile
+    container_name: node1-fastapi
+    ports:
+      - "8000:8000"  # Expose ra ngoài để frontend gọi
+    environment:
+      - DATABASE_URL=postgresql://capstone:${POSTGRES_PASSWORD}@postgres:5432/capstone_db
+      - REDIS_URL=redis://redis:6379/0  # Nếu cần cache
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../dashboard/backend:/app:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M  # Giới hạn để không ảnh hưởng Airflow/Postgres
+          cpus: '0.5'
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   capstone-net:
