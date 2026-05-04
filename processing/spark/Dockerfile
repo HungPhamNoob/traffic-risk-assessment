@@ -1,11 +1,7 @@
-# processing/spark/Dockerfile - Placeholder (Hiếu sẽ update sau)
-FROM bitnami/spark:3.5.0-debian-11-r0
+# processing/spark/Dockerfile - CI/CD Placeholder (Hiếu update sau)
+FROM python:3.10-slim
 
-# Install Sedona + dependencies (comment lại nếu chưa cần)
-# RUN pip install apache-sedona==1.4.0 shapely==2.0.2 geopandas==0.14.0
-
-# Copy code
-COPY . /opt/spark/work-dir
-
-# Default command (override by docker-compose)
-CMD ["bin/spark-class", "org.apache.spark.deploy.worker.Worker"]
+# Install minimal Java for Spark compatibility (optional)
+RUN apt-get update && apt-get install -y \
+    openjdk-11-jre-headless \
+    && rm
