@@ -116,23 +116,31 @@ jobs:
       
       - name: Deploy to Node 1 (Control) #Checked SSH manual test OK
         run: |
-          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
-            sudo chown -R \$USER:\$USER /opt/capstone/.git 2>/dev/null || true &&
-            git config --global --add safe.directory /opt/capstone &&
+          gcloud compute ssh node1-control \
+          --zone=$GCP_ZONE \
+          --project=$GCP_PROJECT_ID \
+          --quiet \
+          --command="bash -c '
+            set -e
+            # Fix Git ownership
+            git config --global --add safe.directory /opt/capstone 2>/dev/null || true
             
-            # Continue with deploy
-            cd /opt/capstone &&
-            git fetch origin &&
-            git checkout \${{ github.ref_name }} &&
-            git pull origin \${{ github.ref_name }} &&
+            # Update repo
+            cd /opt/capstone
+            git fetch origin
+            git checkout \${{ github.ref_name }}
+            git pull origin \${{ github.ref_name }}
             
-            # Login Docker for Artifact Registry
-            gcloud auth configure-docker us-central1-docker.pkg.dev --quiet &&
+            # Auth Docker
+            gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
             
-            # Pull and start services
-            cd deployment/node1-control &&
-            docker-compose pull &&
-            docker-compose up -d &&
+            # Deploy
+            cd deployment/node1-control
+            docker-compose pull
+            docker compose up -d airflow-db 
+            docker compose exec airflow-db pg_isready -U airflow -d airflow
+            docker compose run --rm airflow airflow db upgrade
+            docker-compose up -d
           "
       
       - name: Smoke test
