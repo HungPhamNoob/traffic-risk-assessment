@@ -138,11 +138,11 @@ jobs:
             
             # Deploy
             cd deployment/node1-control
-            docker-compose pull
+            docker compose pull
             docker compose up -d airflow-db 
             docker compose exec airflow-db pg_isready -U airflow -d airflow
             docker compose run --rm airflow airflow db upgrade
-            docker-compose up -d
+            docker compose up -d
           '"
       
       - name: Smoke test
