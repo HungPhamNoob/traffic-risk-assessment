@@ -117,6 +117,7 @@ jobs:
       - name: Deploy to Node 1 (Control) #Checked SSH manual test OK
         run: |
           gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
+            git config --global --add safe.directory /opt/capstone &&
             cd /opt/capstone &&
             git pull origin develop &&
             cd deployment/node1-control &&
