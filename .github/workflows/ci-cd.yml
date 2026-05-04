@@ -70,7 +70,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: us-central1-docker.pkg.dev  
-          username: __json_key #oauth2accesstoken
+          username: _json_key #oauth2accesstoken
           password: ${{ secrets.GCP_SA_KEY }} #${{ steps.auth.outputs.access_token }}
 
       - name: Set up Docker Buildx
