@@ -114,7 +114,7 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
       
-      - name: Deploy to Node 1 (Control)
+      - name: Deploy to Node 1 (Control) #Checked SSH manual test OK
         run: |
           gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
             cd /opt/capstone &&
