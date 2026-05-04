@@ -123,7 +123,9 @@ jobs:
           --command="bash -c '
             set -e
             # Fix Git ownership
+            sudo chown -R \$(whoami):\$(whoami) /opt/capstone 2>/dev/null || true
             git config --global --add safe.directory /opt/capstone 2>/dev/null || true
+            chmod -R u+w /opt/capstone/.git 2>/dev/null || true
             
             # Update repo
             cd /opt/capstone
