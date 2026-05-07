@@ -135,6 +135,27 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+  
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: node2-kafka-ui
+    ports:
+      - "8087:8087"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: capstone-team4-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092  # Dùng service name trong Docker network
+      # Optional: Enable schema registry nếu bạn dùng sau này
+      # KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+    depends_on:
+      - kafka
+    networks:
+      - capstone-net  # Hoặc tên network hiện tại của bạn
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
 networks:
   capstone-net:
