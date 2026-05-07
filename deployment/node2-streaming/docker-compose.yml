@@ -137,7 +137,6 @@ services:
       options: { max-size: "10m", max-file: "3" }
   
   kafka-ui:
-    kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:latest  # <- Đổi sang repo chính thức mới
     container_name: node2-kafka-ui
     ports:
