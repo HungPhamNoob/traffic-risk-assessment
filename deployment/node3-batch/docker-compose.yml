@@ -7,7 +7,7 @@ services:
     command: bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "7077:7077"
-      - "8080:8080"
+      - "8080:8080" # Master UI
     environment:
       - SPARK_MASTER_HOST=spark-master
       - SPARK_MASTER_PORT=7077
@@ -22,11 +22,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G
-          cpus: '2.0'
+          memory: 1G  # ✅ Tối ưu: Master không cần nhiều RAM
+          cpus: '1.0'
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -38,9 +38,11 @@ services:
     image: bitnami/spark:3.5.1
     container_name: node3-spark-worker
     command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    ports:
+      - "8083:8081" # ✅ Fix: Map Worker UI (nội bộ là 8081) ra 8083 theo tài liệu
     environment:
       - SPARK_WORKER_CORES=2
-      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_MEMORY=5g # ✅ Tăng RAM cho Worker để chạy Sedona mượt hơn
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
       - ../../processing/spark:/opt/bitnami/spark/work-dir:ro
@@ -54,9 +56,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G
-      cpus: '2.0'
+          memory: 5G # ✅ Cấp tối đa có thể cho worker
+          cpus: '2.0'
     restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081"] # ✅ Thêm healthcheck
+      interval: 30s
+      timeout: 10s
+      retries: 3
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
