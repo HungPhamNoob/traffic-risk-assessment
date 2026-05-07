@@ -35,7 +35,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   spark-worker:
-    image: bitnami/spark:3.5.1
+    image: bitnami/spark:3.5
     container_name: node3-spark-worker
     command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     ports:
