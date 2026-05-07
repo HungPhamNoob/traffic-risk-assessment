@@ -16,11 +16,10 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
     volumes:
-      - kafka_data:/tmp/kafka-logs
-      - ./config/kafka-server.properties:/etc/kafka/server.properties:ro
+    - kafka_data:/var/lib/kafka/data
     networks:
       - capstone-net
     healthcheck:
