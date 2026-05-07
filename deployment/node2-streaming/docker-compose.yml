@@ -10,16 +10,22 @@ services:
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
+      
+      # LISTENERS: Bind cả 2 ports bên trong container
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-kafka}:9092,CONTROLLER://kafka:9093
-
+      
+      # ⚠️ ADVERTISED: CHỈ quảng bá PLAINTEXT cho external clients
+      # CONTROLLER listener KHÔNG được đưa vào đây!
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-kafka}:9092
+      
+      # QUORUM: Dùng Docker service name cho internal controller communication
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
     volumes:
     - kafka_data:/var/lib/kafka/data
     networks:
