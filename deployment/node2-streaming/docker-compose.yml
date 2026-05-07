@@ -7,6 +7,7 @@ services:
     ports:
       - "9092:9092"
     environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
@@ -16,6 +17,7 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
     volumes:
       - kafka_data:/tmp/kafka-logs
       - ./config/kafka-server.properties:/etc/kafka/server.properties:ro
@@ -96,11 +98,11 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8081/taskmanagers || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:8081/taskmanagers || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
 
   redis:
     image: redis:7-alpine
