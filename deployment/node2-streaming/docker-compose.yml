@@ -31,10 +31,11 @@ services:
     networks:
       - capstone-net
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-metadata.sh --snapshot /var/lib/kafka/data/__cluster_metadata-0/00000000000000000000.log --command \"describe --cluster\""]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 15s  # Tăng timeout
+      retries: 5    # Tăng retries
+      start_period: 40s
     deploy:
       resources:
         limits:
