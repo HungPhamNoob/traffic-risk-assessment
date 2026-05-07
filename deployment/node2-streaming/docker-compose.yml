@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   kafka:
-    image: apache/kafka:3.6.1
+    image: apache/kafka:7.6.0
     container_name: node2-kafka
     ports:
       - "9092:9092"
@@ -37,7 +37,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   flink-jobmanager:
-    image: apache/flink:1.19.0-scala_2.12-java11
+    image: flink:1.19-scala_2.12
     container_name: node2-flink-jm
     command: jobmanager
     ports:
@@ -70,7 +70,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   flink-taskmanager:
-    image: apache/flink:1.19.0-scala_2.12-java11
+    image: flink:1.19-scala_2.12
     container_name: node2-flink-tm
     command: taskmanager
     environment:
@@ -95,7 +95,7 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
-      
+
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/taskmanagers || exit 1"]
       interval: 30s
