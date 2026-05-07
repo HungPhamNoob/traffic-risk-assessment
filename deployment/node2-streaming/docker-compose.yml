@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   kafka:
-    image: apache/kafka:7.6.0
+    image: confluentinc/cp-kafka:7.6.0
     container_name: node2-kafka
     ports:
       - "9092:9092"
