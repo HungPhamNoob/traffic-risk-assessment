@@ -1,0 +1,13 @@
+{
+	"type": "record",
+	"name": "AccidentEvent",
+	"namespace": "road.accident",
+	"fields": [
+		{ "name": "event_id", "type": "string" },
+		{ "name": "source", "type": "string" },
+		{ "name": "event_time", "type": "string" },
+		{ "name": "lat", "type": "double" },
+		{ "name": "lon", "type": "double" }
+	]
+}
+

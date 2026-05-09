@@ -1,0 +1,11 @@
+{
+	"name": "road-accident-dashboard",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "echo \"init React + Deck.gl app here\"",
+		"build": "echo \"build placeholder\"",
+		"test": "echo \"test placeholder\""
+	}
+}
+

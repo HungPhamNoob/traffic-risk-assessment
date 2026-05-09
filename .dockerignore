@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data (không copy vào image)
+data/
+*.csv
+*.parquet
+*.json
+
+# Logs & temp
+*.log
+tmp/
+temp/
+
+# ML artifacts (lớn, không cần trong image dev)
+ml/models/
+ml/mlruns/
+
+# Node modules (frontend build riêng)
+dashboard/frontend/node_modules/

@@ -1,0 +1,13 @@
+{
+	"type": "record",
+	"name": "TomTomIncident",
+	"namespace": "road.accident",
+	"fields": [
+		{ "name": "incident_id", "type": "string" },
+		{ "name": "icon_category", "type": ["null", "int"], "default": null },
+		{ "name": "delay_seconds", "type": ["null", "int"], "default": null },
+		{ "name": "length_meters", "type": ["null", "int"], "default": null },
+		{ "name": "geometry_wkt", "type": "string" }
+	]
+}
+

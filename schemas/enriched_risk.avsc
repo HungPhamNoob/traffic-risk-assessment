@@ -1,0 +1,12 @@
+{
+	"type": "record",
+	"name": "EnrichedRisk",
+	"namespace": "road.accident",
+	"fields": [
+		{ "name": "event_id", "type": "string" },
+		{ "name": "risk_score", "type": "double" },
+		{ "name": "weather_code", "type": ["null", "string"], "default": null },
+		{ "name": "severity", "type": ["null", "int"], "default": null }
+	]
+}
+

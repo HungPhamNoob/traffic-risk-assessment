@@ -1,0 +1,223 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: node1-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+  
+    # Thêm vào docker-compose.yml (trên cùng level với postgres)
+  airflow-db:
+    image: postgres:15-alpine
+    container_name: node1-airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow123
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  airflow:
+    image: apache/airflow:2.9.0-python3.10
+    container_name: node1-airflow
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow123@airflow-db/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - _AIRFLOW_WWW_USER_USERNAME=${AIRFLOW_USER}
+      - _AIRFLOW_WWW_USER_PASSWORD=${AIRFLOW_PASSWORD}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../orchestration/dags:/opt/airflow/dags:ro
+      - ../../orchestration/logs:/opt/airflow/logs
+      - ../../data:/data:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "
+        airflow db upgrade &&
+        airflow users create --username ${AIRFLOW_USER} --password ${AIRFLOW_PASSWORD} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true &&
+        airflow webserver &
+        airflow scheduler
+      "
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: '1.0'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: node1-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: node1-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - capstone-net
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    container_name: node1-mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../ml/mlruns:/mlruns
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
+    command: >
+      mlflow server 
+      --host 0.0.0.0 --port 5000 
+      --backend-store-uri sqlite:////mlruns/mlflow.db 
+      --default-artifact-root gs://${GCS_BUCKET_ML:-capstone-team4-ml-artifacts}/
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    restart: on-failure
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    
+  fastapi-app:
+    build:
+      context: ../../dashboard/backend
+      dockerfile: Dockerfile
+    container_name: node1-fastapi
+    ports:
+      - "8000:8000"  # Expose ra ngoài để frontend gọi
+    environment:
+      - DATABASE_URL=postgresql://capstone:${POSTGRES_PASSWORD}@postgres:5432/capstone_db
+      - REDIS_URL=redis://redis:6379/0  # Nếu cần cache
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../dashboard/backend:/app:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M  # Giới hạn để không ảnh hưởng Airflow/Postgres
+          cpus: '0.5'
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  capstone-net:
+    driver: bridge
+    name: capstone-net
+
+volumes:
+  postgres_data:
+  airflow_pg_data:
+  prometheus_data:
+  grafana_data:

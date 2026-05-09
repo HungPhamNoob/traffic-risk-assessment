@@ -1,0 +1,79 @@
+# Streaming Pipeline Configuration
+# All settings can be overridden via environment variables
+
+kafka:
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}"
+  topics:
+    raw: "tomtom.traffic.raw"
+    enriched: "traffic.events.enriched"
+    predictions: "traffic.risk.predictions"
+    simulation_control: "simulation.control"
+    dlq: "streaming.dlq"
+  producer:
+    acks: "all"
+    retries: 3
+    batch_size: 16384
+    linger_ms: 10
+  consumer:
+    group_id: "flink-streaming"
+    auto_offset_reset: "latest"
+    enable_auto_commit: false
+
+flink:
+  checkpoint:
+    interval_ms: "${FLINK_CHECKPOINT_INTERVAL:-30000}"
+    mode: "EXACTLY_ONCE"
+    timeout_ms: 600000
+    storage_dir: "${FLINK_CHECKPOINT_DIR:-/tmp/flink-checkpoints}"
+  watermark:
+    allowed_lateness_ms: 300000  # 5 minutes
+  restart:
+    strategy: "fixed-delay"
+    attempts: 3
+    delay_ms: 10000
+
+enrichment:
+  grid:
+    cell_size_meters: 100
+    # Hanoi bounding box (can be overridden via env)
+    bounds:
+      min_lat: 20.9
+      max_lat: 21.1
+      min_lon: 105.7
+      max_lon: 106.0
+  redis:
+    enabled: true
+    host: "${REDIS_HOST:-localhost}"
+    port: "${REDIS_PORT:-6379}"
+    db: 0
+    timeout_ms: 2000
+  postgis:
+    enabled: true
+    connection_string: "${POSTGIS_CONNECTION_STRING:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-changeme}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-accident_risk}}"
+
+ml:
+  serving:
+    mode: "rest"  # rest | mojo
+    endpoint: "${MLFLOW_SERVING_ENDPOINT:-http://localhost:5000/invocations}"
+    timeout_seconds: 5
+    fallback_risk_score: -1
+    fallback_risk_level: null
+    fallback_status: "FAILED"
+
+producer:
+  simulated:
+    enabled: "${SIMULATED_PRODUCER_ENABLED:-true}"
+    throughput_per_second: 10
+    replay_from: "data/sample/"  # Path to sample data for replay
+  tomtom:
+    enabled: "${TOMTOM_PRODUCER_ENABLED:-false}"
+    api_key: "${TOMTOM_API_KEY:-}"
+    endpoints:
+      - "https://api.tomtom.com/traffic/services/4/flowSegmentData.json"
+
+metrics:
+  enabled: true
+  prometheus:
+    enabled: "${PROMETHEUS_ENABLED:-false}"
+    port: 8001
+  log_level: "${STREAMING_LOG_LEVEL:-INFO}"
