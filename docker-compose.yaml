@@ -1,0 +1,423 @@
+services:
+  # Core services for local development.
+  postgres-postgis:
+    image: postgis/postgis:15-3.3-alpine
+    container_name: dev-postgres
+    environment:
+      POSTGRES_USER: capstone
+      POSTGRES_PASSWORD: capstone123
+      POSTGRES_DB: capstone_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d:ro
+    command: >
+      postgres
+      -c max_connections=20
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U capstone -d capstone_dev"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: dev-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly no --maxmemory 64mb --maxmemory-policy allkeys-lru
+    networks:
+      - capstone-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 2s
+      retries: 2
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: dev-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 2
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+  # Optional streaming services for local Kafka/Flink tests.
+  kafka:
+    image: apache/kafka:3.6.1-alpine
+    container_name: dev-kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_RETENTION_MS: 3600000  # 1 hour cho dev
+    volumes:
+      - kafka_data:/tmp/kafka-logs
+    networks:
+      - capstone-dev
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/9092'"]
+      interval: 30s
+      timeout: 10s
+      retries: 2
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.75'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - stream
+
+  flink-jobmanager:
+    image: flink:1.18.1-scala_2.12-java11-alpine
+    container_name: dev-flink-jm
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        execution.checkpointing.interval: 0  # Disable cho dev
+        execution.checkpointing.mode: OFF
+    volumes:
+      - flink_jm_data:/tmp/flink-checkpoints
+      - ./processing/flink:/opt/flink/usrlib:ro
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - stream
+
+  flink-taskmanager:
+    image: flink:1.18.1-scala_2.12-java11-alpine
+    container_name: dev-flink-tm
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 1
+        taskmanager.memory.process.size: 512m
+        state.backend: hashmap
+    volumes:
+      - ./processing/flink:/opt/flink/usrlib:ro
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - stream
+
+  # Optional Spark services for local batch tests.
+  spark-master:
+    image: bitnami/spark:3.5.1-debian-12
+    container_name: dev-spark-master
+    command: bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_NO_DAEMONIZE=true
+    volumes:
+      - ./processing/spark:/opt/spark/work-dir:ro
+      - spark_data:/tmp/spark-work
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - batch
+
+  spark-worker:
+    image: bitnami/spark:3.5.1-debian-12
+    container_name: dev-spark-worker
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=512m
+      - SPARK_NO_DAEMONIZE=true
+      - SPARK_DRIVER_MEMORY=256m
+      - SPARK_EXECUTOR_MEMORY=256m
+    volumes:
+      - ./processing/spark:/opt/spark/work-dir:ro
+      - ./data:/data
+      - spark_data:/tmp/spark-work
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - batch
+
+  # Optional Airflow service for local DAG tests.
+  airflow:
+    image: apache/airflow:2.7.3-python3.10
+    container_name: dev-airflow
+    ports:
+      - "8082:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://capstone:capstone123@postgres-postgis:5432/capstone_dev
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - _AIRFLOW_WWW_USER_USERNAME=admin
+      - _AIRFLOW_WWW_USER_PASSWORD=admin
+    volumes:
+      - ./orchestration/dags:/opt/airflow/dags:ro
+      - ./orchestration/logs:/opt/airflow/logs
+      - .:/opt/traffic:ro
+      - ./data:/data:ro
+    depends_on:
+      postgres-postgis:
+        condition: service_healthy
+    command: >
+      bash -c "
+        airflow db upgrade &&
+        airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@local &&
+        airflow webserver &
+        airflow scheduler
+      "
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.75'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - orchestration
+
+  # Optional MLflow service for local model tracking.
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.9.2-alpine
+    container_name: dev-mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    volumes:
+      - ./ml/mlruns:/mlruns
+      - mlflow_data:/models
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:////mlruns/mlflow.db --default-artifact-root /models
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - ml
+
+  # Optional monitoring services for local observability tests.
+  prometheus:
+    image: prom/prometheus:v2.48.0-alpine
+    container_name: dev-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/monitoring/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=1d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:10.2.2-alpine
+    container_name: dev-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/monitoring/grafana:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - capstone-dev
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: on-failure
+    profiles:
+      - monitoring
+
+networks:
+  capstone-dev:
+    driver: bridge
+    name: capstone-dev
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  kafka_data:
+  flink_jm_data:
+  spark_data:
+  mlflow_data:
+  prometheus_data:
+  grafana_data:

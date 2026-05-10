@@ -1,0 +1,347 @@
+# ============================================================
+# .github/workflows/cicd.yml
+# CI/CD Pipeline for Road Accident Risk Analysis Platform
+# ============================================================
+# Triggers:
+#   - Push to main/develop/hung1 -> run full pipeline
+#   - Pull request to main/develop/hung1 -> run lint + test only
+# ============================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, hung1 ]
+  pull_request:
+    branches: [ main, develop, hung1 ]
+
+# ============================================================
+# Environment variables (not secrets)
+# ============================================================
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_ZONE: us-central1-a
+
+# ============================================================
+# Jobs
+# ============================================================
+jobs:
+
+  # ==========================================================
+  # Job 1: Lint and Test
+  # Runs on every push and pull request
+  # ==========================================================
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout code from repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Install Python and dependencies
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install black flake8 pytest pytest-cov pandas numpy pyyaml requests python-dotenv
+
+      # Step 3: Check code formatting with Black
+      - name: Check code formatting (Black)
+        run: |
+          black --check . --exclude='(\.git|\.venv|venv|vendor|data|ml/notebooks)' || {
+            echo "Black found formatting issues. Run 'black .' locally to fix."
+            exit 1
+          }
+
+      # Step 4: Check code style with Flake8
+      - name: Check code style (Flake8)
+        run: |
+          flake8 . --exclude=venv,.venv,vendor,data,ml/notebooks --max-line-length=120 --extend-ignore=E203,W503,W605
+
+      # Step 5: Run unit tests
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --tb=short
+
+  # ==========================================================
+  # Job 2: Build Docker Images
+  # Only runs on push to main/develop (not on pull requests)
+  # ==========================================================
+  build-images:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Authenticate with Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # Step 3: Login to Google Artifact Registry (Docker)
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
+
+      # Step 4: Build and push FastAPI image
+      - name: Build and push FastAPI image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dashboard/backend
+          push: true
+          tags: |
+            us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/fastapi:${{ github.sha }}
+            us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/fastapi:latest
+
+  # ==========================================================
+  # Job 3: Deploy to Cloud VMs
+  # Only runs on push to main/develop/hung1
+  # ==========================================================
+  deploy:
+    needs: build-images
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Authenticate with Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # Step 3: Setup gcloud CLI
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload .env.cloud to GCS
+        run: |
+          echo "=== Uploading .env.cloud to GCS ==="
+          echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
+          gcloud storage cp .env.cloud gs://big-data-group-4-bronze/config/.env.cloud
+          rm .env.cloud
+          echo "SUCCESS: .env.cloud uploaded."
+
+      # -------------------------------------------------------
+      # Step 4: Deploy Node 1 (Control Plane - Standard VM)
+      # -------------------------------------------------------
+      - name: Deploy to Node 1 (Control Plane)
+        run: |
+          echo "Deploying to Node 1 (Standard VM)..."
+          BRANCH="${{ github.ref_name }}"
+
+          gcloud compute ssh node1-control \
+            --zone=$GCP_ZONE \
+            --project=$GCP_PROJECT_ID \
+            --quiet \
+            --command="bash -s" << EOF
+            set -e
+
+            echo "=== Pulling latest code from Git ==="
+
+            # Fix Git permissions (in case sudo was used before)
+            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
+            git config --global --add safe.directory /opt/traffic 2>/dev/null || true
+
+            if [ ! -d /opt/traffic/.git ]; then
+                echo "=== First deployment: cloning repository ==="
+                sudo rm -rf /opt/traffic 2>/dev/null || true
+                sudo mkdir -p /opt/traffic
+                sudo chown -R $(whoami):$(whoami) /opt/traffic
+                git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+                cd /opt/traffic
+                git checkout $BRANCH
+            else
+                echo "=== Repository exists: pulling latest ==="
+                cd /opt/traffic
+                git fetch origin
+                git checkout $BRANCH
+                git pull origin $BRANCH
+            fi
+
+            echo "=== Loading cloud environment ==="
+            gcloud storage cp gs://big-data-group-4-bronze/config/.env.cloud /opt/traffic/.env.cloud
+            cp /opt/traffic/.env.cloud /opt/traffic/.env
+
+            echo "=== Logging into Docker registry ==="
+            gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+            echo "=== Starting Node 1 services and offline training bootstrap ==="
+            cd deployment/node1-control
+            docker compose --env-file /opt/traffic/.env.cloud up -d --build
+            cd /opt/traffic
+            bash scripts/gcp/run-node1.sh
+
+            echo "=== Waiting for services to be healthy ==="
+            sleep 45
+
+            echo "=== Checking service health ==="
+            cd /opt/traffic/deployment/node1-control
+            docker compose ps
+          EOF
+
+          echo "Node 1 deployment completed."
+
+      # -------------------------------------------------------
+      # Step 5: Deploy Node 2 (Streaming - Spot VM)
+      # Only if Spot VM is currently running
+      # -------------------------------------------------------
+      - name: Deploy to Node 2 (Streaming)
+        continue-on-error: true
+        if: ${{ vars.DEPLOY_STREAMING == 'true' }}
+        run: |
+          echo "Deploying to Node 2 (Spot VM)..."
+          BRANCH="${{ github.ref_name }}"
+
+          gcloud compute ssh node2-streaming \
+            --zone=$GCP_ZONE \
+            --project=$GCP_PROJECT_ID \
+            --quiet \
+            --command="bash -s" << EOF
+            set -e
+
+            echo "=== Pulling latest code ==="
+            if [ ! -d /opt/traffic/.git ]; then
+                echo "=== First deployment: cloning repository ==="
+                sudo rm -rf /opt/traffic 2>/dev/null || true
+                sudo mkdir -p /opt/traffic
+                sudo chown -R $(whoami):$(whoami) /opt/traffic
+                git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+                cd /opt/traffic
+                git checkout $BRANCH
+            else
+                echo "=== Repository exists: pulling latest ==="
+                cd /opt/traffic
+                git fetch origin
+                git checkout $BRANCH
+                git pull origin $BRANCH
+            fi
+
+            echo "=== Restarting streaming services ==="
+            gcloud storage cp gs://big-data-group-4-bronze/config/.env.cloud /opt/traffic/.env.cloud
+            cp /opt/traffic/.env.cloud /opt/traffic/.env
+            bash scripts/gcp/run-node2.sh
+
+            echo "=== Waiting for services ==="
+            sleep 20
+
+            cd /opt/traffic/deployment/node2-streaming
+            docker compose ps
+          EOF
+
+          echo "Node 2 deployment completed."
+
+        || echo "Node 2 (Spot VM) is not running. Skipping deployment."
+
+      # -------------------------------------------------------
+      # Step 6: Deploy Node 3 (Batch - Spot VM)
+      # Only if Spot VM is currently running
+      # -------------------------------------------------------
+      - name: Deploy to Node 3 (Batch)
+        continue-on-error: true
+        if: ${{ vars.DEPLOY_BATCH == 'true' }}
+        run: |
+          echo "Deploying to Node 3 (Spot VM)..."
+
+          gcloud compute ssh node3-batch \
+            --zone=$GCP_ZONE \
+            --project=$GCP_PROJECT_ID \
+            --quiet \
+            --command="bash -s" << EOF
+            set -e
+
+            echo "=== Pulling latest code ==="
+            BRANCH="${{ github.ref_name }}"
+
+            if [ ! -d /opt/traffic/.git ]; then
+                echo "=== First deployment: cloning repository ==="
+                sudo rm -rf /opt/traffic 2>/dev/null || true
+                sudo mkdir -p /opt/traffic
+                sudo chown -R $(whoami):$(whoami) /opt/traffic
+                git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+                cd /opt/traffic
+                git checkout $BRANCH
+            else
+                echo "=== Repository exists: pulling latest ==="
+                cd /opt/traffic
+                git fetch origin
+                git checkout $BRANCH
+                git pull origin $BRANCH
+            fi
+
+            echo "=== Restarting batch services ==="
+            gcloud storage cp gs://big-data-group-4-bronze/config/.env.cloud /opt/traffic/.env.cloud
+            cp /opt/traffic/.env.cloud /opt/traffic/.env
+            bash scripts/gcp/run-node3.sh
+
+            echo "=== Waiting for services ==="
+            sleep 20
+
+            cd /opt/traffic/deployment/node3-batch
+            docker compose ps
+          EOF
+
+          echo "Node 3 deployment completed."
+
+        || echo "Node 3 (Spot VM) is not running. Skipping deployment."
+
+  # ==========================================================
+  # Job 4: Smoke Test
+  # Quick check that all services are reachable after deploy
+  # ==========================================================
+  smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run smoke tests
+        run: |
+          echo "=== Getting Node 1 IP ==="
+          NODE1_IP=$(gcloud compute instances describe node1-control \
+            --zone=$GCP_ZONE \
+            --project=$GCP_PROJECT_ID \
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          echo "Node 1 IP: $NODE1_IP"
+
+          echo ""
+          echo "=== Testing Airflow (port 8080) ==="
+          curl -f http://$NODE1_IP:8080/health && echo "Airflow: OK" || echo "Airflow: FAIL"
+
+          echo ""
+          echo "=== Testing Grafana (port 3000) ==="
+          curl -f http://$NODE1_IP:3000/api/health && echo "Grafana: OK" || echo "Grafana: FAIL"
+
+          echo ""
+          echo "=== Testing MLflow (port 5000) ==="
+          curl -f http://$NODE1_IP:5000/health && echo "MLflow: OK" || echo "MLflow: FAIL"
+
+          echo ""
+          echo "=== Testing FastAPI (port 8000) ==="
+          curl -f http://$NODE1_IP:8000/health && echo "FastAPI: OK" || echo "FastAPI: FAIL"
+
+          echo ""
+          echo "=== All smoke tests completed ==="

@@ -1,10 +1,10 @@
 # tests/test_smoke.py
-"""Smoke test để verify pytest configuration"""
+"""Smoke tests for the local Python test setup."""
 import pytest
 
 
 def test_pytest_works():
-    """Test này luôn pass - dùng để verify setup"""
+    """Verify that pytest can collect and run this repository."""
     assert True
 
 
@@ -17,7 +17,7 @@ def test_python_version():
 
 
 def test_requirements_importable():
-    """Verify core packages có thể import"""
+    """Verify that core data dependencies are importable."""
     try:
         import pandas  # noqa: F401
         import numpy  # noqa: F401

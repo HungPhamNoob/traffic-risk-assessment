@@ -1,0 +1,256 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: node1-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-capstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+      POSTGRES_DB: ${POSTGRES_DB:-capstone_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-capstone} -d ${POSTGRES_DB:-capstone_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+  
+  airflow-db:
+    image: postgres:15-alpine
+    container_name: node1-airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow123
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  airflow:
+    image: apache/airflow:2.9.0-python3.10
+    container_name: node1-airflow
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow123@airflow-db/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - _AIRFLOW_WWW_USER_USERNAME=${AIRFLOW_USER:-admin}
+      - _AIRFLOW_WWW_USER_PASSWORD=${AIRFLOW_PASSWORD:-admin}
+      - PROJECT_ROOT=/opt/traffic
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../orchestration/dags:/opt/airflow/dags:ro
+      - ../../orchestration/logs:/opt/airflow/logs
+      - ../..:/opt/traffic:ro
+      - ../../data:/data:ro
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "
+        airflow db upgrade &&
+        airflow users create --username ${AIRFLOW_USER:-admin} --password ${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true &&
+        airflow webserver &
+        airflow scheduler
+      "
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: '1.0'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: node1-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../../config/monitoring/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.retention.time=7d'
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: node1-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../../config/monitoring/grafana:/etc/grafana/provisioning:ro
+    networks:
+      - capstone-net
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    container_name: node1-mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../ml/mlruns:/mlruns
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    command: >
+      mlflow server 
+      --host 0.0.0.0 --port 5000 
+      --backend-store-uri sqlite:////mlruns/mlflow.db 
+      --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-gs://capstone-data-lake/mlflow-artifacts}/
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    restart: on-failure
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  mlflow-serving:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    container_name: node1-mlflow-serving
+    ports:
+      - "5001:5001"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../ml/mlruns:/mlruns
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    command: >
+      bash -c "
+        pip install --no-cache-dir h2o==3.46.0.6 pandas numpy scikit-learn &&
+        mlflow models serve
+        -m models:/${ML_MODEL_NAME:-traffic-risk-model}/latest
+        -h 0.0.0.0
+        -p 5001
+        --env-manager local
+      "
+    depends_on:
+      - mlflow
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: on-failure
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  fastapi:
+    build:
+      context: ../../dashboard/backend
+    image: traffic-risk-fastapi:latest
+    container_name: node1-fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-capstone}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme123}
+      - POSTGRES_DB=${POSTGRES_DB:-capstone_db}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_PREDICTION_TABLE=${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_SERVING_ENDPOINT=http://mlflow-serving:5001/invocations
+      - ML_MODEL_NAME=${ML_MODEL_NAME:-traffic-risk-model}
+      - KAFKA_TOPIC_RAW=${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      - FLINK_CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
+      - FLINK_CHECKPOINT_INTERVAL=${FLINK_CHECKPOINT_INTERVAL:-30000}
+      - GOLD_RETRAIN_PATH=${GOLD_RETRAIN_PATH:-gs://big-data-group-4-gold/features/retrain}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - capstone-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    
+networks:
+  capstone-net:
+    driver: bridge
+    name: capstone-net
+
+volumes:
+  postgres_data:
+  airflow_pg_data:
+  prometheus_data:
+  grafana_data:

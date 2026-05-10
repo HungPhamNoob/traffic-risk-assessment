@@ -1,0 +1,97 @@
+# ============================================================
+# Node 3 – Batch Processing (Spot VM)
+# Services: Spark Master, Spark Worker
+# ============================================================
+
+services:
+  # ==========================================================
+  # Spark Master
+  # ==========================================================
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: node3-spark-master
+    command: bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - GCS_BUCKET_BRONZE=${GCS_BUCKET_BRONZE:-big-data-group-4-bronze}
+      - GCS_BUCKET_SILVER=${GCS_BUCKET_SILVER:-big-data-group-4-silver}
+      - GCS_BUCKET_GOLD=${GCS_BUCKET_GOLD:-big-data-group-4-gold}
+      - SILVER_FEATURES_PATH=${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
+      - GOLD_RETRAIN_PATH=${GOLD_RETRAIN_PATH:-gs://big-data-group-4-gold/features/retrain}
+      - SPARK_WRITE_PARTITIONS=${SPARK_WRITE_PARTITIONS:-4}
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-http://10.128.0.4:5000}
+    volumes:
+      - ../..:/opt/traffic:ro
+      - ../../data:/data
+      - ../../ml:/opt/spark/ml:ro
+      - spark_data:/opt/spark/work-dir/checkpoints
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # ==========================================================
+  # Spark Worker
+  # ==========================================================
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: node3-spark-worker
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    ports:
+      - "8083:8081"
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=5g
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../..:/opt/traffic:ro
+      - ../../data:/data
+      - spark_data:/opt/spark/work-dir/checkpoints
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    depends_on:
+      - spark-master
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+          cpus: '2.0'
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+# ============================================================
+# Networks & Volumes
+# ============================================================
+networks:
+  capstone-net:
+    driver: bridge
+    name: capstone-net
+
+volumes:
+  spark_data:

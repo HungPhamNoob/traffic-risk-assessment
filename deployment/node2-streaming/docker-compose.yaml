@@ -1,0 +1,343 @@
+# ============================================================
+# Node 2 – Streaming (Spot VM)
+# 3 Kafka Brokers + Flink + Redis
+# Topic: traffic.us.raw (1 partition, 3 replicas)
+# ============================================================
+
+services:
+  # ==========================================================
+  # 3 Kafka Brokers
+  # ==========================================================
+  kafka-1:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: node2-kafka-1
+    ports:
+      - "9092:9092"
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-10.128.0.5}:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data_1:/var/lib/kafka/data
+    networks:
+      - capstone-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: node2-kafka-2
+    ports:
+      - "9093:9092"
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-10.128.0.5}:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data_2:/var/lib/kafka/data
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: node2-kafka-3
+    ports:
+      - "9094:9092"
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-10.128.0.5}:9094
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data_3:/var/lib/kafka/data
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  kafka-topic-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: node2-kafka-topic-init
+    command: >
+      bash -c "
+        kafka-topics --bootstrap-server kafka-1:9092,kafka-2:9092,kafka-3:9092
+        --create --if-not-exists
+        --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+        --partitions 1
+        --replication-factor 3 &&
+        kafka-topics --bootstrap-server kafka-1:9092,kafka-2:9092,kafka-3:9092
+        --describe --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      "
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-3:
+        condition: service_healthy
+    restart: "no"
+
+  # ==========================================================
+  # 3 Producers – row_index modulo split avoids duplicate replay rows.
+  # ==========================================================
+  producer-1:
+    image: python:3.10-slim
+    container_name: node2-producer-0
+    working_dir: /app
+    command: >
+      bash -c "
+      pip install --no-cache-dir confluent-kafka python-dotenv gcsfs google-auth &&
+      python us_replay_producer.py
+      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_TOPIC_US: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
+      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
+      TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
+      PRODUCER_INDEX: "0"
+      PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
+      US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../ingestion/kafka/us_producer.py:/app/us_replay_producer.py:ro
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-topic-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  producer-2:
+    image: python:3.10-slim
+    container_name: node2-producer-1
+    working_dir: /app
+    command: >
+      bash -c "
+      pip install --no-cache-dir confluent-kafka python-dotenv gcsfs google-auth &&
+      python us_replay_producer.py
+      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_TOPIC_US: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
+      STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
+      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
+      TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
+      PRODUCER_INDEX: "1"
+      PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../ingestion/kafka/us_producer.py:/app/us_replay_producer.py:ro
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-topic-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  producer-3:
+    image: python:3.10-slim
+    container_name: node2-producer-2
+    working_dir: /app
+    command: >
+      bash -c "
+      pip install --no-cache-dir confluent-kafka python-dotenv gcsfs google-auth &&
+      python us_replay_producer.py
+      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_TOPIC_US: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
+      STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
+      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
+      TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
+      PRODUCER_INDEX: "2"
+      PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../../ingestion/kafka/us_producer.py:/app/us_replay_producer.py:ro
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-topic-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # ==========================================================
+  # Flink JobManager
+  # ==========================================================
+  flink-jobmanager:
+    image: flink:1.19-scala_2.12
+    container_name: node2-flink-jm
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
+        execution.checkpointing.interval: ${FLINK_CHECKPOINT_INTERVAL:-30000}
+    volumes:
+      - ../..:/opt/traffic:ro
+      - flink_data:/opt/flink/checkpoints
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-3:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+    restart: on-failure
+
+  flink-taskmanager:
+    image: flink:1.19-scala_2.12
+    container_name: node2-flink-tm
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 1536m
+        state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
+    volumes:
+      - ../..:/opt/traffic:ro
+      - flink_data:/opt/flink/checkpoints
+    networks:
+      - capstone-net
+    depends_on:
+      - flink-jobmanager
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+    restart: on-failure
+
+  redis:
+    image: redis:7-alpine
+    container_name: node2-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - capstone-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+
+  flink-python-job:
+    image: python:3.10-slim
+    container_name: node2-flink-python-job
+    working_dir: /opt/traffic
+    command: >
+      bash -c "
+        pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
+        python processing/flink_streaming.py
+      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      FLINK_INFERENCE_GROUP: ${FLINK_INFERENCE_GROUP:-flink-us-inference}
+      FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}
+      FLINK_CHECKPOINT_DIR: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
+      SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
+      MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
+      POSTGRES_HOST: ${POSTGRES_HOST:-10.128.0.4}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-capstone_db}
+      POSTGRES_USER: ${POSTGRES_USER:-capstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_PREDICTION_TABLE: ${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ../..:/opt/traffic:ro
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-topic-init:
+        condition: service_completed_successfully
+      flink-jobmanager:
+        condition: service_started
+    restart: on-failure
+
+networks:
+  capstone-net:
+    driver: bridge
+    name: capstone-net
+
+volumes:
+  kafka_data_1:
+  kafka_data_2:
+  kafka_data_3:
+  flink_data:
+  redis_data:
