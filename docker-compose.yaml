@@ -165,16 +165,37 @@ services:
   kafka-topic-init:
     image: confluentinc/cp-kafka:7.6.0
     container_name: local-kafka-topic-init
-    command: >
-      bash -c "
-        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092
-        --create --if-not-exists
-        --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
-        --partitions 1
-        --replication-factor 3 &&
-        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092
-        --describe --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
-      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+    command: |
+      bash -ec '
+        BOOTSTRAP_SERVERS="$${KAFKA_BOOTSTRAP_SERVERS}"
+        TOPIC_NAME="$${KAFKA_TOPIC_RAW}"
+
+        echo "Waiting for Kafka brokers at $${BOOTSTRAP_SERVERS}."
+        for i in $(seq 1 30); do
+          if kafka-broker-api-versions --bootstrap-server "$${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; then
+            break
+          fi
+          echo "Kafka not ready yet ($${i}/30)."
+          sleep 2
+        done
+
+        if ! kafka-broker-api-versions --bootstrap-server "$${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; then
+          echo "Kafka brokers not reachable after waiting. Exiting for restart."
+          exit 1
+        fi
+
+        echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
+        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
+
+        echo "Validating Kafka topic $${TOPIC_NAME}."
+        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+
+        echo "Kafka topic init complete. Holding container open."
+        tail -f /dev/null
+      '
     depends_on:
       kafka-1:
         condition: service_healthy
@@ -184,7 +205,13 @@ services:
         condition: service_healthy
     networks:
       - traffic-local
-    restart: "no"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_RAW}\" >/dev/null 2>&1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
   producer-1:
     image: python:3.10-slim
@@ -209,7 +236,7 @@ services:
       - ./:/workspace:ro
     depends_on:
       kafka-topic-init:
-        condition: service_completed_successfully
+        condition: service_healthy
     networks:
       - traffic-local
     profiles:

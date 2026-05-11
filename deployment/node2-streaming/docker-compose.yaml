@@ -131,18 +131,21 @@ services:
     restart: unless-stopped
 
   kafka-topic-init:
+    # One-shot init job: it should exit with code 0 after creating/describing
+    # the single project topic. It is not a long-running Kafka service.
     image: confluentinc/cp-kafka:7.6.0
     container_name: node2-kafka-topic-init
-    command: >
-      bash -c "
-        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092
-        --create --if-not-exists
-        --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
-        --partitions 1
-        --replication-factor 3 &&
-        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092
-        --describe --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
-      "
+    command: |
+      bash -ec '
+        BOOTSTRAP_SERVERS="kafka-1:29092,kafka-2:29092,kafka-3:29092"
+        TOPIC_NAME="$${KAFKA_TOPIC_RAW:-traffic.us.raw}"
+
+        echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
+        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
+
+        echo "Validating Kafka topic $${TOPIC_NAME}."
+        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+      '
     networks:
       - capstone-net
     depends_on:

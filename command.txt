@@ -80,16 +80,18 @@ make -f makefile/gcp/Makefile status
 
 # GitHub push to branch hung1.
 # Keep the token outside Git history. Export the token only in the current shell.
-export GITHUB_TOKEN="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"
+export GITHUB_TOKEN="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"
 git init
 git config --global user.name "HungPhamNoob"
 git config --global user.email "hungvp711@gmail.com"
 git add .
 git commit -m "commit"
+git remote add origin https://github.com/HungPhamNoob/traffic-risk-assessment.git
 git remote add origin https://github.com/HungPhamNoob/traffic-risk-assessment.git 2>/dev/null || true
 git remote set-url origin "https://${GITHUB_TOKEN}@github.com/HungPhamNoob/traffic-risk-assessment.git"
 git branch -M hung1
 git push -u origin hung1
+git push origin hung1
 
 # The Makefile target performs the same commit and push flow.
 GITHUB_TOKEN="${GITHUB_TOKEN}" make -f makefile/local/Makefile git-push-hung1

@@ -12,7 +12,7 @@ SSH_BASE := gcloud compute ssh --project=$(PROJECT_ID) --zone=$(ZONE) --tunnel-t
 
 .PHONY: help list ssh-node1 ssh-node2 ssh-node3 sync-env \
 	node1 node2 node3 start-node23 reset-realtime status logs-node1 logs-node2 logs-node3 \
-	validate push deploy-all backup-checkpoints docker-recover-node1 docker-recover-node2 docker-recover-node3
+	validate push deploy-all backup-checkpoints kafka-topic-check docker-recover-node1 docker-recover-node2 docker-recover-node3
 
 help:
 	@echo "GCP Makefile for the Traffic Risk Assessment platform"
@@ -23,6 +23,7 @@ help:
 	@echo "  make -f makefile/gcp/Makefile start-node23     Start Node 2 and Node 3 together"
 	@echo "  make -f makefile/gcp/Makefile reset-realtime   Reset Flink/Spark checkpoints together"
 	@echo "  make -f makefile/gcp/Makefile status           Print Docker status on all nodes"
+	@echo "  make -f makefile/gcp/Makefile kafka-topic-check Verify the single Kafka topic on Node 2"
 	@echo "  make -f makefile/gcp/Makefile backup-checkpoints Back up GCP checkpoint directories"
 	@echo "  make -f makefile/gcp/Makefile deploy-all       Pull branch and start all node services"
 
@@ -84,6 +85,9 @@ deploy-all: sync-env node1 start-node23
 
 backup-checkpoints:
 	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/backup-checkpoints.sh'
+
+kafka-topic-check:
+	$(SSH_BASE) $(NODE2) --command='docker exec node2-kafka-1 kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092 --describe --topic "$${KAFKA_TOPIC_RAW:-traffic.us.raw}"'
 
 docker-recover-node1:
 	$(SSH_BASE) $(NODE1) --command='sudo systemctl restart docker || true'

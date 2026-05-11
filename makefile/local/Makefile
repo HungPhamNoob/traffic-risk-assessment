@@ -13,7 +13,7 @@ LOCAL_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 .PHONY: help setup validate format lint test compile compose-check \
 	up up-batch up-orchestration up-monitoring down stop ps logs \
 	reset reset-realtime reset-hard pipeline full-pipeline train-before train-after \
-	spark-submit api-check metrics git-push-hung1 docker-recover kill-local-orphans
+	spark-submit api-check metrics kafka-topic-init kafka-topic-check git-push-hung1 docker-recover kill-local-orphans
 
 help:
 	@echo "Local Makefile for the Traffic Risk Assessment platform"
@@ -23,6 +23,7 @@ help:
 	@echo "  make -f makefile/local/Makefile up-monitoring    Start Prometheus, Grafana, blackbox exporter"
 	@echo "  make -f makefile/local/Makefile pipeline         Run local end-to-end pipeline"
 	@echo "  make -f makefile/local/Makefile full-pipeline    Run local pipeline with before-2020 H2O training"
+	@echo "  make -f makefile/local/Makefile kafka-topic-check Verify the single Kafka topic"
 	@echo "  make -f makefile/local/Makefile train-before     Train H2O on before-2020 features"
 	@echo "  make -f makefile/local/Makefile train-after      Retrain H2O from Gold after-2020 data"
 	@echo "  make -f makefile/local/Makefile validate         Run lint, tests, compile, and compose checks"
@@ -131,6 +132,14 @@ api-check:
 
 metrics:
 	curl -fsS http://localhost:8000/metrics | head -40
+
+kafka-topic-init:
+	$(COMPOSE) up -d --force-recreate kafka-topic-init
+	docker wait local-kafka-topic-init
+	docker logs local-kafka-topic-init --tail=80
+
+kafka-topic-check:
+	docker exec local-kafka-1 kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092 --describe --topic "$${KAFKA_TOPIC_RAW:-traffic.us.raw}"
 
 git-push-hung1:
 	cd "$(PROJECT_ROOT)" && git init
