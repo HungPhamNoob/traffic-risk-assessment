@@ -178,7 +178,7 @@ jobs:
             gcloud compute instances add-metadata "${VM_NAME}" \
               --zone="${GCP_ZONE}" \
               --project="${GCP_PROJECT_ID}" \
-              --metadata="enable-oslogin=FALSE,ssh-keys=${SSH_USER}:${PUBLIC_KEY} ${SSH_USER}"
+              --metadata="enable-oslogin=FALSE,block-project-ssh-keys=TRUE,ssh-keys=${SSH_USER}:${PUBLIC_KEY} ${SSH_USER}"
           done
 
           echo "SUCCESS: VM SSH metadata now matches HUNG_SSH_PRIVATE_KEY."
