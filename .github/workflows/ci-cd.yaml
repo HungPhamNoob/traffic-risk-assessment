@@ -206,6 +206,25 @@ jobs:
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 1 IP: $NODE1_IP"
+          for attempt in $(seq 1 18); do
+            if ssh -i ~/.ssh/hung_vm_key \
+              -o IdentitiesOnly=yes \
+              -o PreferredAuthentications=publickey \
+              -o PubkeyAuthentication=yes \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 \
+              "${SSH_USER}@${NODE1_IP}" "echo SSH_READY_NODE1"; then
+              break
+            fi
+            echo "Node 1 SSH is not ready yet (${attempt}/18). Waiting for metadata propagation."
+            sleep 10
+            if [ "${attempt}" = "18" ]; then
+              echo "ERROR: Node 1 SSH did not become ready after metadata update."
+              exit 1
+            fi
+          done
+
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
@@ -278,6 +297,25 @@ jobs:
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 2 IP: $NODE2_IP"
+          for attempt in $(seq 1 18); do
+            if ssh -i ~/.ssh/hung_vm_key \
+              -o IdentitiesOnly=yes \
+              -o PreferredAuthentications=publickey \
+              -o PubkeyAuthentication=yes \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 \
+              "${SSH_USER}@${NODE2_IP}" "echo SSH_READY_NODE2"; then
+              break
+            fi
+            echo "Node 2 SSH is not ready yet (${attempt}/18). Waiting for metadata propagation."
+            sleep 10
+            if [ "${attempt}" = "18" ]; then
+              echo "ERROR: Node 2 SSH did not become ready after metadata update."
+              exit 1
+            fi
+          done
+
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
@@ -341,6 +379,25 @@ jobs:
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 3 IP: $NODE3_IP"
+          for attempt in $(seq 1 18); do
+            if ssh -i ~/.ssh/hung_vm_key \
+              -o IdentitiesOnly=yes \
+              -o PreferredAuthentications=publickey \
+              -o PubkeyAuthentication=yes \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 \
+              "${SSH_USER}@${NODE3_IP}" "echo SSH_READY_NODE3"; then
+              break
+            fi
+            echo "Node 3 SSH is not ready yet (${attempt}/18). Waiting for metadata propagation."
+            sleep 10
+            if [ "${attempt}" = "18" ]; then
+              echo "ERROR: Node 3 SSH did not become ready after metadata update."
+              exit 1
+            fi
+          done
+
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
