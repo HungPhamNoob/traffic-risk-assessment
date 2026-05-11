@@ -1,68 +1,88 @@
-# Data files
-data/raw/*.csv
-data/raw/*.parquet
-data/raw/*.gz
-*.csv
-*.parquet
-!data/sample/*.csv
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Python
+# ==================== PYTHON ====================
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-.venv/
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Jupyter
+# ==================== ENVIRONMENTS AND SECRETS ====================
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+*.p12
+*.pem
+*.key
+*.json.key
+.gcp/*.json
+
+# Keep cloud/default templates versioned.
+!.env.cloud
+!.env.example
+
+# ==================== DATASETS AND GENERATED DATA ====================
+data/raw/*.csv
+data/raw/*.parquet
+data/raw/*.gz
+data/split/*.csv
+data/process/*.csv
+data/simulation/
+*.parquet
+*.avro
+
+# Keep lightweight metadata files versioned.
+!data/raw/.gitkeep
+!data/split/info.md
+
+# ==================== MODEL AND PIPELINE ARTIFACTS ====================
+mlruns/
+mlflow.db
+ml/experiments/
+ml/models/local/
+mlflow-artifacts/
+checkpoints/
+savepoints/
+flink-checkpoints/
+spark-warehouse/
+derby.log
+
+# ==================== NOTEBOOK RUNTIME ARTIFACTS ====================
 .ipynb_checkpoints/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs
+# ==================== LOGS AND LOCAL COMMAND OUTPUT ====================
 *.log
 logs/
 command.txt
 
-# OS
+# ==================== FRONTEND / NODE ====================
+node_modules/
+.next/
+dist/
+build/
+
+# ==================== IDE AND OS FILES ====================
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
 Thumbs.db
-
-# Checkpoints (store in GCS only)
-checkpoints/
-savepoints/
-mlflow-artifacts/
-
-# Data Lake local
-lake/bronze/*
-lake/silver/*
-lake/gold/*
-!data/sample/*
-
-# ML outputs
-ml/experiments/
-ml/models/local/
-mlruns/
-
-# Spark/Flink
-spark-warehouse/
-derby.log
-flink-checkpoints/
-
-# GCP Keys
-.gcp/*.json
-*.p12
-
-# Windows
-Thumbs.db
 Desktop.ini
-*.log
+
+# ==================== REFERENCE MATERIAL ====================
+# Vendor projects and paper extracts are local references only.
+vendor/
+paper/
+vendor/**/.venv/
+vendor/**/__pycache__/
+vendor/**/*.py[cod]
+vendor/**/.ipynb_checkpoints/
+vendor/**/catboost_info/
+vendor/**/data/*.csv
+vendor/**/mlruns/
+vendor/**/node_modules/

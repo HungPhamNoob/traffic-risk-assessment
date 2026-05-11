@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Airflow DAG 1 – Hourly Model Retraining
+Airflow DAG 1 - Hourly Model Retraining
 
 Purpose:
     Runs every hour to retrain the H2O model with fresh data.
-    Spark reads silver data → cleans → writes gold Parquet → H2O retrains → MLflow registers new version.
+    Spark reads silver data -> cleans -> writes gold Parquet -> H2O retrains -> MLflow registers new version.
 
     If Node 3 (Spot VM) is down, the DAG retries automatically.
     Once the VM comes back, the next retry succeeds.
@@ -15,7 +15,7 @@ from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
 
 # ============================================================
-# Default args – applied to all tasks
+# Default args - applied to all tasks
 # ============================================================
 default_args = {
     "owner": "hung",
@@ -40,12 +40,12 @@ with DAG(
 ) as dag:
 
     # ----------------------------------------------------------
-    # Task 1: Spark – Silver → Gold Parquet (runs on Node 3)
+    # Task 1: Spark - Silver -> Gold Parquet (runs on Node 3)
     # ----------------------------------------------------------
     spark_silver_to_gold = BashOperator(
         task_id="spark_silver_to_gold",
         bash_command="""
-            echo "=== Spark: Silver → Gold ==="
+            echo "=== Spark: Silver -> Gold ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&
                 COMPOSE_FILE=deployment/node3-batch/docker-compose.yaml &&
@@ -63,7 +63,7 @@ with DAG(
     )
 
     # ----------------------------------------------------------
-    # Task 2: H2O – Retrain model from gold Parquet (runs on Node 3)
+    # Task 2: H2O - Retrain model from gold Parquet (runs on Node 3)
     # ----------------------------------------------------------
     h2o_retrain = BashOperator(
         task_id="h2o_retrain",
@@ -72,7 +72,7 @@ with DAG(
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&
                 export MLFLOW_TRACKING_URI=http://10.128.0.4:5000 &&
-                python ml/training/train_h2o_online.py
+                python ml/training/train_after_2020.py
             " || {
                 echo "WARNING: Node 3 retrain failed. Airflow will retry later."
                 exit 1
@@ -91,6 +91,6 @@ with DAG(
     )
 
     # ----------------------------------------------------------
-    # DAG structure: Spark → H2O → Notify
+    # DAG structure: Spark -> H2O -> Notify
     # ----------------------------------------------------------
     spark_silver_to_gold >> h2o_retrain >> notify_success

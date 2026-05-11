@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Airflow DAG 2 – Streaming Health Check
+Airflow DAG 2 - Streaming Health Check
 
 Purpose:
     Runs every hour to verify the realtime pipeline is alive.

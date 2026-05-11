@@ -133,7 +133,7 @@ jobs:
         run: |
           echo "=== Uploading .env.cloud to GCS ==="
           echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
-          gcloud storage cp .env.cloud gs://big-data-group-4-bronze/config/.env.cloud
+          gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud
           rm .env.cloud
           echo "SUCCESS: .env.cloud uploaded."
 
@@ -175,7 +175,7 @@ jobs:
             fi
 
             echo "=== Loading cloud environment ==="
-            gcloud storage cp gs://big-data-group-4-bronze/config/.env.cloud /opt/traffic/.env.cloud
+            gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud /opt/traffic/.env.cloud
             cp /opt/traffic/.env.cloud /opt/traffic/.env
 
             echo "=== Logging into Docker registry ==="
@@ -233,7 +233,7 @@ jobs:
             fi
 
             echo "=== Restarting streaming services ==="
-            gcloud storage cp gs://big-data-group-4-bronze/config/.env.cloud /opt/traffic/.env.cloud
+            gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud /opt/traffic/.env.cloud
             cp /opt/traffic/.env.cloud /opt/traffic/.env
             bash scripts/gcp/run-node2.sh
 
@@ -245,8 +245,6 @@ jobs:
           EOF
 
           echo "Node 2 deployment completed."
-
-        || echo "Node 2 (Spot VM) is not running. Skipping deployment."
 
       # -------------------------------------------------------
       # Step 6: Deploy Node 3 (Batch - Spot VM)
@@ -285,7 +283,7 @@ jobs:
             fi
 
             echo "=== Restarting batch services ==="
-            gcloud storage cp gs://big-data-group-4-bronze/config/.env.cloud /opt/traffic/.env.cloud
+            gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud /opt/traffic/.env.cloud
             cp /opt/traffic/.env.cloud /opt/traffic/.env
             bash scripts/gcp/run-node3.sh
 
@@ -297,8 +295,6 @@ jobs:
           EOF
 
           echo "Node 3 deployment completed."
-
-        || echo "Node 3 (Spot VM) is not running. Skipping deployment."
 
   # ==========================================================
   # Job 4: Smoke Test
@@ -330,10 +326,6 @@ jobs:
           echo ""
           echo "=== Testing Airflow (port 8080) ==="
           curl -f http://$NODE1_IP:8080/health && echo "Airflow: OK" || echo "Airflow: FAIL"
-
-          echo ""
-          echo "=== Testing Grafana (port 3000) ==="
-          curl -f http://$NODE1_IP:3000/api/health && echo "Grafana: OK" || echo "Grafana: FAIL"
 
           echo ""
           echo "=== Testing MLflow (port 5000) ==="

@@ -26,6 +26,7 @@ def test_us_producer_uses_replay_path_and_three_producer_split(monkeypatch):
     monkeypatch.setenv(
         "US_PIPELINE_REPLAY_PATH", "gs://bucket/process/us_pipeline_from_2020.csv"
     )
+    monkeypatch.setenv("KAFKA_TOPIC_RAW", "traffic.us.raw")
     monkeypatch.setenv("TOTAL_PRODUCERS", "3")
     monkeypatch.setenv("PRODUCER_INDEX", "2")
 
@@ -33,6 +34,7 @@ def test_us_producer_uses_replay_path_and_three_producer_split(monkeypatch):
     module = importlib.reload(module)
 
     assert module.DATA_FILE_PATH == "gs://bucket/process/us_pipeline_from_2020.csv"
+    assert module.KAFKA_TOPIC == "traffic.us.raw"
     assert module.TOTAL_PRODUCERS == 3
     assert module.PRODUCER_INDEX == 2
     assert module.should_send_row(2) is True

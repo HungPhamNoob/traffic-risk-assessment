@@ -1,5 +1,5 @@
 # ============================================================
-# Node 2 – Streaming (Spot VM)
+# Node 2 - Streaming (Spot VM)
 # 3 Kafka Brokers + Flink + Redis
 # Topic: traffic.us.raw (1 partition, 3 replicas)
 # ============================================================
@@ -62,9 +62,6 @@ services:
       - kafka_data_2:/var/lib/kafka/data
     networks:
       - capstone-net
-    depends_on:
-      kafka-1:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 30s
@@ -96,9 +93,6 @@ services:
       - kafka_data_3:/var/lib/kafka/data
     networks:
       - capstone-net
-    depends_on:
-      kafka-2:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 30s
@@ -123,12 +117,16 @@ services:
     networks:
       - capstone-net
     depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
       kafka-3:
         condition: service_healthy
     restart: "no"
 
   # ==========================================================
-  # 3 Producers – row_index modulo split avoids duplicate replay rows.
+  # 3 Producers - row_index modulo split avoids duplicate replay rows.
   # ==========================================================
   producer-1:
     image: python:3.10-slim
@@ -141,7 +139,7 @@ services:
       "
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
-      KAFKA_TOPIC_US: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
@@ -170,7 +168,7 @@ services:
       "
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
-      KAFKA_TOPIC_US: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
@@ -199,7 +197,7 @@ services:
       "
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
-      KAFKA_TOPIC_US: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
@@ -239,8 +237,8 @@ services:
     networks:
       - capstone-net
     depends_on:
-      kafka-3:
-        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:

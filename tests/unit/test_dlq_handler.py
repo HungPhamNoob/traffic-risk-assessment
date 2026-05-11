@@ -34,4 +34,7 @@ def test_cloud_env_matches_pipeline_table_and_topic_names():
 
     assert config["POSTGRES_PREDICTION_TABLE"] == "traffic_risk_predictions"
     assert config["KAFKA_TOPIC_RAW"] == "traffic.us.raw"
+    assert not any(
+        key.startswith("KAFKA_TOPIC_") and key != "KAFKA_TOPIC_RAW" for key in config
+    )
     assert config["TOTAL_PRODUCERS"] == "3"

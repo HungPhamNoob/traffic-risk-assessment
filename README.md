@@ -17,7 +17,7 @@ Dashboard backend work is included under `dashboard/backend`. The frontend folde
 ## Repository Layout
 
 ```text
-config/monitoring/         Prometheus and Grafana provisioning files
+dashboard/backend/         FastAPI service for overview, map, hotspot, analytics, and system endpoints
 data/process/              Processed US feature data for offline training
 data/split/                US replay split from 2020 onward
 deployment/                Per-node Docker Compose deployment files
@@ -26,6 +26,7 @@ ml/training/               H2O + MLflow model training
 orchestration/dags/        Airflow DAGs
 processing/                Shared feature engineering, Flink, and Spark jobs
 scripts/gcp/               GCP VM setup and operations
+scripts/local/             Local smoke pipeline that writes simulation artifacts and API JSON outputs
 scripts/maintenance/       Backup and maintenance helpers
 tests/                     Unit and smoke tests
 vendor/                    Reference projects from previous cohorts
@@ -36,31 +37,22 @@ vendor/                    Reference projects from previous cohorts
 ```bash
 cp .env.example .env
 uv sync --group dev
-docker compose up -d
+make local-up
 uv run pytest -q
 ```
 
-For host-side Kafka replay producers against local Docker Kafka, run each producer in a separate shell:
+Run the local smoke pipeline. It reads the post-2020 replay split, writes local simulation outputs, seeds PostgreSQL, and stores API responses under `data/simulation/api`.
 
 ```bash
-export KAFKA_BOOTSTRAP_SERVERS=localhost:29092
-export STREAM_SPLIT_YEAR=2020
-uv run python ingestion/kafka/us_producer.py
+make local-pipeline
 ```
 
 Run batch feature engineering and H2O training:
 
 ```bash
 uv run spark-submit --master local[*] processing/spark_batch.py
-uv run python ml/training/train_h2o_offline.py
+uv run python ml/training/train_before_2020.py
 ```
-
-## Documentation
-
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
-- [Charter alignment](docs/charter-alignment.md)
-- [GCP deployment](docs/gcp-deployment.md)
 
 ## GCP Target
 

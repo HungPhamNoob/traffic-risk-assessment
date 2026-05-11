@@ -41,7 +41,7 @@ docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose
 echo "Running online H2O retraining once from the latest gold data."
 python3 -m pip install --user --upgrade pip
 python3 -m pip install --user h2o mlflow gcsfs google-auth pandas numpy scikit-learn pyarrow
-python3 ml/training/train_h2o_online.py
+python3 ml/training/train_after_2020.py
 
 echo "Node 3 services:"
 docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml ps

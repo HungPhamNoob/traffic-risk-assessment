@@ -190,7 +190,7 @@ def encode_road_type(street_name: Any) -> int:
 
 
 # ============================================================
-# Main feature builder – called by both Flink and Spark
+# Main feature builder - called by both Flink and Spark
 # ============================================================
 
 
@@ -268,7 +268,7 @@ def build_features(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "event_id": event_id,
         "event_year": event_year,
         "event_time": event_time.isoformat(),
-        # Label (NOT an input feature – used for evaluation)
+        # Label (NOT an input feature - used for evaluation)
         "true_severity": severity,
         # Geospatial
         "lat": lat,

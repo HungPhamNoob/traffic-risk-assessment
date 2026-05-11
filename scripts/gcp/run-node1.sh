@@ -68,7 +68,7 @@ else
   else
     echo "US_TRAIN_OFFLINE_PATH is a GCS feature CSV. Skipping local feature generation."
   fi
-  python3 ml/training/train_h2o_offline.py
+  python3 ml/training/train_before_2020.py
 fi
 
 echo "Restarting MLflow model serving after model bootstrap..."

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Offline Feature Engineering for H2O Training – US Accidents
+Offline Feature Engineering for H2O Training - US Accidents
 
 Purpose:
     Read the offline training CSV file, clean and encode features,
@@ -302,7 +302,7 @@ def prepare_training_features(input_path: Path, output_path: Path) -> pd.DataFra
     df_output["event_year"] = df["event_year"]
     df_output["event_time"] = df["event_time"].dt.strftime("%Y-%m-%dT%H:%M:%S")
 
-    # Label (the column we want to predict – NOT an input feature)
+    # Label (the column we want to predict - NOT an input feature)
     df_output["true_severity"] = df["Severity"].apply(safe_int)
 
     # Geospatial features

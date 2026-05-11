@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-US Accident Replay Producer – RAW Parallel Version (GCS Native)
+US Accident Replay Producer - raw parallel Kafka producer.
 
-Mục tiêu:
-    - Đọc CSV US Accidents từ GCS bucket (gs://) hoặc local file.
-    - Gửi mỗi dòng thành 1 JSON raw vào Kafka.
-    - Không làm feature engineering.
-    - Hỗ trợ chạy 3 producers song song mà KHÔNG gửi trùng dữ liệu.
+Purpose:
+    - Read US Accidents CSV records from GCS or the local filesystem.
+    - Publish each raw CSV row as one JSON message to the single project topic.
+    - Avoid feature engineering in the producer so Flink owns realtime mapping.
+    - Support three parallel producers without sending duplicate rows.
 
-Cách chia dữ liệu:
+Row assignment:
     TOTAL_PRODUCERS=3
 
     Producer 0: row_index % 3 == 0
@@ -17,10 +17,10 @@ Cách chia dữ liệu:
 
 Input:
     gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv
-    (hoặc local path)
+    or a local CSV path.
 
 Output:
-    Kafka topic: traffic.us.raw (1 partition, 3 replicas)
+    Kafka topic: traffic.us.raw (one partition, three replicas)
 """
 
 import csv
@@ -35,7 +35,7 @@ from dotenv import load_dotenv
 from confluent_kafka import Producer
 
 # ============================================================
-# Load .env nếu có
+# Load a local .env file when the producer is started outside Docker.
 # ============================================================
 load_dotenv()
 
@@ -50,7 +50,7 @@ logger = logging.getLogger("us-replay-producer-raw")
 
 
 # ============================================================
-# Helpers đọc ENV an toàn
+# Safe environment parsing helpers.
 # ============================================================
 def get_int_env(name: str, default: int) -> int:
     value = os.getenv(name)
@@ -91,8 +91,8 @@ KAFKA_BOOTSTRAP_SERVERS = get_str_env(
     "localhost:9092",
 )
 KAFKA_TOPIC = get_str_env(
-    "KAFKA_TOPIC_US",
-    get_str_env("KAFKA_TOPIC_RAW", "traffic.us.raw"),
+    "KAFKA_TOPIC_RAW",
+    "traffic.us.raw",
 )
 DATA_FILE_PATH = get_str_env(
     "US_PIPELINE_REPLAY_PATH",
@@ -120,20 +120,20 @@ PRODUCER_QUEUE_BACKOFF_SECONDS = get_float_env("PRODUCER_QUEUE_BACKOFF_SECONDS",
 
 
 # ============================================================
-# File opener – hỗ trợ cả GCS và local
+# File opener with both GCS and local filesystem support.
 # ============================================================
 def open_file(path: str, mode: str = "r"):
     """
-    Mở file từ GCS (gs://) hoặc local.
+    Open a source CSV from GCS or the local filesystem.
 
-    Dùng gcsfs cho GCS, open() cho local.
+    GCS paths use gcsfs. Local paths use the standard open() function.
     """
     if path.startswith("gs://"):
         import gcsfs
 
         fs = gcsfs.GCSFileSystem()
         logger.info("Reading from GCS: %s", path)
-        # gcsfs.open() cần path không có "gs://"
+        # gcsfs expects the bucket path without the gs:// prefix.
         bucket_path = path.replace("gs://", "", 1)
         return fs.open(bucket_path, mode=mode, encoding="utf-8")
     else:
@@ -220,7 +220,7 @@ def produce_with_backpressure(producer, topic, key, value) -> None:
 
 def print_startup_log() -> None:
     logger.info("=" * 80)
-    logger.info("US Accident Replay Producer – RAW Parallel (GCS Native)")
+    logger.info("US Accident Replay Producer - RAW Parallel (GCS Native)")
     logger.info("Kafka: %s", KAFKA_BOOTSTRAP_SERVERS)
     logger.info("Topic: %s", KAFKA_TOPIC)
     logger.info("CSV:   %s", DATA_FILE_PATH)

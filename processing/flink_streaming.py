@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Flink Streaming Job – US Traffic Risk Prediction
+Flink Streaming Job - US Traffic Risk Prediction
 
 Architecture:
     1. Read raw accident events from Kafka (traffic.us.raw).
@@ -10,7 +10,7 @@ Architecture:
     5. Insert prediction result into PostgreSQL/PostGIS.
     6. DLQ records go to a local log file (or simply logged).
 
-No extra Kafka topics are used – all communication beyond Kafka
+No extra Kafka topics are used - all communication beyond Kafka
 goes through GCS and PostgreSQL.
 """
 
@@ -413,7 +413,7 @@ def main():
     # Print status to keep the job alive (or use a no-op sink)
     processed_stream.print()
 
-    env.execute("Flink Traffic Risk Prediction – GCS + PostGIS")
+    env.execute("Flink Traffic Risk Prediction - GCS + PostGIS")
 
 
 if __name__ == "__main__":

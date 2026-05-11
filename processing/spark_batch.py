@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Spark Batch Job – Silver to Gold Layer
+Spark Batch Job - Silver to Gold Layer
 
 Purpose:
     Read all Flink-generated feature JSONL files from GCS Silver,
@@ -109,7 +109,7 @@ FILL_DEFAULTS = {
 
 def main() -> None:
     logger.info("=" * 80)
-    logger.info("Spark Silver → Gold Parquet Job")
+    logger.info("Spark Silver -> Gold Parquet Job")
     logger.info("Silver path: %s", SILVER_PATH)
     logger.info("Gold path:   %s", GOLD_RETRAIN_PATH)
     logger.info("Write partitions: %s", WRITE_PARTITIONS)
