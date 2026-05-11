@@ -182,16 +182,22 @@ services:
     ports:
       - "8000:8000"  # Expose ra ngoài để frontend gọi
     environment:
-      - DATABASE_URL=postgresql://capstone:${POSTGRES_PASSWORD}@postgres:5432/capstone_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-capstone}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-capstone_db}
       - REDIS_URL=redis://redis:6379/0  # Nếu cần cache
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCS_BUCKET_GOLD=${GCS_BUCKET_GOLD:-big-data-group-4-gold}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ../../dashboard/backend:/app:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
     depends_on:
       postgres:
         condition: service_healthy
+      redis:  
+        condition: service_healthy
+        optional: true
     networks:
       - capstone-net
     deploy:
