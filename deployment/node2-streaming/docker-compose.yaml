@@ -131,20 +131,41 @@ services:
     restart: unless-stopped
 
   kafka-topic-init:
-    # One-shot init job: it should exit with code 0 after creating/describing
-    # the single project topic. It is not a long-running Kafka service.
+    # Long-running topic guard. It creates and validates the single project
+    # topic, then stays alive so operators do not mistake a successful one-shot
+    # exit for a crash in Docker Compose dashboards.
     image: confluentinc/cp-kafka:7.6.0
     container_name: node2-kafka-topic-init
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
     command: |
       bash -ec '
-        BOOTSTRAP_SERVERS="kafka-1:29092,kafka-2:29092,kafka-3:29092"
-        TOPIC_NAME="$${KAFKA_TOPIC_RAW:-traffic.us.raw}"
+        BOOTSTRAP_SERVERS="$${KAFKA_BOOTSTRAP_SERVERS}"
+        TOPIC_NAME="$${KAFKA_TOPIC_RAW}"
+
+        echo "Waiting for Kafka brokers at $${BOOTSTRAP_SERVERS}."
+        for i in $(seq 1 30); do
+          if kafka-broker-api-versions --bootstrap-server "$${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; then
+            break
+          fi
+          echo "Kafka not ready yet ($${i}/30)."
+          sleep 2
+        done
+
+        if ! kafka-broker-api-versions --bootstrap-server "$${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; then
+          echo "Kafka brokers not reachable after waiting. Exiting for restart."
+          exit 1
+        fi
 
         echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
         kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
 
         echo "Validating Kafka topic $${TOPIC_NAME}."
         kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+
+        echo "Kafka topic init complete. Holding container open."
+        tail -f /dev/null
       '
     networks:
       - capstone-net
@@ -155,7 +176,13 @@ services:
         condition: service_healthy
       kafka-3:
         condition: service_healthy
-    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_RAW}\" >/dev/null 2>&1"]
+      interval: 20s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
 
   # ==========================================================
   # 3 Producers - row_index modulo split avoids duplicate replay rows.
@@ -186,7 +213,7 @@ services:
       - capstone-net
     depends_on:
       kafka-topic-init:
-        condition: service_completed_successfully
+        condition: service_healthy
     restart: "no"
 
   producer-2:
@@ -215,7 +242,7 @@ services:
       - capstone-net
     depends_on:
       kafka-topic-init:
-        condition: service_completed_successfully
+        condition: service_healthy
     restart: "no"
 
   producer-3:
@@ -244,7 +271,7 @@ services:
       - capstone-net
     depends_on:
       kafka-topic-init:
-        condition: service_completed_successfully
+        condition: service_healthy
     restart: "no"
 
   # ==========================================================
@@ -270,7 +297,7 @@ services:
       - capstone-net
     depends_on:
       kafka-topic-init:
-        condition: service_completed_successfully
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -355,7 +382,7 @@ services:
       - capstone-net
     depends_on:
       kafka-topic-init:
-        condition: service_completed_successfully
+        condition: service_healthy
       flink-jobmanager:
         condition: service_started
     restart: on-failure
