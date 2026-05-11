@@ -149,10 +149,23 @@ jobs:
           HUNG_SSH_PRIVATE_KEY: ${{ secrets.HUNG_SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$HUNG_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/hung_vm_key
-          chmod 600 ~/.ssh/hung_vm_key
-          test -s ~/.ssh/hung_vm_key
-          echo "SUCCESS: VM SSH key installed for deploy job."
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          key = os.environ["HUNG_SSH_PRIVATE_KEY"].strip()
+          if "\\n" in key and "\n" not in key:
+              key = key.replace("\\n", "\n")
+          key = key.replace("\r\n", "\n").replace("\r", "\n")
+          if not key.endswith("\n"):
+              key += "\n"
+
+          key_path = Path.home() / ".ssh" / "hung_vm_key"
+          key_path.write_text(key, encoding="utf-8")
+          key_path.chmod(0o600)
+          PY
+          ssh-keygen -y -f ~/.ssh/hung_vm_key >/dev/null
+          echo "SUCCESS: VM SSH key installed and parsed for deploy job."
 
       - name: Upload .env.cloud to GCS
         run: |
@@ -171,7 +184,7 @@ jobs:
           BRANCH="${{ github.ref_name }}"
 
           SSH_USER="${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="${SSH_USER:-hung}"
+          SSH_USER="${SSH_USER:-runner}"
           NODE1_IP=$(gcloud compute instances describe node1-control \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
@@ -243,7 +256,7 @@ jobs:
           BRANCH="${{ github.ref_name }}"
 
           SSH_USER="${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="${SSH_USER:-hung}"
+          SSH_USER="${SSH_USER:-runner}"
           NODE2_IP=$(gcloud compute instances describe node2-streaming \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
@@ -300,7 +313,7 @@ jobs:
           echo "Deploying to Node 3 (Spot VM)..."
 
           SSH_USER="${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="${SSH_USER:-hung}"
+          SSH_USER="${SSH_USER:-runner}"
           NODE3_IP=$(gcloud compute instances describe node3-batch \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
