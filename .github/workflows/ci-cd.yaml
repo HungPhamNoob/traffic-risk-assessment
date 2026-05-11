@@ -167,6 +167,22 @@ jobs:
           ssh-keygen -y -f ~/.ssh/hung_vm_key >/dev/null
           echo "SUCCESS: VM SSH key installed and parsed for deploy job."
 
+      - name: Install VM SSH public keys
+        run: |
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-runner}"
+          PUBLIC_KEY="$(ssh-keygen -y -f ~/.ssh/hung_vm_key)"
+
+          for VM_NAME in node1-control node2-streaming node3-batch; do
+            echo "Installing deploy public key for ${SSH_USER}@${VM_NAME}."
+            gcloud compute instances add-metadata "${VM_NAME}" \
+              --zone="${GCP_ZONE}" \
+              --project="${GCP_PROJECT_ID}" \
+              --metadata="enable-oslogin=FALSE,ssh-keys=${SSH_USER}:${PUBLIC_KEY} ${SSH_USER}"
+          done
+
+          echo "SUCCESS: VM SSH metadata now matches HUNG_SSH_PRIVATE_KEY."
+
       - name: Upload .env.cloud to GCS
         run: |
           echo "=== Uploading .env.cloud to GCS ==="
