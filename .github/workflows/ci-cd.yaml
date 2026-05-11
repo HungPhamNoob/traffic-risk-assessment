@@ -48,7 +48,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install black flake8 pytest pytest-cov pandas numpy pyyaml requests python-dotenv
+          pip install black==24.3.0 flake8 pytest pytest-cov pandas numpy pyyaml requests python-dotenv
           pip install fastapi pydantic pydantic-settings prometheus-client psycopg2-binary scikit-learn pyarrow
 
       # Step 3: Check code formatting with Black
