@@ -196,6 +196,7 @@ services:
       postgres:
         condition: service_healthy
       redis:  
+        condition: service_started
     networks:
       - capstone-net
     deploy:
