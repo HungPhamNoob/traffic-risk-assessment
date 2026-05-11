@@ -241,6 +241,9 @@ CREATE TABLE IF NOT EXISTS {PG_TABLE} (
     is_night INT,
     model_status VARCHAR(20),
     inference_latency_ms DOUBLE PRECISION,
+    ingestion_time TIMESTAMP,
+    processed_time TIMESTAMP,
+    end_to_end_latency_ms DOUBLE PRECISION,
     geom GEOMETRY(Point, 4326),
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -254,7 +257,8 @@ INSERT INTO {PG_TABLE} (
     road_type_code, hour, day_of_week, is_weekend, is_rush_hour,
     is_junction, has_traffic_signal, is_crossing, is_roundabout,
     is_stop, is_station, is_railway, is_night,
-    model_status, inference_latency_ms, geom
+    model_status, inference_latency_ms, ingestion_time, processed_time,
+    end_to_end_latency_ms, geom
 ) VALUES (
     %(event_id)s, %(event_year)s, %(event_time)s, %(lat)s, %(lon)s,
     %(true_severity)s, %(predicted_severity)s, %(risk_score)s,
@@ -262,7 +266,8 @@ INSERT INTO {PG_TABLE} (
     %(road_type_code)s, %(hour)s, %(day_of_week)s, %(is_weekend)s, %(is_rush_hour)s,
     %(is_junction)s, %(has_traffic_signal)s, %(is_crossing)s, %(is_roundabout)s,
     %(is_stop)s, %(is_station)s, %(is_railway)s, %(is_night)s,
-    %(model_status)s, %(inference_latency_ms)s,
+    %(model_status)s, %(inference_latency_ms)s, %(ingestion_time)s,
+    %(processed_time)s, %(end_to_end_latency_ms)s,
     ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)
 )
 ON CONFLICT (event_id) DO UPDATE SET
@@ -272,6 +277,9 @@ ON CONFLICT (event_id) DO UPDATE SET
     risk_score = EXCLUDED.risk_score,
     model_status = EXCLUDED.model_status,
     inference_latency_ms = EXCLUDED.inference_latency_ms,
+    ingestion_time = EXCLUDED.ingestion_time,
+    processed_time = EXCLUDED.processed_time,
+    end_to_end_latency_ms = EXCLUDED.end_to_end_latency_ms,
     created_at = NOW();
 """
 
@@ -281,6 +289,9 @@ def insert_prediction_to_postgis(
     severity: Optional[int],
     risk_score: Optional[float],
     latency_ms: float,
+    ingestion_time: Optional[str],
+    processed_time: str,
+    end_to_end_latency_ms: Optional[float],
 ) -> None:
     """Insert a prediction record into PostGIS."""
     try:
@@ -327,6 +338,9 @@ def insert_prediction_to_postgis(
                     "is_night": features.get("is_night"),
                     "model_status": "ok" if severity is not None else "failed",
                     "inference_latency_ms": latency_ms,
+                    "ingestion_time": ingestion_time,
+                    "processed_time": processed_time,
+                    "end_to_end_latency_ms": end_to_end_latency_ms,
                 }
                 cur.execute(INSERT_SQL, data)
         conn.close()
@@ -347,6 +361,7 @@ def process_raw_message(raw_message: str) -> str:
     try:
         # 1. Parse
         raw_row = json.loads(raw_message)
+        ingestion_time = raw_row.get("_ingested_at_utc")
         # 2. Feature engineering. The shared builder defines the single
         # feature contract used by offline training, streaming inference, and
         # Spark retraining.
@@ -363,8 +378,31 @@ def process_raw_message(raw_message: str) -> str:
             risk_score = ML_FALLBACK_RISK_SCORE
 
         # 5. Insert into PostgreSQL
+        processed_time = datetime.now(timezone.utc).isoformat()
         latency = (time.time() - start) * 1000
-        insert_prediction_to_postgis(features, predicted_severity, risk_score, latency)
+        end_to_end_latency_ms = None
+        if ingestion_time:
+            try:
+                ingestion_dt = datetime.fromisoformat(
+                    str(ingestion_time).replace("Z", "+00:00")
+                )
+                processed_dt = datetime.fromisoformat(
+                    processed_time.replace("Z", "+00:00")
+                )
+                end_to_end_latency_ms = (
+                    processed_dt - ingestion_dt
+                ).total_seconds() * 1000
+            except ValueError:
+                end_to_end_latency_ms = None
+        insert_prediction_to_postgis(
+            features,
+            predicted_severity,
+            risk_score,
+            latency,
+            ingestion_time,
+            processed_time,
+            end_to_end_latency_ms,
+        )
 
         return f"OK: {features.get('event_id')}"
     except Exception as e:

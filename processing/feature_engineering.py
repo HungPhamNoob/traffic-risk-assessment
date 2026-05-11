@@ -40,6 +40,26 @@ def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
         return default
 
 
+def _clip_float(
+    value: Any,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    """
+    Convert a numeric value and clip it to a defensible physical range.
+
+    The US Accidents source occasionally contains weather outliers, such as
+    wind speeds above hurricane scale or visibility above normal reporting
+    limits. Clipping keeps the feature contract stable without dropping
+    otherwise useful accident records.
+    """
+    number = _safe_float(value, default=default)
+    if number is None:
+        number = default
+    return max(minimum, min(maximum, float(number)))
+
+
 def _safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
     """Convert a value to int, returning default if conversion fails."""
     try:
@@ -232,6 +252,10 @@ def build_features(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     if lat is None or lon is None or severity is None or not event_id:
         return None
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return None
+    if severity not in {1, 2, 3, 4}:
+        return None
 
     # ---- Time features ----
     event_year = event_time.year
@@ -242,10 +266,18 @@ def build_features(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     # ---- Weather features ----
     weather_code = encode_weather_condition(raw_row.get("Weather_Condition"))
-    temperature_f = _safe_float(raw_row.get("Temperature(F)"), default=50.0)
-    humidity = _safe_float(raw_row.get("Humidity(%)"), default=50.0)
-    wind_speed_mph = _safe_float(raw_row.get("Wind_Speed(mph)"), default=0.0)
-    visibility_mi = _safe_float(raw_row.get("Visibility(mi)"), default=10.0)
+    temperature_f = _clip_float(
+        raw_row.get("Temperature(F)"), default=50.0, minimum=-40.0, maximum=130.0
+    )
+    humidity = _clip_float(
+        raw_row.get("Humidity(%)"), default=50.0, minimum=0.0, maximum=100.0
+    )
+    wind_speed_mph = _clip_float(
+        raw_row.get("Wind_Speed(mph)"), default=0.0, minimum=0.0, maximum=100.0
+    )
+    visibility_mi = _clip_float(
+        raw_row.get("Visibility(mi)"), default=10.0, minimum=0.0, maximum=10.0
+    )
 
     # ---- Road type ----
     road_type_code = encode_road_type(raw_row.get("Street"))

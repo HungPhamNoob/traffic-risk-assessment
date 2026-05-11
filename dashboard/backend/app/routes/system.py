@@ -14,6 +14,7 @@ def get_system_status() -> dict:
     settings = get_settings()
     summary = overview_summary()
     return {
+        "environment": settings.environment,
         "kafka": {
             "topic": settings.kafka_topic_raw,
             "status": "configured",

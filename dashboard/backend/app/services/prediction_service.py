@@ -9,6 +9,16 @@ from app.core.config import get_settings
 from app.core.database import fetch_all, fetch_one
 
 
+def risk_level(score: float | None) -> str:
+    """Map a risk score to a dashboard label."""
+    value = float(score or 0.0)
+    if value >= 0.7:
+        return "high"
+    if value >= 0.4:
+        return "medium"
+    return "low"
+
+
 def table_identifier() -> sql.Identifier:
     """Return a safely quoted prediction table identifier."""
     return sql.Identifier(get_settings().prediction_table)
@@ -77,7 +87,15 @@ def map_points(
 
     query = sql.SQL(
         """
-        SELECT event_id, lat, lon, risk_score, predicted_severity, true_severity, event_time
+        SELECT
+            event_id,
+            lat,
+            lon,
+            risk_score,
+            predicted_severity,
+            true_severity,
+            event_time,
+            model_status
         FROM {table}
         WHERE {where_clause}
         ORDER BY event_time DESC NULLS LAST
@@ -91,6 +109,8 @@ def map_points(
     for row in rows:
         if row.get("event_time"):
             row["event_time"] = row["event_time"].isoformat()
+        row["risk_level"] = risk_level(row.get("risk_score"))
+        row["model_status"] = row.get("model_status") or "unknown"
     return {"points": rows}
 
 
@@ -106,6 +126,8 @@ def prediction_detail(event_id: str) -> dict[str, Any]:
         row["event_time"] = row["event_time"].isoformat()
     if row.get("created_at"):
         row["created_at"] = row["created_at"].isoformat()
+    row["risk_level"] = risk_level(row.get("risk_score"))
+    row["model_status"] = row.get("model_status") or "unknown"
     row.pop("geom", None)
     return row
 
@@ -114,7 +136,15 @@ def latest_predictions(limit: int) -> dict[str, list[dict[str, Any]]]:
     """Return the most recent prediction records."""
     query = sql.SQL(
         """
-        SELECT event_id, event_time, lat, lon, risk_score, predicted_severity, true_severity
+        SELECT
+            event_id,
+            event_time,
+            lat,
+            lon,
+            risk_score,
+            predicted_severity,
+            true_severity,
+            model_status
         FROM {table}
         ORDER BY event_time DESC NULLS LAST
         LIMIT %(limit)s
@@ -124,4 +154,6 @@ def latest_predictions(limit: int) -> dict[str, list[dict[str, Any]]]:
     for row in rows:
         if row.get("event_time"):
             row["event_time"] = row["event_time"].isoformat()
+        row["risk_level"] = risk_level(row.get("risk_score"))
+        row["model_status"] = row.get("model_status") or "unknown"
     return {"predictions": rows}

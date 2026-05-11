@@ -72,7 +72,7 @@ with DAG(
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&
                 export MLFLOW_TRACKING_URI=http://10.128.0.4:5000 &&
-                python ml/training/train_after_2020.py
+                python ml/training/h2o_after_2020.py
             " || {
                 echo "WARNING: Node 3 retrain failed. Airflow will retry later."
                 exit 1

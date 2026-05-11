@@ -2,15 +2,30 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from starlette.responses import Response
+import time
 
 from app.routes import (
     analytics,
+    docs_aliases,
     hotspots,
     model,
     overview,
     predictions,
     scenarios,
     system,
+)
+
+REQUEST_COUNT = Counter(
+    "traffic_api_requests_total",
+    "Total number of HTTP requests handled by the Traffic Risk API.",
+    ["method", "path", "status_code"],
+)
+REQUEST_LATENCY = Histogram(
+    "traffic_api_request_latency_seconds",
+    "HTTP request latency in seconds for the Traffic Risk API.",
+    ["method", "path"],
 )
 
 
@@ -29,10 +44,28 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def collect_request_metrics(request, call_next):
+    """Record request count and latency for Prometheus scraping."""
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start_time
+    path = request.url.path
+    REQUEST_COUNT.labels(request.method, path, str(response.status_code)).inc()
+    REQUEST_LATENCY.labels(request.method, path).observe(elapsed)
+    return response
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Return a lightweight process health response for load balancers and CI smoke tests."""
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    """Expose Prometheus metrics for local and cloud Grafana dashboards."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 app.include_router(overview.router, prefix="/api/v1/overview", tags=["overview"])
@@ -44,3 +77,6 @@ app.include_router(scenarios.router, prefix="/api/v1/scenarios", tags=["scenario
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
 app.include_router(model.router, prefix="/api/v1/model", tags=["model"])
+app.include_router(
+    docs_aliases.router, prefix="/api/v1", tags=["docs-compatible-aliases"]
+)

@@ -4,5 +4,6 @@ psycopg2-binary==2.9.9
 requests==2.32.3
 python-dotenv==1.0.1
 mlflow==2.12.1
+prometheus-client==0.20.0
 pydantic==2.7.4
 pydantic-settings==2.3.4

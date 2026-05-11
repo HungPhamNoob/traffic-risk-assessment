@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/maintenance/backup_checkpoints.sh - daily backup helper for Airflow or manual runs.
+# scripts/gcp/backup-checkpoints.sh - GCP backup helper for Airflow or manual runs.
 
 set -e
 

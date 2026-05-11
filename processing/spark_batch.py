@@ -11,7 +11,8 @@ Input:
     gs://big-data-group-4-silver/process/flink_features/
 
 Output:
-    gs://big-data-group-4-gold/features/retrain/
+    gs://big-data-group-4-gold/features/retrain/parquet/
+    gs://big-data-group-4-gold/features/retrain/csv/
 """
 
 import logging
@@ -36,6 +37,14 @@ SILVER_PATH = os.getenv(
 GOLD_RETRAIN_PATH = os.getenv(
     "GOLD_RETRAIN_PATH",
     "gs://big-data-group-4-gold/features/retrain",
+)
+GOLD_RETRAIN_PARQUET_PATH = os.getenv(
+    "GOLD_RETRAIN_PARQUET_PATH",
+    f"{GOLD_RETRAIN_PATH.rstrip('/')}/parquet",
+)
+GOLD_RETRAIN_CSV_PATH = os.getenv(
+    "GOLD_RETRAIN_CSV_PATH",
+    f"{GOLD_RETRAIN_PATH.rstrip('/')}/csv",
 )
 
 WRITE_PARTITIONS = int(os.getenv("SPARK_WRITE_PARTITIONS", "4"))
@@ -111,7 +120,8 @@ def main() -> None:
     logger.info("=" * 80)
     logger.info("Spark Silver -> Gold Parquet Job")
     logger.info("Silver path: %s", SILVER_PATH)
-    logger.info("Gold path:   %s", GOLD_RETRAIN_PATH)
+    logger.info("Gold Parquet path: %s", GOLD_RETRAIN_PARQUET_PATH)
+    logger.info("Gold CSV path:     %s", GOLD_RETRAIN_CSV_PATH)
     logger.info("Write partitions: %s", WRITE_PARTITIONS)
     logger.info("=" * 80)
 
@@ -161,16 +171,21 @@ def main() -> None:
             logger.warning("No valid rows after cleaning. Exiting.")
             return
 
-        logger.info("Writing Gold Parquet...")
+        logger.info("Writing Gold Parquet and CSV outputs...")
 
-        (
-            clean_df.repartition(WRITE_PARTITIONS, "event_year")
-            .write.mode("overwrite")
-            .partitionBy("event_year")
-            .parquet(GOLD_RETRAIN_PATH)
+        partitioned_df = clean_df.repartition(WRITE_PARTITIONS, "event_year")
+
+        partitioned_df.write.mode("overwrite").partitionBy("event_year").parquet(
+            GOLD_RETRAIN_PARQUET_PATH
+        )
+        partitioned_df.write.mode("overwrite").option("header", "true").csv(
+            GOLD_RETRAIN_CSV_PATH
         )
 
-        logger.info("Gold Parquet written successfully to %s", GOLD_RETRAIN_PATH)
+        logger.info(
+            "Gold Parquet written successfully to %s", GOLD_RETRAIN_PARQUET_PATH
+        )
+        logger.info("Gold CSV written successfully to %s", GOLD_RETRAIN_CSV_PATH)
 
     finally:
         spark.stop()

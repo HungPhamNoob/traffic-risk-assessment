@@ -14,7 +14,7 @@ Output:
     MLflow experiment run with metrics, model artifact, and registry entry.
 
 Example command:
-    python ml/training/train_before_2020.py
+    python ml/training/h2o_before_2020.py
 """
 
 import logging
@@ -24,6 +24,13 @@ import h2o
 from h2o.automl import H2OAutoML
 import mlflow
 import mlflow.h2o
+import pandas as pd
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_fscore_support,
+)
 
 # ============================================================
 # Logging
@@ -50,7 +57,11 @@ MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "traffic-risk-asses
 MODEL_NAME = os.getenv("ML_MODEL_NAME", "traffic-risk-model")
 MAX_RUNTIME_SECS = int(os.getenv("H2O_MAX_RUNTIME", "3600"))
 H2O_MAX_MEM = os.getenv("H2O_MAX_MEM", "2G")
-H2O_NTHREADS = 2
+H2O_NTHREADS = int(os.getenv("H2O_NTHREADS", "2"))
+USE_CLASS_SAMPLING_FACTORS = (
+    os.getenv("H2O_USE_CLASS_SAMPLING_FACTORS", "true").lower() == "true"
+)
+MAX_CLASS_SAMPLING_FACTOR = float(os.getenv("H2O_MAX_CLASS_SAMPLING_FACTOR", "100.0"))
 
 # Label column in the CSV
 LABEL_COLUMN = "true_severity"
@@ -61,6 +72,9 @@ EXCLUDED_COLUMNS = {
     "event_year",  # temporal split key, not a feature
     "event_time",  # timestamp metadata; derived time fields are used instead
     "true_severity",  # the label we want to predict
+    "ingestion_time_epoch",  # pipeline metric, not a traffic-risk feature
+    "processed_time_epoch",  # pipeline metric, not a traffic-risk feature
+    "end_to_end_latency_ms",  # observability metric, not a model feature
 }
 
 # Random seed for reproducibility
@@ -116,6 +130,160 @@ def log_metric_if_exists(perf, metric_name, mlflow_name=None, log_prefix="  "):
 
     logger.info("%s%s:                   N/A", log_prefix, metric_name.capitalize())
     return False
+
+
+def evaluate_classifier_with_sklearn(
+    model,
+    test_frame,
+    feature_columns: list[str],
+    label_column: str,
+) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame]:
+    """
+    Compute classification metrics that H2O does not always expose for multiclass models.
+
+    H2O's native performance object may omit accuracy, weighted F1, macro F1,
+    precision, or recall depending on the model family. The capstone report and
+    MLflow comparison need these metrics consistently, so this helper converts
+    the validation labels and predictions into pandas series and evaluates them
+    with scikit-learn.
+    """
+    prediction_frame = model.predict(test_frame[feature_columns])
+    prediction_df = prediction_frame.as_data_frame()
+    y_pred = prediction_df["predict"].astype(str)
+    y_true = test_frame[label_column].as_data_frame()[label_column].astype(str)
+    labels = sorted(
+        set(y_true.tolist()) | set(y_pred.tolist()), key=lambda value: int(float(value))
+    )
+
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=labels,
+        zero_division=0,
+    )
+
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "macro_precision": float(
+            precision_recall_fscore_support(
+                y_true, y_pred, labels=labels, average="macro", zero_division=0
+            )[0]
+        ),
+        "macro_recall": float(
+            precision_recall_fscore_support(
+                y_true, y_pred, labels=labels, average="macro", zero_division=0
+            )[1]
+        ),
+        "macro_f1": float(
+            f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)
+        ),
+        "weighted_precision": float(
+            precision_recall_fscore_support(
+                y_true, y_pred, labels=labels, average="weighted", zero_division=0
+            )[0]
+        ),
+        "weighted_recall": float(
+            precision_recall_fscore_support(
+                y_true, y_pred, labels=labels, average="weighted", zero_division=0
+            )[1]
+        ),
+        "weighted_f1": float(
+            f1_score(y_true, y_pred, labels=labels, average="weighted", zero_division=0)
+        ),
+    }
+
+    report_df = pd.DataFrame(
+        {
+            "class_label": labels,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support,
+        }
+    )
+
+    matrix = confusion_matrix(y_true, y_pred, labels=labels)
+    confusion_df = pd.DataFrame(
+        matrix,
+        index=[f"actual_{label}" for label in labels],
+        columns=[f"predicted_{label}" for label in labels],
+    )
+
+    return metrics, report_df, confusion_df
+
+
+def log_classifier_metrics(
+    metrics: dict[str, float],
+    report_df: pd.DataFrame,
+    confusion_df: pd.DataFrame,
+    artifact_prefix: str,
+) -> None:
+    """
+    Log complete classification metrics and readable CSV artifacts to MLflow.
+
+    Metrics are also printed to the console so training logs remain useful even
+    when the MLflow UI is not available during local development.
+    """
+    for metric_name, metric_value in metrics.items():
+        mlflow.log_metric(metric_name, metric_value)
+        logger.info("  %-24s %.6f", metric_name + ":", metric_value)
+
+    for _, row in report_df.iterrows():
+        class_label = str(row["class_label"])
+        mlflow.log_metric(f"class_{class_label}_precision", float(row["precision"]))
+        mlflow.log_metric(f"class_{class_label}_recall", float(row["recall"]))
+        mlflow.log_metric(f"class_{class_label}_f1", float(row["f1"]))
+        mlflow.log_metric(f"class_{class_label}_support", float(row["support"]))
+
+    logger.info("  Per-class classification report:\n%s", report_df)
+    logger.info("  Confusion matrix table:\n%s", confusion_df)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report_path = os.path.join(
+            tmpdir, f"{artifact_prefix}_classification_report.csv"
+        )
+        confusion_path = os.path.join(tmpdir, f"{artifact_prefix}_confusion_matrix.csv")
+        report_df.to_csv(report_path, index=False)
+        confusion_df.to_csv(confusion_path)
+        mlflow.log_artifact(report_path, artifact_path="metrics")
+        mlflow.log_artifact(confusion_path, artifact_path="metrics")
+
+
+def build_class_sampling_factors(label_distribution) -> tuple[list[float] | None, dict]:
+    """
+    Compute bounded H2O class sampling factors from the observed label distribution.
+
+    The US accident severity label is highly imbalanced. H2O's `balance_classes`
+    option helps, but explicit sampling factors make the rare-class strategy
+    auditable in training logs and MLflow. Factors are ordered by numeric class
+    label because H2O expects the list to follow the response domain order.
+    """
+    if not USE_CLASS_SAMPLING_FACTORS:
+        return None, {}
+
+    distribution_df = label_distribution.as_data_frame()
+    label_column = distribution_df.columns[0]
+    count_column = "Count"
+    counts = {
+        str(int(float(row[label_column]))): float(row[count_column])
+        for _, row in distribution_df.iterrows()
+    }
+    if not counts:
+        return None, {}
+
+    max_count = max(counts.values())
+    ordered_labels = sorted(counts.keys(), key=lambda value: int(float(value)))
+    factors = [
+        round(min(max_count / counts[label], MAX_CLASS_SAMPLING_FACTOR), 6)
+        for label in ordered_labels
+    ]
+    metadata = {
+        "ordered_labels": ordered_labels,
+        "class_counts": counts,
+        "class_sampling_factors": factors,
+        "max_class_sampling_factor": MAX_CLASS_SAMPLING_FACTOR,
+    }
+    return factors, metadata
 
 
 def materialize_training_csv(data_path: str) -> str:
@@ -193,6 +361,15 @@ def main():
     # Log label distribution
     label_dist = df_h2o[LABEL_COLUMN].table()
     logger.info("Label distribution:\n%s", label_dist)
+    class_sampling_factors, class_sampling_metadata = build_class_sampling_factors(
+        label_dist
+    )
+    if class_sampling_factors:
+        logger.info(
+            "Class sampling labels:  %s",
+            class_sampling_metadata["ordered_labels"],
+        )
+        logger.info("Class sampling factors: %s", class_sampling_factors)
 
     # ---- Step 4: Train/test split ----
     logger.info("Step 4: Splitting into train/test (80/20)...")
@@ -219,15 +396,32 @@ def main():
         mlflow.log_param("n_features", len(feature_columns))
         mlflow.log_param("n_train_rows", train.nrows)
         mlflow.log_param("n_test_rows", test.nrows)
+        if class_sampling_factors:
+            mlflow.log_param(
+                "class_sampling_labels",
+                ",".join(class_sampling_metadata["ordered_labels"]),
+            )
+            mlflow.log_param(
+                "class_sampling_factors",
+                ",".join(str(value) for value in class_sampling_factors),
+            )
+            mlflow.log_param(
+                "max_class_sampling_factor",
+                class_sampling_metadata["max_class_sampling_factor"],
+            )
 
-        aml = H2OAutoML(
-            max_runtime_secs=MAX_RUNTIME_SECS,
-            seed=SEED,
-            project_name="traffic_risk",
-            balance_classes=True,
-            class_sampling_factors=[1.0, 1.5, 2.5, 4.0],
-            max_after_balance_size=5.0,
-        )
+        automl_parameters = {
+            "max_runtime_secs": MAX_RUNTIME_SECS,
+            "seed": SEED,
+            "project_name": "traffic_risk",
+            "balance_classes": True,
+            "max_after_balance_size": 5.0,
+            "sort_metric": "mean_per_class_error",
+        }
+        if class_sampling_factors:
+            automl_parameters["class_sampling_factors"] = class_sampling_factors
+
+        aml = H2OAutoML(**automl_parameters)
 
         aml.train(
             x=feature_columns,
@@ -250,17 +444,31 @@ def main():
         logger.info("Model IDs: %s", top_model_ids)
 
         best_model = None
+        best_macro_f1 = -1.0
         best_logloss = float("inf")
+        best_metrics = {}
 
         for rank, model_id in enumerate(top_model_ids, start=1):
             model = h2o.get_model(model_id)
             model_perf = model.model_performance(test)
+            sklearn_metrics, report_df, confusion_df = evaluate_classifier_with_sklearn(
+                model,
+                test,
+                feature_columns,
+                LABEL_COLUMN,
+            )
 
-            # Track the best model (lowest logloss)
+            # Track the best model using macro F1 first because severity classes
+            # are strongly imbalanced. Logloss remains a tie-breaker.
             current_logloss = float(model_perf.logloss())
-            if current_logloss < best_logloss:
+            current_macro_f1 = sklearn_metrics["macro_f1"]
+            if current_macro_f1 > best_macro_f1 or (
+                current_macro_f1 == best_macro_f1 and current_logloss < best_logloss
+            ):
+                best_macro_f1 = current_macro_f1
                 best_logloss = current_logloss
                 best_model = model
+                best_metrics = sklearn_metrics
 
             logger.info("-" * 60)
             logger.info("Evaluating model rank %d: %s (%s)", rank, model_id, model.algo)
@@ -293,6 +501,12 @@ def main():
                 log_metric_if_exists(model_perf, "F1")
                 log_metric_if_exists(model_perf, "precision")
                 log_metric_if_exists(model_perf, "recall")
+                log_classifier_metrics(
+                    sklearn_metrics,
+                    report_df,
+                    confusion_df,
+                    artifact_prefix=f"rank{rank}_{model.algo}",
+                )
 
                 # --- Confusion matrix ---
                 try:
@@ -307,9 +521,15 @@ def main():
 
         # ---- Step 9: Register the best model ----
         logger.info("=" * 60)
-        logger.info("Registering the best model (lowest logloss)...")
+        logger.info(
+            "Registering the best model (highest macro F1, logloss tie-breaker)..."
+        )
         logger.info("Best model ID: %s", best_model.model_id)
         logger.info("Best model algorithm: %s", best_model.algo)
+        logger.info("Best model macro F1: %.6f", best_macro_f1)
+        logger.info(
+            "Best model weighted F1: %.6f", best_metrics.get("weighted_f1", 0.0)
+        )
         logger.info("Best model logloss: %.6f", best_logloss)
 
         # Log best model as a separate artifact

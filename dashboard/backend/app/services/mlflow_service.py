@@ -67,6 +67,36 @@ def normalize_prediction(raw_prediction: Any) -> tuple[int, float]:
     return predicted_severity, risk_score
 
 
+def heuristic_prediction(scenario: ScenarioInput) -> tuple[int, float]:
+    """
+    Produce a deterministic fallback prediction when MLflow serving is unavailable.
+
+    The fallback is intentionally simple and transparent. It is used only for
+    local dashboard/API demonstrations when the registered MLflow model server
+    has not been started yet. Production cloud mode should use MLflow serving.
+    """
+    score = 0.18
+    score += 0.20 if scenario.is_rush_hour else 0.0
+    score += 0.12 if scenario.is_night else 0.0
+    score += 0.10 if scenario.is_junction else 0.0
+    score += 0.08 if scenario.is_crossing else 0.0
+    score += 0.08 if scenario.has_traffic_signal else 0.0
+    score += 0.10 if scenario.weather_code in {1, 2, 3, 4, 6} else 0.0
+    score += max(0.0, (10.0 - scenario.visibility_mi) / 10.0) * 0.18
+    score += min(max(scenario.wind_speed_mph, 0.0), 100.0) / 100.0 * 0.10
+    score = max(0.0, min(1.0, score))
+
+    if score >= 0.75:
+        severity = 4
+    elif score >= 0.50:
+        severity = 3
+    elif score >= 0.25:
+        severity = 2
+    else:
+        severity = 1
+    return severity, score
+
+
 def predict_scenario(scenario: ScenarioInput) -> dict[str, Any]:
     """Send one scenario to MLflow serving and return dashboard-ready prediction data."""
     settings = get_settings()
@@ -80,18 +110,22 @@ def predict_scenario(scenario: ScenarioInput) -> dict[str, Any]:
         }
     }
 
-    response = requests.post(
-        settings.mlflow_serving_endpoint,
-        json=payload,
-        timeout=10,
-        headers={"Content-Type": "application/json"},
-    )
-    response.raise_for_status()
-
-    predictions = response.json().get("predictions", [])
-    predicted_severity, risk_score = normalize_prediction(
-        predictions[0] if predictions else None
-    )
+    model_status = "ok"
+    try:
+        response = requests.post(
+            settings.mlflow_serving_endpoint,
+            json=payload,
+            timeout=10,
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        predictions = response.json().get("predictions", [])
+        predicted_severity, risk_score = normalize_prediction(
+            predictions[0] if predictions else None
+        )
+    except requests.RequestException:
+        predicted_severity, risk_score = heuristic_prediction(scenario)
+        model_status = "heuristic_fallback"
 
     return {
         "predicted_severity": predicted_severity,
@@ -99,4 +133,5 @@ def predict_scenario(scenario: ScenarioInput) -> dict[str, Any]:
         "risk_level": risk_level(risk_score),
         "model_name": settings.model_name,
         "model_version": settings.model_version or "latest",
+        "model_status": model_status,
     }

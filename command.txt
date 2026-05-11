@@ -1,0 +1,95 @@
+# Local setup
+# Copy the local environment template when .env does not exist.
+cp .env.example .env
+
+# Install Python dependencies into the existing virtual environment.
+.venv/bin/python -m pip install -r requirements.txt
+
+# Validate code style, tests, Python compile checks, and Docker Compose syntax.
+make -f makefile/local/Makefile validate
+
+# Start local core services: ZooKeeper, Kafka brokers, PostgreSQL, Redis, MLflow, FastAPI, Prometheus, and Grafana.
+make -f makefile/local/Makefile up
+
+# Start Spark master and three Spark workers for local batch processing.
+make -f makefile/local/Makefile up-batch
+
+# Start Airflow locally when orchestration testing is needed.
+make -f makefile/local/Makefile up-orchestration
+
+# Run the local end-to-end pipeline with a bounded replay sample.
+make -f makefile/local/Makefile pipeline
+
+# Run the local full replay path and include before-2020 H2O training.
+# This is heavier and should be used when the laptop has enough time and memory.
+make -f makefile/local/Makefile full-pipeline
+
+# Regenerate before-2020 H2O feature data from the raw pretraining split.
+.venv/bin/python ml/dataset/dataset_offline.py
+
+# Train the offline H2O model on before-2020 data.
+.venv/bin/python ml/training/h2o_before_2020.py
+
+# Retrain H2O from Gold after-2020 data.
+.venv/bin/python ml/training/h2o_after_2020.py
+
+# Run the Spark Silver-to-Gold job. Gold writes both Parquet and CSV.
+.venv/bin/spark-submit --master local[*] processing/spark_batch.py
+
+# Check local API and Prometheus metrics.
+curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8000/api/v1/system/status
+curl -fsS http://localhost:8000/api/v1/system/health
+curl -fsS http://localhost:8000/api/v1/overview/summary
+curl -fsS http://localhost:8000/metrics | head -40
+
+# Check Spark and monitoring UIs.
+curl -fsS http://localhost:8080/json/
+curl -fsS http://localhost:9090/-/ready
+curl -fsS http://localhost:3001/api/health
+
+# Reset local realtime outputs and checkpoints without deleting the raw dataset.
+make -f makefile/local/Makefile reset-realtime
+
+# Restart Docker when Docker returns permission-denied errors while stopping stale containers.
+# On machines using Snap Docker, this target also unloads the stale docker-default
+# AppArmor profile that can block Docker from signaling old containers.
+make -f makefile/local/Makefile docker-recover
+
+# GCP operations
+# Upload the cloud environment file used by CI/CD and VM bootstrap scripts.
+make -f makefile/gcp/Makefile sync-env
+
+# Start Node 1 services: PostgreSQL, Airflow, MLflow, FastAPI, Prometheus, and Grafana.
+make -f makefile/gcp/Makefile node1
+
+# Start Node 2 streaming services: ZooKeeper, three Kafka brokers, three producers, Flink, and Redis.
+make -f makefile/gcp/Makefile node2
+
+# Start Node 3 batch services: Spark master and three Spark workers.
+make -f makefile/gcp/Makefile node3
+
+# Start Node 2 and Node 3 together to keep streaming and batch checkpoints synchronized.
+make -f makefile/gcp/Makefile start-node23
+
+# Reset both Flink and Spark realtime checkpoints together.
+make -f makefile/gcp/Makefile reset-realtime
+
+# Print Docker Compose status across the three GCP nodes.
+make -f makefile/gcp/Makefile status
+
+# GitHub push to branch hung1.
+# Keep the token outside Git history. Export the token only in the current shell.
+export GITHUB_TOKEN="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"
+git init
+git config --global user.name "HungPhamNoob"
+git config --global user.email "hungvp711@gmail.com"
+git add .
+git commit -m "commit"
+git remote add origin https://github.com/HungPhamNoob/traffic-risk-assessment.git 2>/dev/null || true
+git remote set-url origin "https://${GITHUB_TOKEN}@github.com/HungPhamNoob/traffic-risk-assessment.git"
+git branch -M hung1
+git push -u origin hung1
+
+# The Makefile target performs the same commit and push flow.
+GITHUB_TOKEN="${GITHUB_TOKEN}" make -f makefile/local/Makefile git-push-hung1

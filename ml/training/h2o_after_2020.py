@@ -17,7 +17,7 @@ Output:
     MLflow experiment run with metrics, new model version in Registry.
     Flink automatically picks up the latest version.
 
-Differences from train_before_2020.py:
+Differences from h2o_before_2020.py:
     - Reads from dynamic GCS path (latest merged data).
     - Tags the run as "retrain_online".
     - Uses the same H2O AutoML + MLflow logging logic.
@@ -25,10 +25,19 @@ Differences from train_before_2020.py:
 
 import os
 import logging
+import tempfile
+from pathlib import Path
 import h2o
 from h2o.automl import H2OAutoML
 import mlflow
 import mlflow.h2o
+import pandas as pd
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_fscore_support,
+)
 
 # ============================================================
 # Logging
@@ -45,9 +54,13 @@ logger = logging.getLogger("h2o-retrain-online")
 # Configuration
 # ============================================================
 
-# Dynamic path - use the latest merged retrain data on GCS
+# Dynamic path - use the latest merged retrain data from local Gold or GCS Gold.
 DEFAULT_DATA_PATH = os.getenv(
-    "RETRAIN_DATA_PATH", "gs://big-data-group-4-gold/features/retrain/"
+    "RETRAIN_DATA_PATH",
+    os.getenv(
+        "GOLD_RETRAIN_CSV_PATH",
+        os.getenv("GOLD_RETRAIN_PATH", "gs://big-data-group-4-gold/features/retrain/"),
+    ),
 )
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://10.128.0.4:5000")
@@ -59,6 +72,10 @@ MAX_RUNTIME_SECS = int(
 )  # Shorter for hourly retrain
 H2O_MAX_MEM = os.getenv("H2O_MAX_MEM", "2G")
 H2O_NTHREADS = int(os.getenv("H2O_NTHREADS", "2"))
+USE_CLASS_SAMPLING_FACTORS = (
+    os.getenv("H2O_USE_CLASS_SAMPLING_FACTORS", "true").lower() == "true"
+)
+MAX_CLASS_SAMPLING_FACTOR = float(os.getenv("H2O_MAX_CLASS_SAMPLING_FACTOR", "100.0"))
 
 # Label column in the Parquet/CSV
 LABEL_COLUMN = "true_severity"
@@ -69,6 +86,9 @@ EXCLUDED_COLUMNS = {
     "event_year",
     "event_time",
     "true_severity",
+    "ingestion_time_epoch",
+    "processed_time_epoch",
+    "end_to_end_latency_ms",
 }
 
 SEED = int(os.getenv("H2O_SEED", "42"))
@@ -116,18 +136,187 @@ def log_metric_if_exists(perf, metric_name, mlflow_name=None, log_prefix="  "):
     return False
 
 
+def evaluate_classifier_with_sklearn(
+    model,
+    test_frame,
+    feature_columns: list[str],
+    label_column: str,
+) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame]:
+    """
+    Compute complete multiclass classification metrics for retraining runs.
+
+    The online retraining report must remain comparable to the offline
+    pretraining report, so this helper logs the same accuracy, macro F1,
+    weighted F1, precision, recall, per-class metrics, and confusion matrix.
+    """
+    prediction_frame = model.predict(test_frame[feature_columns])
+    prediction_df = prediction_frame.as_data_frame()
+    y_pred = prediction_df["predict"].astype(str)
+    y_true = test_frame[label_column].as_data_frame()[label_column].astype(str)
+    labels = sorted(
+        set(y_true.tolist()) | set(y_pred.tolist()), key=lambda value: int(float(value))
+    )
+
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=labels,
+        zero_division=0,
+    )
+
+    macro = precision_recall_fscore_support(
+        y_true, y_pred, labels=labels, average="macro", zero_division=0
+    )
+    weighted = precision_recall_fscore_support(
+        y_true, y_pred, labels=labels, average="weighted", zero_division=0
+    )
+
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "macro_precision": float(macro[0]),
+        "macro_recall": float(macro[1]),
+        "macro_f1": float(
+            f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)
+        ),
+        "weighted_precision": float(weighted[0]),
+        "weighted_recall": float(weighted[1]),
+        "weighted_f1": float(
+            f1_score(y_true, y_pred, labels=labels, average="weighted", zero_division=0)
+        ),
+    }
+
+    report_df = pd.DataFrame(
+        {
+            "class_label": labels,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support,
+        }
+    )
+    matrix = confusion_matrix(y_true, y_pred, labels=labels)
+    confusion_df = pd.DataFrame(
+        matrix,
+        index=[f"actual_{label}" for label in labels],
+        columns=[f"predicted_{label}" for label in labels],
+    )
+    return metrics, report_df, confusion_df
+
+
+def log_classifier_metrics(
+    metrics: dict[str, float],
+    report_df: pd.DataFrame,
+    confusion_df: pd.DataFrame,
+    artifact_prefix: str,
+) -> None:
+    """Log sklearn metrics and CSV artifacts to MLflow and training logs."""
+    for metric_name, metric_value in metrics.items():
+        mlflow.log_metric(metric_name, metric_value)
+        logger.info("  %-24s %.6f", metric_name + ":", metric_value)
+
+    for _, row in report_df.iterrows():
+        class_label = str(row["class_label"])
+        mlflow.log_metric(f"class_{class_label}_precision", float(row["precision"]))
+        mlflow.log_metric(f"class_{class_label}_recall", float(row["recall"]))
+        mlflow.log_metric(f"class_{class_label}_f1", float(row["f1"]))
+        mlflow.log_metric(f"class_{class_label}_support", float(row["support"]))
+
+    logger.info("  Per-class classification report:\n%s", report_df)
+    logger.info("  Confusion matrix table:\n%s", confusion_df)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report_path = os.path.join(
+            tmpdir, f"{artifact_prefix}_classification_report.csv"
+        )
+        confusion_path = os.path.join(tmpdir, f"{artifact_prefix}_confusion_matrix.csv")
+        report_df.to_csv(report_path, index=False)
+        confusion_df.to_csv(confusion_path)
+        mlflow.log_artifact(report_path, artifact_path="metrics")
+        mlflow.log_artifact(confusion_path, artifact_path="metrics")
+
+
+def build_class_sampling_factors(label_distribution) -> tuple[list[float] | None, dict]:
+    """
+    Compute bounded H2O class sampling factors from the observed label distribution.
+
+    Online retraining data can be more imbalanced than the offline split. This
+    helper keeps the rare-class treatment explicit, reproducible, and bounded
+    so hourly retraining remains stable on CPU-based VMs.
+    """
+    if not USE_CLASS_SAMPLING_FACTORS:
+        return None, {}
+
+    distribution_df = label_distribution.as_data_frame()
+    label_column = distribution_df.columns[0]
+    count_column = "Count"
+    counts = {
+        str(int(float(row[label_column]))): float(row[count_column])
+        for _, row in distribution_df.iterrows()
+    }
+    if not counts:
+        return None, {}
+
+    max_count = max(counts.values())
+    ordered_labels = sorted(counts.keys(), key=lambda value: int(float(value)))
+    factors = [
+        round(min(max_count / counts[label], MAX_CLASS_SAMPLING_FACTOR), 6)
+        for label in ordered_labels
+    ]
+    metadata = {
+        "ordered_labels": ordered_labels,
+        "class_counts": counts,
+        "class_sampling_factors": factors,
+        "max_class_sampling_factor": MAX_CLASS_SAMPLING_FACTOR,
+    }
+    return factors, metadata
+
+
 # ============================================================
 # Find latest retrain data on GCS
 # ============================================================
 def find_latest_data(data_root: str) -> str:
     """
-    Find the most recent retrain data directory on GCS.
+    Find the most recent retrain data directory or file.
 
     Expected GCS structure:
         gs://bucket/features/retrain/20260510_14/
         gs://bucket/features/retrain/20260510_15/
         ...
     """
+    if not data_root.startswith("gs://"):
+        local_path = Path(data_root)
+        if local_path.is_dir():
+            candidate_files = sorted(
+                [
+                    path
+                    for extension in ("*.csv", "*.parquet")
+                    for path in local_path.rglob(extension)
+                ],
+                key=lambda path: path.stat().st_mtime,
+            )
+            if candidate_files:
+                latest_file = str(candidate_files[-1])
+                logger.info("Using latest local retrain data file: %s", latest_file)
+                return latest_file
+            logger.warning(
+                "Local retrain directory exists but contains no CSV or Parquet files: %s",
+                data_root,
+            )
+        elif local_path.exists():
+            logger.info("Using local retrain data path: %s", data_root)
+            return data_root
+
+        fallback = os.getenv(
+            "US_TRAIN_OFFLINE_PATH",
+            "data/process/us_train_offline_before_2020.csv",
+        )
+        logger.warning(
+            "Local retrain path does not exist: %s. Falling back to %s",
+            data_root,
+            fallback,
+        )
+        return fallback
+
     try:
         # Use gsutil to list directories
         import subprocess
@@ -203,6 +392,15 @@ def main():
 
     label_dist = df_h2o[LABEL_COLUMN].table()
     logger.info("Label distribution:\n%s", label_dist)
+    class_sampling_factors, class_sampling_metadata = build_class_sampling_factors(
+        label_dist
+    )
+    if class_sampling_factors:
+        logger.info(
+            "Class sampling labels:  %s",
+            class_sampling_metadata["ordered_labels"],
+        )
+        logger.info("Class sampling factors: %s", class_sampling_factors)
 
     # ---- Step 4: Train/test split ----
     logger.info("Step 4: Splitting into train/test (80/20)...")
@@ -230,15 +428,32 @@ def main():
         mlflow.log_param("n_train_rows", train.nrows)
         mlflow.log_param("n_test_rows", test.nrows)
         mlflow.log_param("data_path", data_path)
+        if class_sampling_factors:
+            mlflow.log_param(
+                "class_sampling_labels",
+                ",".join(class_sampling_metadata["ordered_labels"]),
+            )
+            mlflow.log_param(
+                "class_sampling_factors",
+                ",".join(str(value) for value in class_sampling_factors),
+            )
+            mlflow.log_param(
+                "max_class_sampling_factor",
+                class_sampling_metadata["max_class_sampling_factor"],
+            )
 
-        aml = H2OAutoML(
-            max_runtime_secs=MAX_RUNTIME_SECS,
-            seed=SEED,
-            project_name="traffic_risk_retrain",
-            balance_classes=True,
-            class_sampling_factors=[1.0, 1.5, 2.5, 4.0],
-            max_after_balance_size=5.0,
-        )
+        automl_parameters = {
+            "max_runtime_secs": MAX_RUNTIME_SECS,
+            "seed": SEED,
+            "project_name": "traffic_risk_retrain",
+            "balance_classes": True,
+            "max_after_balance_size": 5.0,
+            "sort_metric": "mean_per_class_error",
+        }
+        if class_sampling_factors:
+            automl_parameters["class_sampling_factors"] = class_sampling_factors
+
+        aml = H2OAutoML(**automl_parameters)
 
         aml.train(
             x=feature_columns,
@@ -250,26 +465,39 @@ def main():
 
         # ---- Step 7: Leaderboard ----
         lb = aml.leaderboard
-        lb_df = lb.head(rows=5).as_data_frame()
-        logger.info("H2O AutoML leaderboard (top 5):\n%s", lb_df)
+        lb_df = lb.head(rows=10).as_data_frame()
+        logger.info("H2O AutoML leaderboard (top 10):\n%s", lb_df)
 
-        # ---- Step 8: Evaluate and log top 5 models ----
+        # ---- Step 8: Evaluate and log top 10 models ----
         top_model_ids = lb_df["model_id"].tolist()
         logger.info(
             "Step 8: Evaluating and logging top %s models...", len(top_model_ids)
         )
 
         best_model = None
+        best_macro_f1 = -1.0
         best_logloss = float("inf")
+        best_metrics = {}
 
         for rank, model_id in enumerate(top_model_ids, start=1):
             model = h2o.get_model(model_id)
             model_perf = model.model_performance(test)
+            sklearn_metrics, report_df, confusion_df = evaluate_classifier_with_sklearn(
+                model,
+                test,
+                feature_columns,
+                LABEL_COLUMN,
+            )
 
             current_logloss = float(model_perf.logloss())
-            if current_logloss < best_logloss:
+            current_macro_f1 = sklearn_metrics["macro_f1"]
+            if current_macro_f1 > best_macro_f1 or (
+                current_macro_f1 == best_macro_f1 and current_logloss < best_logloss
+            ):
+                best_macro_f1 = current_macro_f1
                 best_logloss = current_logloss
                 best_model = model
+                best_metrics = sklearn_metrics
 
             logger.info("-" * 60)
             logger.info("Evaluating model rank %d: %s (%s)", rank, model_id, model.algo)
@@ -292,6 +520,12 @@ def main():
                 log_metric_if_exists(model_perf, "F1")
                 log_metric_if_exists(model_perf, "precision")
                 log_metric_if_exists(model_perf, "recall")
+                log_classifier_metrics(
+                    sklearn_metrics,
+                    report_df,
+                    confusion_df,
+                    artifact_prefix=f"retrain_rank{rank}_{model.algo}",
+                )
 
                 try:
                     if hasattr(model_perf, "confusion_matrix"):
@@ -307,6 +541,10 @@ def main():
         logger.info("Registering the best retrained model...")
         logger.info("Best model ID: %s", best_model.model_id)
         logger.info("Best model algorithm: %s", best_model.algo)
+        logger.info("Best model macro F1: %.6f", best_macro_f1)
+        logger.info(
+            "Best model weighted F1: %.6f", best_metrics.get("weighted_f1", 0.0)
+        )
         logger.info("Best model logloss: %.6f", best_logloss)
 
         mlflow.h2o.log_model(best_model, artifact_path="best_model")

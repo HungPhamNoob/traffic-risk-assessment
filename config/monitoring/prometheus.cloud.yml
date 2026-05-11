@@ -1,0 +1,51 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: node1_fastapi
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fastapi:8000"]
+
+  - job_name: cloud_http_health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://fastapi:8000/health
+          - http://mlflow:5000/health
+          - http://10.128.0.5:8081
+          - http://10.128.0.6:8080
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: cloud_tcp_health
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+          - postgres:5432
+          - 10.128.0.5:9092
+          - 10.128.0.5:9093
+          - 10.128.0.5:9094
+          - 10.128.0.5:2181
+          - 10.128.0.6:7077
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

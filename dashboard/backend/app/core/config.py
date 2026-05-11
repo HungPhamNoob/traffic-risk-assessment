@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime settings loaded from `.env`, `.env.cloud`, or process environment."""
 
+    environment: str = Field(default="local", alias="ENV")
+
     postgres_user: str = Field(default="capstone", alias="POSTGRES_USER")
     postgres_password: str = Field(default="123", alias="POSTGRES_PASSWORD")
     postgres_db: str = Field(default="capstone_db", alias="POSTGRES_DB")
@@ -45,6 +47,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
+        protected_namespaces=("settings_",),
     )
 
 

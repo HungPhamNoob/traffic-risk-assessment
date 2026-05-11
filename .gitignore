@@ -57,7 +57,6 @@ derby.log
 # ==================== LOGS AND LOCAL COMMAND OUTPUT ====================
 *.log
 logs/
-command.txt
 
 # ==================== FRONTEND / NODE ====================
 node_modules/
@@ -76,7 +75,10 @@ Desktop.ini
 
 # ==================== REFERENCE MATERIAL ====================
 # Vendor projects and paper extracts are local references only.
-vendor/
+vendor/**
+!vendor/
+!vendor/baseline_*.md
+ml/notebooks/vendor/
 paper/
 vendor/**/.venv/
 vendor/**/__pycache__/

@@ -5,6 +5,32 @@
 # ============================================================
 
 services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: node2-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_HEAP_OPTS: -Xms128m -Xmx512m
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    networks:
+      - capstone-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo srvr | nc localhost 2181 | grep 'Mode:'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    restart: unless-stopped
+
   # ==========================================================
   # 3 Kafka Brokers
   # ==========================================================
@@ -14,23 +40,24 @@ services:
     ports:
       - "9092:9092"
     environment:
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-10.128.0.5}:9092
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:29092,EXTERNAL://${NODE2_INTERNAL_IP:-10.128.0.5}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     volumes:
       - kafka_data_1:/var/lib/kafka/data
     networks:
       - capstone-net
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 30s
@@ -45,23 +72,24 @@ services:
     ports:
       - "9093:9092"
     environment:
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_NODE_ID: 2
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-10.128.0.5}:9093
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:29092,EXTERNAL://${NODE2_INTERNAL_IP:-10.128.0.5}:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     volumes:
       - kafka_data_2:/var/lib/kafka/data
     networks:
       - capstone-net
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 30s
@@ -76,23 +104,24 @@ services:
     ports:
       - "9094:9092"
     environment:
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_NODE_ID: 3
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-10.128.0.5}:9094
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:29092,EXTERNAL://${NODE2_INTERNAL_IP:-10.128.0.5}:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     volumes:
       - kafka_data_3:/var/lib/kafka/data
     networks:
       - capstone-net
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 30s
@@ -106,12 +135,12 @@ services:
     container_name: node2-kafka-topic-init
     command: >
       bash -c "
-        kafka-topics --bootstrap-server kafka-1:9092,kafka-2:9092,kafka-3:9092
+        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092
         --create --if-not-exists
         --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
         --partitions 1
         --replication-factor 3 &&
-        kafka-topics --bootstrap-server kafka-1:9092,kafka-2:9092,kafka-3:9092
+        kafka-topics --bootstrap-server kafka-1:29092,kafka-2:29092,kafka-3:29092
         --describe --topic ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       "
     networks:
@@ -138,7 +167,7 @@ services:
       python us_replay_producer.py
       "
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
@@ -167,7 +196,7 @@ services:
       python us_replay_producer.py
       "
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
@@ -196,7 +225,7 @@ services:
       python us_replay_producer.py
       "
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
@@ -302,7 +331,7 @@ services:
         python processing/flink_streaming.py
       "
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       FLINK_INFERENCE_GROUP: ${FLINK_INFERENCE_GROUP:-flink-us-inference}
       FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}
@@ -334,6 +363,8 @@ networks:
     name: capstone-net
 
 volumes:
+  zookeeper_data:
+  zookeeper_log:
   kafka_data_1:
   kafka_data_2:
   kafka_data_3:

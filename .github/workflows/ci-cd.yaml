@@ -1,5 +1,5 @@
 # ============================================================
-# .github/workflows/cicd.yml
+# .github/workflows/ci-cd.yaml
 # CI/CD Pipeline for Road Accident Risk Analysis Platform
 # ============================================================
 # Triggers:
@@ -47,7 +47,9 @@ jobs:
 
       - name: Install Python dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install black flake8 pytest pytest-cov pandas numpy pyyaml requests python-dotenv
+          pip install fastapi pydantic pydantic-settings prometheus-client psycopg2-binary scikit-learn pyarrow
 
       # Step 3: Check code formatting with Black
       - name: Check code formatting (Black)
@@ -66,6 +68,19 @@ jobs:
       - name: Run unit tests
         run: |
           pytest tests/ -v --tb=short
+
+      # Step 6: Check Python syntax without importing heavy runtime services
+      - name: Compile Python files
+        run: |
+          python -m compileall dashboard/backend/app processing ingestion ml/dataset ml/training orchestration -q
+
+      # Step 7: Validate Docker Compose files used by local and GCP deployments
+      - name: Validate Docker Compose files
+        run: |
+          docker compose --env-file .env.example --file docker-compose.yaml config --quiet
+          docker compose --env-file .env.cloud --file deployment/node1-control/docker-compose.yaml config --quiet
+          docker compose --env-file .env.cloud --file deployment/node2-streaming/docker-compose.yaml config --quiet
+          docker compose --env-file .env.cloud --file deployment/node3-batch/docker-compose.yaml config --quiet
 
   # ==========================================================
   # Job 2: Build Docker Images
@@ -155,14 +170,14 @@ jobs:
             echo "=== Pulling latest code from Git ==="
 
             # Fix Git permissions (in case sudo was used before)
-            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
+            sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
             git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 
             if [ ! -d /opt/traffic/.git ]; then
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
-                sudo chown -R $(whoami):$(whoami) /opt/traffic
+                sudo chown -R \$(whoami):\$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
                 git checkout $BRANCH
@@ -220,7 +235,7 @@ jobs:
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
-                sudo chown -R $(whoami):$(whoami) /opt/traffic
+                sudo chown -R \$(whoami):\$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
                 git checkout $BRANCH
@@ -270,7 +285,7 @@ jobs:
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
-                sudo chown -R $(whoami):$(whoami) /opt/traffic
+                sudo chown -R \$(whoami):\$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
                 git checkout $BRANCH

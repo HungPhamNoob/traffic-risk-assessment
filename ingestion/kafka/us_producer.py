@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from dotenv import load_dotenv
@@ -251,6 +252,7 @@ def main() -> None:
                     continue
 
                 key = row.get("ID") or f"row-{row_index}"
+                row["_ingested_at_utc"] = datetime.now(timezone.utc).isoformat()
                 value = json.dumps(row, ensure_ascii=False)
 
                 produce_with_backpressure(producer, KAFKA_TOPIC, key, value)

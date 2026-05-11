@@ -51,7 +51,7 @@ Run batch feature engineering and H2O training:
 
 ```bash
 uv run spark-submit --master local[*] processing/spark_batch.py
-uv run python ml/training/train_before_2020.py
+uv run python ml/training/h2o_before_2020.py
 ```
 
 ## GCP Target
