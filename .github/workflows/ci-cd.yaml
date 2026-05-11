@@ -206,6 +206,12 @@ jobs:
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 1 IP: $NODE1_IP"
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            .env.cloud "${SSH_USER}@${NODE1_IP}:/tmp/.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
@@ -238,24 +244,18 @@ jobs:
             fi
 
             echo "=== Loading cloud environment ==="
-            gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud /opt/traffic/.env.cloud
-            cp /opt/traffic/.env.cloud /opt/traffic/.env
-
-            echo "=== Logging into Docker registry ==="
-            gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+            cp /tmp/.env.cloud /opt/traffic/.env.cloud
+            cp /tmp/.env.cloud /opt/traffic/.env
 
             echo "=== Starting Node 1 services and offline training bootstrap ==="
-            cd deployment/node1-control
-            docker compose --env-file /opt/traffic/.env.cloud up -d --build
-            cd /opt/traffic
-            bash scripts/gcp/run-node1.sh
+            sudo -E bash scripts/gcp/run-node1.sh
 
             echo "=== Waiting for services to be healthy ==="
             sleep 45
 
             echo "=== Checking service health ==="
             cd /opt/traffic/deployment/node1-control
-            docker compose ps
+            sudo docker compose ps
           EOF
 
           echo "Node 1 deployment completed."
@@ -278,6 +278,12 @@ jobs:
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 2 IP: $NODE2_IP"
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            .env.cloud "${SSH_USER}@${NODE2_IP}:/tmp/.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
@@ -305,15 +311,15 @@ jobs:
             fi
 
             echo "=== Restarting streaming services ==="
-            gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud /opt/traffic/.env.cloud
-            cp /opt/traffic/.env.cloud /opt/traffic/.env
-            bash scripts/gcp/run-node2.sh
+            cp /tmp/.env.cloud /opt/traffic/.env.cloud
+            cp /tmp/.env.cloud /opt/traffic/.env
+            sudo -E bash scripts/gcp/run-node2.sh
 
             echo "=== Waiting for services ==="
             sleep 20
 
             cd /opt/traffic/deployment/node2-streaming
-            docker compose ps
+            sudo docker compose ps
           EOF
 
           echo "Node 2 deployment completed."
@@ -335,6 +341,12 @@ jobs:
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 3 IP: $NODE3_IP"
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            .env.cloud "${SSH_USER}@${NODE3_IP}:/tmp/.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
@@ -364,15 +376,15 @@ jobs:
             fi
 
             echo "=== Restarting batch services ==="
-            gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud /opt/traffic/.env.cloud
-            cp /opt/traffic/.env.cloud /opt/traffic/.env
-            bash scripts/gcp/run-node3.sh
+            cp /tmp/.env.cloud /opt/traffic/.env.cloud
+            cp /tmp/.env.cloud /opt/traffic/.env
+            sudo -E bash scripts/gcp/run-node3.sh
 
             echo "=== Waiting for services ==="
             sleep 20
 
             cd /opt/traffic/deployment/node3-batch
-            docker compose ps
+            sudo docker compose ps
           EOF
 
           echo "Node 3 deployment completed."
