@@ -144,6 +144,16 @@ jobs:
       - name: Setup gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Prepare VM SSH key
+        env:
+          HUNG_SSH_PRIVATE_KEY: ${{ secrets.HUNG_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$HUNG_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/hung_vm_key
+          chmod 600 ~/.ssh/hung_vm_key
+          test -s ~/.ssh/hung_vm_key
+          echo "SUCCESS: VM SSH key installed for deploy job."
+
       - name: Upload .env.cloud to GCS
         run: |
           echo "=== Uploading .env.cloud to GCS ==="
@@ -160,11 +170,20 @@ jobs:
           echo "Deploying to Node 1 (Standard VM)..."
           BRANCH="${{ github.ref_name }}"
 
-          gcloud compute ssh node1-control \
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-hung}"
+          NODE1_IP=$(gcloud compute instances describe node1-control \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
-            --quiet \
-            --command="bash -s" << EOF
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          echo "Node 1 IP: $NODE1_IP"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE1_IP}" "bash -s" << EOF
             set -e
 
             echo "=== Pulling latest code from Git ==="
@@ -223,11 +242,20 @@ jobs:
           echo "Deploying to Node 2 (Spot VM)..."
           BRANCH="${{ github.ref_name }}"
 
-          gcloud compute ssh node2-streaming \
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-hung}"
+          NODE2_IP=$(gcloud compute instances describe node2-streaming \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
-            --quiet \
-            --command="bash -s" << EOF
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          echo "Node 2 IP: $NODE2_IP"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE2_IP}" "bash -s" << EOF
             set -e
 
             echo "=== Pulling latest code ==="
@@ -271,11 +299,20 @@ jobs:
         run: |
           echo "Deploying to Node 3 (Spot VM)..."
 
-          gcloud compute ssh node3-batch \
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-hung}"
+          NODE3_IP=$(gcloud compute instances describe node3-batch \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
-            --quiet \
-            --command="bash -s" << EOF
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          echo "Node 3 IP: $NODE3_IP"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE3_IP}" "bash -s" << EOF
             set -e
 
             echo "=== Pulling latest code ==="
