@@ -183,7 +183,6 @@ services:
       - "8000:8000"  # Expose ra ngoài để frontend gọi
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - REDIS_URL=redis://redis:6379/0  # Nếu cần cache
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCS_BUCKET_GOLD=${GCS_BUCKET_GOLD}
       - CORS_ORIGINS=${CORS_ORIGINS}
@@ -195,8 +194,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:  
-        condition: service_started
     networks:
       - capstone-net
     deploy:
