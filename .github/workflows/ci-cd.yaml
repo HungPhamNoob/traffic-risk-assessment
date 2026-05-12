@@ -213,6 +213,7 @@ jobs:
       # Step 4: Deploy Node 1 (Control Plane - Standard VM)
       # -------------------------------------------------------
       - name: Deploy to Node 1 (Control Plane)
+        continue-on-error: true
         run: |
           echo "Deploying to Node 1 (Standard VM)..."
           BRANCH="${{ github.ref_name }}"
