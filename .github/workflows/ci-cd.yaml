@@ -15,6 +15,10 @@ on:
   pull_request:
     branches: [ main, develop, hung1 ]
 
+concurrency:
+  group: traffic-cicd-${{ github.ref }}
+  cancel-in-progress: true
+
 # ============================================================
 # Environment variables (not secrets)
 # ============================================================
