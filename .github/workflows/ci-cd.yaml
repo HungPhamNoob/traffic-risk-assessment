@@ -289,6 +289,8 @@ jobs:
             if [ -f "\${TRAINING_PID_FILE}" ] && ps -p "\$(cat "\${TRAINING_PID_FILE}")" >/dev/null 2>&1; then
                 echo "Active full H2O training detected. Skipping Node 1 service restart to avoid interrupting MLflow tracking."
                 echo "Training PID: \$(cat "\${TRAINING_PID_FILE}")"
+                echo "Node 1 deployment is considered successful because the active full-training run owns MLflow until it completes."
+                exit 0
             else
                 sudo -E bash scripts/gcp/run-node1.sh
             fi
