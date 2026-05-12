@@ -206,11 +206,7 @@ services:
     command: >
       bash -c "
         pip install --no-cache-dir h2o==3.46.0.6 pandas numpy scikit-learn &&
-        mlflow models serve
-        -m models:/${ML_MODEL_NAME:-traffic-risk-model}/latest
-        -h 0.0.0.0
-        -p 5001
-        --env-manager local
+        mlflow models serve -m models:/${ML_MODEL_NAME:-traffic-risk-model}/latest -h 0.0.0.0 -p 5001 --env-manager local
       "
     depends_on:
       - mlflow

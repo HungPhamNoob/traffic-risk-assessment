@@ -29,6 +29,11 @@ else
 fi
 
 echo "Starting Node 1 Docker services..."
+echo "Preparing writable runtime directories for containers."
+mkdir -p orchestration/logs ml/mlruns
+chown -R 50000:0 orchestration/logs 2>/dev/null || true
+chmod -R g+rwX orchestration/logs 2>/dev/null || true
+
 echo "Removing stale Node 1 containers from previous Compose project names..."
 docker rm -f \
   node1-postgres \
