@@ -187,6 +187,7 @@ jobs:
         run: |
           echo "=== Uploading .env.cloud to GCS ==="
           echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
+          printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
           chmod 600 .env.cloud
           gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud
           echo "SUCCESS: .env.cloud uploaded."

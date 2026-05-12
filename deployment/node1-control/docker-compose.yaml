@@ -226,9 +226,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   fastapi:
-    build:
-      context: ../../dashboard/backend
-    image: traffic-risk-fastapi:latest
+    image: ${FASTAPI_IMAGE:-traffic-risk-fastapi:latest}
     container_name: node1-fastapi
     ports:
       - "8000:8000"
