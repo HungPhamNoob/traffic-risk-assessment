@@ -474,26 +474,77 @@ jobs:
       - name: Setup gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Prepare VM SSH key
+        env:
+          HUNG_SSH_PRIVATE_KEY: ${{ secrets.HUNG_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          key = os.environ["HUNG_SSH_PRIVATE_KEY"].strip()
+          if "\\n" in key and "\n" not in key:
+              key = key.replace("\\n", "\n")
+          key = key.replace("\r\n", "\n").replace("\r", "\n")
+          if not key.endswith("\n"):
+              key += "\n"
+
+          key_path = Path.home() / ".ssh" / "hung_vm_key"
+          key_path.write_text(key, encoding="utf-8")
+          key_path.chmod(0o600)
+          PY
+          ssh-keygen -y -f ~/.ssh/hung_vm_key >/dev/null
+          echo "SUCCESS: VM SSH key installed and parsed for smoke tests."
+
       - name: Run smoke tests
         run: |
           echo "=== Getting Node 1 IP ==="
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-runner}"
           NODE1_IP=$(gcloud compute instances describe node1-control \
             --zone=$GCP_ZONE \
             --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           echo "Node 1 IP: $NODE1_IP"
 
-          echo ""
-          echo "=== Testing Airflow (port 8080) ==="
-          curl -f http://$NODE1_IP:8080/health && echo "Airflow: OK" || echo "Airflow: FAIL"
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE1_IP}" "bash -s" << 'EOF'
+            set -euo pipefail
 
-          echo ""
-          echo "=== Testing MLflow (port 5000) ==="
-          curl -f http://$NODE1_IP:5000/health && echo "MLflow: OK" || echo "MLflow: FAIL"
+            check_url() {
+              local service_name="$1"
+              local url="$2"
 
-          echo ""
-          echo "=== Testing FastAPI (port 8000) ==="
-          curl -f http://$NODE1_IP:8000/health && echo "FastAPI: OK" || echo "FastAPI: FAIL"
+              echo "=== Testing ${service_name}: ${url} ==="
+              for attempt in $(seq 1 18); do
+                if curl -fsS "${url}" >/tmp/smoke-response.txt; then
+                  echo "${service_name}: OK"
+                  cat /tmp/smoke-response.txt
+                  echo ""
+                  return 0
+                fi
+                echo "${service_name}: not ready yet (${attempt}/18)."
+                sleep 10
+              done
+
+              echo "ERROR: ${service_name} did not become healthy."
+              return 1
+            }
+
+            check_url "Airflow" "http://localhost:8080/health"
+            check_url "MLflow" "http://localhost:5000/health"
+            check_url "FastAPI" "http://localhost:8000/health"
+          EOF
 
           echo ""
           echo "=== All smoke tests completed ==="
+
+      - name: Cleanup smoke-test secrets
+        if: always()
+        run: |
+          rm -f ~/.ssh/hung_vm_key
