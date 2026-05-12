@@ -28,6 +28,9 @@ else
   exit 1
 fi
 
+export MLFLOW_TRACKING_URI="${NODE1_MLFLOW_TRACKING_URI:-http://localhost:5000}"
+echo "Node 1 MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
+
 echo "Starting Node 1 Docker services..."
 echo "Preparing writable runtime directories for containers."
 mkdir -p orchestration/logs ml/mlruns
@@ -54,7 +57,7 @@ docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compo
 
 echo "Waiting for MLflow tracking server before checking model registry..."
 for attempt in $(seq 1 30); do
-  if curl -fsS "${MLFLOW_TRACKING_URI:-http://10.128.0.4:5000}/health" >/dev/null 2>&1; then
+  if curl --max-time 5 -fsS "${MLFLOW_TRACKING_URI}/health" >/dev/null 2>&1; then
     echo "MLflow tracking server is reachable."
     break
   fi
@@ -65,8 +68,8 @@ done
 echo "Checking whether a registered MLflow model already exists..."
 MODEL_EXISTS="false"
 MODEL_NAME="${ML_MODEL_NAME:-traffic-risk-model}"
-MODEL_REGISTRY_URL="${MLFLOW_TRACKING_URI:-http://10.128.0.4:5000}/api/2.0/mlflow/registered-models/get?name=${MODEL_NAME}"
-if curl -fsS "${MODEL_REGISTRY_URL}" >/dev/null 2>&1; then
+MODEL_REGISTRY_URL="${MLFLOW_TRACKING_URI}/api/2.0/mlflow/registered-models/get?name=${MODEL_NAME}"
+if curl --max-time 10 -fsS "${MODEL_REGISTRY_URL}" >/dev/null 2>&1; then
   MODEL_EXISTS="true"
 fi
 
