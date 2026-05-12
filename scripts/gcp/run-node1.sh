@@ -75,6 +75,9 @@ fi
 
 if [ "${MODEL_EXISTS}" = "true" ]; then
   echo "MLflow already has a registered model. Offline training bootstrap is skipped."
+elif [ "${RUN_OFFLINE_TRAINING_ON_DEPLOY:-true}" != "true" ]; then
+  echo "No registered model found, but RUN_OFFLINE_TRAINING_ON_DEPLOY is not true."
+  echo "Offline training bootstrap is skipped for this deployment run."
 else
   echo "No registered model found. Running offline feature engineering and H2O training."
   if ! python3 -m venv "${PROJECT_ROOT}/.venv-node1" >/dev/null 2>&1; then
