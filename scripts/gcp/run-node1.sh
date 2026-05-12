@@ -52,44 +52,44 @@ docker network inspect capstone-net >/dev/null 2>&1 || docker network create cap
 
 docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml up -d --remove-orphans
 
+echo "Waiting for MLflow tracking server before checking model registry..."
+for attempt in $(seq 1 30); do
+  if curl -fsS "${MLFLOW_TRACKING_URI:-http://10.128.0.4:5000}/health" >/dev/null 2>&1; then
+    echo "MLflow tracking server is reachable."
+    break
+  fi
+  echo "MLflow is not ready yet (${attempt}/30)."
+  sleep 5
+done
+
 echo "Checking whether a registered MLflow model already exists..."
 MODEL_EXISTS="false"
-if command -v python3 >/dev/null 2>&1; then
-  MODEL_EXISTS="$(python3 - <<'PY'
-import os
-import sys
-
-try:
-    from mlflow.tracking import MlflowClient
-except Exception:
-    print("false")
-    sys.exit(0)
-
-tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://10.128.0.4:5000")
-model_name = os.getenv("ML_MODEL_NAME", "traffic-risk-model")
-
-try:
-    client = MlflowClient(tracking_uri=tracking_uri)
-    versions = client.search_model_versions(f"name = '{model_name}'")
-    print("true" if versions else "false")
-except Exception:
-    print("false")
-PY
-)"
+MODEL_NAME="${ML_MODEL_NAME:-traffic-risk-model}"
+MODEL_REGISTRY_URL="${MLFLOW_TRACKING_URI:-http://10.128.0.4:5000}/api/2.0/mlflow/registered-models/get?name=${MODEL_NAME}"
+if curl -fsS "${MODEL_REGISTRY_URL}" >/dev/null 2>&1; then
+  MODEL_EXISTS="true"
 fi
 
 if [ "${MODEL_EXISTS}" = "true" ]; then
   echo "MLflow already has a registered model. Offline training bootstrap is skipped."
 else
   echo "No registered model found. Running offline feature engineering and H2O training."
-  python3 -m pip install --user --upgrade pip
-  python3 -m pip install --user pandas numpy h2o mlflow python-dotenv gcsfs google-auth scikit-learn
+  if ! python3 -m venv "${PROJECT_ROOT}/.venv-node1" >/dev/null 2>&1; then
+    echo "python3-venv is missing. Installing it before creating the training virtual environment."
+    apt-get update
+    apt-get install -y python3-venv
+    python3 -m venv "${PROJECT_ROOT}/.venv-node1"
+  fi
+
+  TRAINING_PYTHON="${PROJECT_ROOT}/.venv-node1/bin/python"
+  "${TRAINING_PYTHON}" -m pip install --upgrade pip
+  "${TRAINING_PYTHON}" -m pip install pandas numpy h2o mlflow python-dotenv gcsfs google-auth scikit-learn
   if [[ "${US_TRAIN_OFFLINE_PATH:-}" != gs://* ]]; then
-    python3 ml/dataset/dataset_offline.py
+    "${TRAINING_PYTHON}" ml/dataset/dataset_offline.py
   else
     echo "US_TRAIN_OFFLINE_PATH is a GCS feature CSV. Skipping local feature generation."
   fi
-  python3 ml/training/h2o_before_2020.py
+  "${TRAINING_PYTHON}" ml/training/h2o_before_2020.py
 fi
 
 echo "Restarting MLflow model serving after model bootstrap..."
