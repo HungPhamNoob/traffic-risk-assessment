@@ -370,6 +370,7 @@ services:
       FLINK_INFERENCE_GROUP: ${FLINK_INFERENCE_GROUP:-flink-us-inference}
       FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}
       FLINK_CHECKPOINT_DIR: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
+      FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_LOCAL_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/us-accident-inference}
       SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
       MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
       POSTGRES_HOST: ${POSTGRES_HOST:-10.128.0.4}
@@ -381,6 +382,7 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
       - ../..:/opt/traffic:ro
+      - flink_data:/opt/flink/checkpoints
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
     networks:
       - capstone-net

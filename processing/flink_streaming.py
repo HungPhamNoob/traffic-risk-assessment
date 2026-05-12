@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaSource,
@@ -65,6 +66,10 @@ FLINK_CHECKPOINT_INTERVAL = int(os.getenv("FLINK_CHECKPOINT_INTERVAL", "30000"))
 FLINK_CHECKPOINT_DIR = os.getenv(
     "FLINK_CHECKPOINT_DIR",
     "file:///tmp/flink-checkpoints/us-accident-inference",
+)
+FLINK_LOCAL_CHECKPOINT_DIR = os.getenv(
+    "FLINK_LOCAL_CHECKPOINT_DIR",
+    "file:///opt/flink/checkpoints/us-accident-inference",
 )
 
 # MLflow
@@ -426,7 +431,19 @@ def main():
     env.set_parallelism(1)
     env.enable_checkpointing(FLINK_CHECKPOINT_INTERVAL)
     checkpoint_config = env.get_checkpoint_config()
-    checkpoint_config.set_checkpoint_storage(FLINK_CHECKPOINT_DIR)
+    checkpoint_storage_path = FLINK_CHECKPOINT_DIR
+    if checkpoint_storage_path.startswith("gs://"):
+        logger.warning(
+            "Flink Java checkpoint storage cannot use %s without the GCS "
+            "filesystem plugin in the container. Using local durable volume "
+            "checkpoint storage instead: %s",
+            checkpoint_storage_path,
+            FLINK_LOCAL_CHECKPOINT_DIR,
+        )
+        checkpoint_storage_path = FLINK_LOCAL_CHECKPOINT_DIR
+    checkpoint_config.set_checkpoint_storage(
+        FileSystemCheckpointStorage(checkpoint_storage_path)
+    )
 
     # Kafka source
     kafka_source = (
