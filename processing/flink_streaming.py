@@ -134,8 +134,11 @@ MODEL_FEATURE_COLUMNS = [
 # ============================================================
 def write_to_gcs_silver(features: Dict[str, Any]) -> None:
     """
-    Append the feature-engineered event to a JSONL file in GCS.
-    Partitioned by event_year / event_month / event_day.
+    Write one feature-engineered event to the GCS Silver layer.
+
+    GCS does not support true append semantics. Writing one JSON document per
+    event keeps the streaming sink idempotent, avoids object overwrite loss,
+    and allows Spark to read the partition tree recursively.
     """
     try:
         import gcsfs
@@ -147,13 +150,13 @@ def write_to_gcs_silver(features: Dict[str, Any]) -> None:
         else:
             prefix = "unknown_date"
 
-        path = f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events.jsonl"
+        safe_event_id = str(features.get("event_id", "unknown_event")).replace("/", "_")
+        path = f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events/{safe_event_id}.json"
 
         fs = gcsfs.GCSFileSystem()
-        # Append to existing file or create new one
-        line = json.dumps(features, ensure_ascii=False) + "\n"
-        with fs.open(path, "ab") as f:
-            f.write(line.encode("utf-8"))
+        payload = json.dumps(features, ensure_ascii=False) + "\n"
+        with fs.open(path, "wb") as f:
+            f.write(payload.encode("utf-8"))
         logger.debug("Written features to GCS silver: %s", path)
     except Exception as e:
         logger.error("Failed to write features to GCS silver: %s", e)
