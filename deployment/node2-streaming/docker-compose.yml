@@ -2,30 +2,40 @@ version: '3.8'
 
 services:
   kafka:
-    image: apache/kafka:3.6.1
+    image: confluentinc/cp-kafka:7.6.0
     container_name: node2-kafka
     ports:
       - "9092:9092"
     environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
+      
+      # LISTENERS: Bind cả 2 ports bên trong container
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP}:9092
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${NODE2_INTERNAL_IP}:9093
+      
+      # ⚠️ ADVERTISED: CHỈ quảng bá PLAINTEXT cho external clients
+      # CONTROLLER listener KHÔNG được đưa vào đây!
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${NODE2_INTERNAL_IP:-kafka}:9092
+      
+      # QUORUM: Dùng Docker service name cho internal controller communication
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
-      - kafka_data:/tmp/kafka-logs
-      - ./config/kafka-server.properties:/etc/kafka/server.properties:ro
+    - kafka_data:/var/lib/kafka/data
     networks:
       - capstone-net
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-metadata.sh --snapshot /var/lib/kafka/data/__cluster_metadata-0/00000000000000000000.log --command \"describe --cluster\""]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 15s  # Tăng timeout
+      retries: 5    # Tăng retries
+      start_period: 40s
     deploy:
       resources:
         limits:
@@ -37,7 +47,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   flink-jobmanager:
-    image: apache/flink:1.19.0-scala_2.12-java11
+    image: flink:1.19-scala_2.12
     container_name: node2-flink-jm
     command: jobmanager
     ports:
@@ -70,7 +80,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   flink-taskmanager:
-    image: apache/flink:1.19.0-scala_2.12-java11
+    image: flink:1.19-scala_2.12
     container_name: node2-flink-tm
     command: taskmanager
     environment:
@@ -96,6 +106,12 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:8081/taskmanagers || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+
   redis:
     image: redis:7-alpine
     container_name: node2-redis
@@ -119,6 +135,26 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+  
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest  # <- Đổi sang repo chính thức mới
+    container_name: node2-kafka-ui
+    ports:
+      - "8087:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: capstone-team4-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      SERVER_ADDRESS: 0.0.0.0  # <- Ép buộc listen mọi interface
+    depends_on:
+      - kafka
+    networks:
+      - capstone-net  # Hoặc tên network hiện tại của bạn
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
 networks:
   capstone-net:

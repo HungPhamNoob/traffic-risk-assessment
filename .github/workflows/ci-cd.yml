@@ -62,23 +62,41 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-      
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          # token_format: 'access_token'
+          # id: auth
+
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-central1-docker.pkg.dev  
+          username: _json_key #oauth2accesstoken
+          password: ${{ secrets.GCP_SA_KEY }} #${{ steps.auth.outputs.access_token }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
       - name: Build and push FastAPI image
+        if: ${{ hashFiles('dashboard/backend/Dockerfile') != '' }}
         uses: docker/build-push-action@v5
         with:
           context: ./dashboard/backend
           push: true
-          tags: gcr.io/${{ env.GCP_PROJECT_ID }}/fastapi:${{ github.sha }}
+          tags: |
+            us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/fastapi:${{ github.sha }}
+            us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/fastapi:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       
       - name: Build and push Spark worker image (if needed)
+        if: ${{ hashFiles('processing/spark/Dockerfile') != '' }}
         uses: docker/build-push-action@v5
         with:
           context: ./processing/spark
           push: true
-          tags: gcr.io/${{ env.GCP_PROJECT_ID }}/spark-worker:${{ github.sha }}
+          tags: us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/spark-worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy-staging:
     needs: build-images
@@ -96,15 +114,36 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
       
-      - name: Deploy to Node 1 (Control)
+      - name: Deploy to Node 1 (Control) #Checked SSH manual test OK
         run: |
-          gcloud compute ssh node1-control --zone=$GCP_ZONE --project=$GCP_PROJECT_ID --quiet --command="
-            cd /opt/capstone &&
-            git pull origin develop &&
-            cd deployment/node1-control &&
-            docker-compose pull &&
-            docker-compose up -d
-          "
+          gcloud compute ssh node1-control \
+          --zone=$GCP_ZONE \
+          --project=$GCP_PROJECT_ID \
+          --quiet \
+          --command="bash -c '
+            set -e
+            # Fix Git ownership
+            sudo chown -R \$(whoami):\$(whoami) /opt/capstone 2>/dev/null || true
+            git config --global --add safe.directory /opt/capstone 2>/dev/null || true
+            chmod -R u+w /opt/capstone/.git 2>/dev/null || true
+            
+            # Update repo
+            cd /opt/capstone
+            git fetch origin
+            git checkout \${{ github.ref_name }}
+            git pull origin \${{ github.ref_name }}
+            
+            # Auth Docker
+            gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+            
+            # Deploy
+            cd deployment/node1-control
+            docker compose pull
+            docker compose up -d airflow-db 
+            docker compose exec airflow-db pg_isready -U airflow -d airflow
+            docker compose run --rm airflow airflow db upgrade
+            docker compose up -d
+          '"
       
       - name: Smoke test
         run: |

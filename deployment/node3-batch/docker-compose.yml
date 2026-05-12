@@ -2,61 +2,76 @@ version: '3.8'
 
 services:
   spark-master:
-    image: bitnami/spark:3.5.1
+    image: apache/spark:3.5.0
     container_name: node3-spark-master
-    command: bin/spark-class org.apache.spark.deploy.master.Master
+    # apache/spark image dùng /opt/spark (khác bitnami dùng /opt/bitnami/spark)
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "7077:7077"
-      - "8080:8080"
+      - "8080:8080" # Spark Master Web UI
     environment:
       - SPARK_MASTER_HOST=spark-master
       - SPARK_MASTER_PORT=7077
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - SPARK_NO_DAEMONIZE=true
+      - GCS_BUCKET=${GCS_BUCKET:-big-data-group-4-bronze}
+      - GCS_PROJECT_ID=${GCS_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-key.json
+      # PYTHONPATH để spark-submit tìm được module processing.spark
+      - PYTHONPATH=/project
     volumes:
-      - ../../processing/spark:/opt/bitnami/spark/work-dir:ro
+      # Mount toàn bộ project root → /project (để import processing.spark...)
+      - ../../..:/project:ro
       - ../../data:/data:ro
-      - spark_data:/opt/bitnami/spark/work-dir/checkpoints
+      - spark_logs:/opt/spark/logs
+      - spark_checkpoints:/tmp/spark-checkpoints
+      # GCP service account key (nếu không dùng Workload Identity)
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
     networks:
       - capstone-net
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-          cpus: '2.0'
+    mem_limit: 2g      # docker compose thường dùng mem_limit, không phải deploy.resources
+    cpus: 1.0
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
   spark-worker:
-    image: bitnami/spark:3.5.1
+    image: apache/spark:3.5.0
     container_name: node3-spark-worker
-    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    ports:
+      - "8081:8081" # Worker Web UI
     environment:
       - SPARK_WORKER_CORES=2
-      - SPARK_WORKER_MEMORY=2g
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - SPARK_WORKER_MEMORY=5g
+      - SPARK_NO_DAEMONIZE=true
+      - GCS_BUCKET=${GCS_BUCKET:-big-data-group-4-bronze}
+      - GCS_PROJECT_ID=${GCS_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-key.json
+      - PYTHONPATH=/project
     volumes:
-      - ../../processing/spark:/opt/bitnami/spark/work-dir:ro
+      - ../../..:/project:ro
       - ../../data:/data:ro
-      - spark_data:/opt/bitnami/spark/work-dir/checkpoints
+      - spark_checkpoints:/tmp/spark-checkpoints
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
     depends_on:
-      - spark-master
+      spark-master:
+        condition: service_healthy
     networks:
       - capstone-net
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-      cpus: '2.0'
+    mem_limit: 6g
+    cpus: 2.0
     restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
@@ -67,4 +82,5 @@ networks:
     name: capstone-net
 
 volumes:
-  spark_data:
+  spark_logs:
+  spark_checkpoints:
