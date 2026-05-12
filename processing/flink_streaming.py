@@ -25,6 +25,7 @@ import psycopg2
 from dotenv import load_dotenv
 from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
+from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
 from pyflink.datastream.connectors.kafka import (
@@ -70,6 +71,13 @@ FLINK_CHECKPOINT_DIR = os.getenv(
 FLINK_LOCAL_CHECKPOINT_DIR = os.getenv(
     "FLINK_LOCAL_CHECKPOINT_DIR",
     "file:///opt/flink/checkpoints/us-accident-inference",
+)
+FLINK_KAFKA_CONNECTOR_JAR = os.getenv(
+    "FLINK_KAFKA_CONNECTOR_JAR",
+    (
+        "file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,"
+        "file:///opt/flink/connectors/kafka-clients-3.6.1.jar"
+    ),
 )
 
 # MLflow
@@ -254,6 +262,42 @@ CREATE TABLE IF NOT EXISTS {PG_TABLE} (
 );
 """
 
+SCHEMA_EVOLUTION_SQL = [
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS event_year INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS event_time TIMESTAMP;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS true_severity INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS predicted_severity INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS risk_score DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS weather_code INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS temperature_f DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS humidity DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS wind_speed_mph DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS visibility_mi DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS road_type_code INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS hour INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS day_of_week INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_weekend INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_rush_hour INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_junction INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS has_traffic_signal INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_crossing INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_roundabout INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_stop INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_station INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_railway INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS is_night INT;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS model_status VARCHAR(20);",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS inference_latency_ms DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS ingestion_time TIMESTAMP;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS processed_time TIMESTAMP;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS end_to_end_latency_ms DOUBLE PRECISION;",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS geom GEOMETRY(Point, 4326);",
+    f"ALTER TABLE {PG_TABLE} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();",
+]
+POSTGIS_SCHEMA_READY = False
+
 INSERT_SQL = f"""
 INSERT INTO {PG_TABLE} (
     event_id, event_year, event_time, lat, lon,
@@ -299,19 +343,28 @@ def insert_prediction_to_postgis(
     end_to_end_latency_ms: Optional[float],
 ) -> None:
     """Insert a prediction record into PostGIS."""
+    global POSTGIS_SCHEMA_READY
+
+    conn = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        dbname=PG_DB,
+        user=PG_USER,
+        password=PG_PASSWORD,
+    )
     try:
-        conn = psycopg2.connect(
-            host=PG_HOST,
-            port=PG_PORT,
-            dbname=PG_DB,
-            user=PG_USER,
-            password=PG_PASSWORD,
-        )
         with conn:
             with conn.cursor() as cur:
-                # ensure table exists
-                cur.execute(CREATE_TABLE_SQL)
-                # prepare data
+                if not POSTGIS_SCHEMA_READY:
+                    # The table may already exist from older dashboard demos.
+                    # Keep those rows, but evolve the schema so streaming
+                    # inference can write the full MLOps contract without
+                    # manual database resets.
+                    cur.execute(CREATE_TABLE_SQL)
+                    for schema_statement in SCHEMA_EVOLUTION_SQL:
+                        cur.execute(schema_statement)
+                    POSTGIS_SCHEMA_READY = True
+
                 data = {
                     "event_id": features["event_id"],
                     "event_year": features["event_year"],
@@ -348,10 +401,12 @@ def insert_prediction_to_postgis(
                     "end_to_end_latency_ms": end_to_end_latency_ms,
                 }
                 cur.execute(INSERT_SQL, data)
-        conn.close()
         logger.debug("Inserted prediction for event %s", features["event_id"])
-    except Exception as e:
-        logger.error("Failed to insert into PostGIS: %s", e)
+    except Exception:
+        logger.exception("Failed to insert prediction into PostGIS")
+        raise
+    finally:
+        conn.close()
 
 
 # ============================================================
@@ -429,6 +484,14 @@ def main():
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
+    kafka_connector_jars = [
+        jar_uri.strip()
+        for jar_uri in FLINK_KAFKA_CONNECTOR_JAR.replace(";", ",").split(",")
+        if jar_uri.strip()
+    ]
+    if kafka_connector_jars:
+        logger.info("Registering Flink Kafka connector JARs: %s", kafka_connector_jars)
+        env.add_jars(*kafka_connector_jars)
     env.enable_checkpointing(FLINK_CHECKPOINT_INTERVAL)
     checkpoint_config = env.get_checkpoint_config()
     checkpoint_storage_path = FLINK_CHECKPOINT_DIR
@@ -458,7 +521,7 @@ def main():
 
     raw_stream = env.from_source(
         source=kafka_source,
-        watermark_strategy=None,
+        watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="kafka-raw-source",
     )
 
