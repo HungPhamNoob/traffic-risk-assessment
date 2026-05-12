@@ -283,8 +283,14 @@ def log_classifier_metrics(
         confusion_path = os.path.join(tmpdir, f"{artifact_prefix}_confusion_matrix.csv")
         report_df.to_csv(report_path, index=False)
         confusion_df.to_csv(confusion_path)
-        mlflow.log_artifact(report_path, artifact_path="metrics")
-        mlflow.log_artifact(confusion_path, artifact_path="metrics")
+        try:
+            mlflow.log_artifact(report_path, artifact_path="metrics")
+            mlflow.log_artifact(confusion_path, artifact_path="metrics")
+        except Exception:
+            logger.exception(
+                "Metric CSV artifact upload failed. Metrics are already logged, "
+                "so training will continue to model registration."
+            )
 
 
 def build_class_sampling_factors(label_distribution) -> tuple[list[float] | None, dict]:
