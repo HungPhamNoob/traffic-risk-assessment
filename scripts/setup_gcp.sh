@@ -58,12 +58,12 @@ else
   echo "⚠️ node2-streaming already exists"
 fi
 
-echo "🖥️ Creating Node 3 - Batch Plane (e2-standard-2 Preemptible)..."
+echo "🖥️ Creating Node 3 - Batch Plane (e2-medium Standard)..."
 if ! gcloud compute instances describe node3-batch --zone=$ZONE --project=$PROJECT_ID &>/dev/null; then
   gcloud compute instances create node3-batch \
     --zone=$ZONE \
     --project=$PROJECT_ID \
-    --machine-type=e2-standard-2 \
+    --machine-type=e2-medium \
     --network-interface=network=default,subnet=default,no-address \
     --metadata-from-file=startup-script=deployment/gcp/startup-node3.sh \
     --service-account=$SA_EMAIL \
@@ -71,9 +71,8 @@ if ! gcloud compute instances describe node3-batch --zone=$ZONE --project=$PROJE
     --boot-disk-size=30GB \
     --boot-disk-type=pd-balanced \
     --tags=capstone-batch \
-    --preemptible \
     --no-address
-  echo "✅ Created node3-batch (Preemptible)"
+  echo "✅ Created node3-batch (Standard)"
 else
   echo "⚠️ node3-batch already exists"
 fi

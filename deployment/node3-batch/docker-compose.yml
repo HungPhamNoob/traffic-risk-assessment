@@ -28,8 +28,8 @@ services:
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/secrets/gcp-key.json:ro
     networks:
       - capstone-net
-    mem_limit: 2g      # docker compose thường dùng mem_limit, không phải deploy.resources
-    cpus: 1.0
+    mem_limit: 1g
+    cpus: 0.5
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
@@ -47,8 +47,8 @@ services:
     ports:
       - "8081:8081" # Worker Web UI
     environment:
-      - SPARK_WORKER_CORES=2
-      - SPARK_WORKER_MEMORY=5g
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=2g
       - SPARK_NO_DAEMONIZE=true
       - GCS_BUCKET=${GCS_BUCKET:-big-data-group-4-bronze}
       - GCS_PROJECT_ID=${GCS_PROJECT_ID:-}
@@ -64,8 +64,8 @@ services:
         condition: service_healthy
     networks:
       - capstone-net
-    mem_limit: 6g
-    cpus: 2.0
+    mem_limit: 2.5g
+    cpus: 1.0
     restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8081 || exit 1"]
