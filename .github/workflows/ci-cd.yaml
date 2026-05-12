@@ -191,6 +191,18 @@ jobs:
         run: |
           echo "=== Uploading .env.cloud to GCS ==="
           echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
+          {
+            printf '\n# CI/CD deployment overrides. These values keep stale GitHub secret content from pointing VMs at retired buckets.\n'
+            printf 'GCP_PROJECT_ID=%s\n' "$GCP_PROJECT_ID"
+            printf 'GCS_BUCKET_BRONZE=big-data-group-4-bronze\n'
+            printf 'GCS_BUCKET_SILVER=big-data-group-4-silver\n'
+            printf 'GCS_BUCKET_GOLD=big-data-group-4-gold\n'
+            printf 'US_TRAIN_OFFLINE_PATH=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv\n'
+            printf 'US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv\n'
+            printf 'SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features\n'
+            printf 'GOLD_RETRAIN_PATH=gs://big-data-group-4-gold/features/retrain\n'
+            printf 'MLFLOW_ARTIFACT_ROOT=gs://big-data-group-4-ml-artifacts\n'
+          } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
           printf 'RUN_OFFLINE_TRAINING_ON_DEPLOY=false\n' >> .env.cloud
           chmod 600 .env.cloud
@@ -273,7 +285,13 @@ jobs:
             cp /tmp/.env.cloud /opt/traffic/.env
 
             echo "=== Starting Node 1 services and offline training bootstrap ==="
-            sudo -E bash scripts/gcp/run-node1.sh
+            TRAINING_PID_FILE="/opt/traffic/logs/cloud_h2o_before_2020.pid"
+            if [ -f "\${TRAINING_PID_FILE}" ] && ps -p "\$(cat "\${TRAINING_PID_FILE}")" >/dev/null 2>&1; then
+                echo "Active full H2O training detected. Skipping Node 1 service restart to avoid interrupting MLflow tracking."
+                echo "Training PID: \$(cat "\${TRAINING_PID_FILE}")"
+            else
+                sudo -E bash scripts/gcp/run-node1.sh
+            fi
 
             echo "=== Waiting for services to be healthy ==="
             sleep 45
