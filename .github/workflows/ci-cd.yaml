@@ -197,11 +197,19 @@ jobs:
             printf 'GCS_BUCKET_BRONZE=big-data-group-4-bronze\n'
             printf 'GCS_BUCKET_SILVER=big-data-group-4-silver\n'
             printf 'GCS_BUCKET_GOLD=big-data-group-4-gold\n'
+            printf 'NODE1_INTERNAL_IP=10.128.0.4\n'
+            printf 'NODE2_INTERNAL_IP=10.128.0.5\n'
+            printf 'NODE3_INTERNAL_IP=10.128.0.6\n'
+            printf 'POSTGRES_HOST=10.128.0.4\n'
             printf 'US_TRAIN_OFFLINE_PATH=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv\n'
             printf 'US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv\n'
             printf 'SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features\n'
             printf 'GOLD_RETRAIN_PATH=gs://big-data-group-4-gold/features/retrain\n'
+            printf 'GOLD_RETRAIN_PARQUET_PATH=gs://big-data-group-4-gold/features/retrain/parquet\n'
+            printf 'GOLD_RETRAIN_CSV_PATH=gs://big-data-group-4-gold/features/retrain/csv\n'
+            printf 'MLFLOW_TRACKING_URI=http://10.128.0.4:5000\n'
             printf 'MLFLOW_ARTIFACT_ROOT=gs://big-data-group-4-ml-artifacts\n'
+            printf 'MLFLOW_SERVING_ENDPOINT=http://10.128.0.4:5001/invocations\n'
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
           printf 'RUN_OFFLINE_TRAINING_ON_DEPLOY=false\n' >> .env.cloud
