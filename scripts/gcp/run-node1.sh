@@ -31,6 +31,19 @@ fi
 export MLFLOW_TRACKING_URI="${NODE1_MLFLOW_TRACKING_URI:-http://localhost:5000}"
 echo "Node 1 MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
 
+echo "Checking host dependencies required for offline H2O training."
+if ! command -v java >/dev/null 2>&1; then
+  echo "Java is not installed. Installing OpenJDK 17 because H2O cannot start without a JVM."
+  sudo apt-get update
+  sudo apt-get install -y openjdk-17-jre-headless
+fi
+
+if ! python3 -m venv --help >/dev/null 2>&1; then
+  echo "python3-venv is not installed. Installing it before creating training environments."
+  sudo apt-get update
+  sudo apt-get install -y python3-venv
+fi
+
 echo "Starting Node 1 Docker services..."
 echo "Preparing writable runtime directories for containers."
 mkdir -p orchestration/logs ml/mlruns
@@ -80,16 +93,20 @@ elif [ "${RUN_OFFLINE_TRAINING_ON_DEPLOY:-true}" != "true" ]; then
   echo "Offline training bootstrap is skipped for this deployment run."
 else
   echo "No registered model found. Running offline feature engineering and H2O training."
-  if ! python3 -m venv "${PROJECT_ROOT}/.venv-node1" >/dev/null 2>&1; then
-    echo "python3-venv is missing. Installing it before creating the training virtual environment."
-    apt-get update
-    apt-get install -y python3-venv
-    python3 -m venv "${PROJECT_ROOT}/.venv-node1"
-  fi
+  python3 -m venv "${PROJECT_ROOT}/.venv-node1"
 
   TRAINING_PYTHON="${PROJECT_ROOT}/.venv-node1/bin/python"
   "${TRAINING_PYTHON}" -m pip install --upgrade pip
-  "${TRAINING_PYTHON}" -m pip install pandas numpy h2o mlflow python-dotenv gcsfs google-auth scikit-learn
+  "${TRAINING_PYTHON}" -m pip install \
+    h2o==3.46.0.6 \
+    mlflow==2.12.1 \
+    pandas==2.2.2 \
+    numpy==1.26.4 \
+    scikit-learn==1.4.2 \
+    python-dotenv==1.0.1 \
+    gcsfs==2024.3.1 \
+    "google-auth>=2.23.0" \
+    "google-cloud-storage>=2.14.0"
   if [[ "${US_TRAIN_OFFLINE_PATH:-}" != gs://* ]]; then
     "${TRAINING_PYTHON}" ml/dataset/dataset_offline.py
   else

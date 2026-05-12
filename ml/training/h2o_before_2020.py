@@ -19,7 +19,10 @@ Example command:
 
 import logging
 import os
+import csv
+import sys
 import tempfile
+from pathlib import Path
 import h2o
 from h2o.automl import H2OAutoML
 import mlflow
@@ -31,6 +34,12 @@ from sklearn.metrics import (
     f1_score,
     precision_recall_fscore_support,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from processing.feature_engineering import build_features  # noqa: E402
 
 # ============================================================
 # Logging
@@ -76,6 +85,35 @@ EXCLUDED_COLUMNS = {
     "processed_time_epoch",  # pipeline metric, not a traffic-risk feature
     "end_to_end_latency_ms",  # observability metric, not a model feature
 }
+
+FEATURE_COLUMNS = [
+    "event_id",
+    "event_year",
+    "event_time",
+    "true_severity",
+    "lat",
+    "lon",
+    "hour",
+    "day_of_week",
+    "is_weekend",
+    "is_rush_hour",
+    "weather_code",
+    "temperature_f",
+    "humidity",
+    "wind_speed_mph",
+    "visibility_mi",
+    "road_type_code",
+    "is_junction",
+    "has_traffic_signal",
+    "is_crossing",
+    "is_roundabout",
+    "is_stop",
+    "is_station",
+    "is_railway",
+    "is_night",
+]
+
+RAW_REQUIRED_COLUMNS = {"ID", "Severity", "Start_Time", "Start_Lat", "Start_Lng"}
 
 # Random seed for reproducibility
 SEED = int(os.getenv("H2O_SEED", "42"))
@@ -300,7 +338,7 @@ def materialize_training_csv(data_path: str) -> str:
                 f"Training data not found: {data_path}. "
                 "Run data splitting and offline feature engineering first."
             )
-        return data_path
+        return ensure_feature_training_csv(data_path)
 
     import gcsfs
 
@@ -315,7 +353,112 @@ def materialize_training_csv(data_path: str) -> str:
                 break
             dst.write(chunk)
 
-    return local_path
+    return ensure_feature_training_csv(local_path)
+
+
+def read_csv_header(csv_path: str) -> list[str]:
+    """
+    Read only the CSV header so the training job can choose the correct schema path.
+
+    Cloud training may receive either an already-engineered feature CSV or a raw
+    US Accidents CSV. Inspecting the header avoids loading the multi-gigabyte
+    file into pandas just to decide whether feature engineering is required.
+    """
+    with open(csv_path, "r", encoding="utf-8", newline="") as csv_file:
+        reader = csv.reader(csv_file)
+        return next(reader)
+
+
+def ordered_feature_row(feature_row: dict) -> dict:
+    """Return one engineered row with stable column order for H2O CSV import."""
+    return {column: feature_row.get(column) for column in FEATURE_COLUMNS}
+
+
+def build_feature_csv_from_raw_csv(raw_csv_path: str) -> str:
+    """
+    Stream-convert a raw US Accidents CSV into the unified feature schema.
+
+    The GCS cloud object can be the original US Accidents schema with columns
+    such as `Severity`, `Start_Time`, and `Start_Lat`. The serving pipeline uses
+    engineered fields such as `true_severity`, `hour`, `weather_code`, and road
+    flags. This conversion keeps offline training aligned with Flink inference
+    without loading the full raw dataset into memory.
+    """
+    output_path = os.path.join(
+        tempfile.gettempdir(),
+        f"{Path(raw_csv_path).stem}_features_for_h2o.csv",
+    )
+    logger.info(
+        "Raw US Accidents schema detected. Building feature CSV at %s",
+        output_path,
+    )
+
+    processed_count = 0
+    written_count = 0
+    skipped_count = 0
+    log_interval = int(os.getenv("OFFLINE_FEATURE_LOG_INTERVAL", "250000"))
+
+    with open(raw_csv_path, "r", encoding="utf-8", newline="") as input_file:
+        reader = csv.DictReader(input_file)
+        with open(output_path, "w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=FEATURE_COLUMNS)
+            writer.writeheader()
+
+            for raw_row in reader:
+                processed_count += 1
+                feature_row = build_features(raw_row)
+                if feature_row is None:
+                    skipped_count += 1
+                else:
+                    writer.writerow(ordered_feature_row(feature_row))
+                    written_count += 1
+
+                if processed_count % log_interval == 0:
+                    logger.info(
+                        "Feature conversion progress: processed=%s, written=%s, skipped=%s",
+                        f"{processed_count:,}",
+                        f"{written_count:,}",
+                        f"{skipped_count:,}",
+                    )
+
+    if written_count == 0:
+        raise ValueError(
+            "Feature conversion produced zero rows. Check raw CSV schema and critical fields."
+        )
+
+    logger.info(
+        "Feature conversion completed: processed=%s, written=%s, skipped=%s",
+        f"{processed_count:,}",
+        f"{written_count:,}",
+        f"{skipped_count:,}",
+    )
+    return output_path
+
+
+def ensure_feature_training_csv(csv_path: str) -> str:
+    """
+    Return an H2O-ready feature CSV regardless of raw or engineered input.
+
+    If the input already contains `true_severity`, it is already in the expected
+    training schema. If the input contains the raw US Accidents columns, it is
+    converted through the same shared feature engineering function used by the
+    streaming and batch jobs.
+    """
+    header = read_csv_header(csv_path)
+    header_set = set(header)
+
+    if LABEL_COLUMN in header_set:
+        logger.info("Feature CSV schema detected. Using %s directly.", csv_path)
+        return csv_path
+
+    if RAW_REQUIRED_COLUMNS.issubset(header_set):
+        return build_feature_csv_from_raw_csv(csv_path)
+
+    raise ValueError(
+        "Training CSV does not match the feature schema or raw US Accidents schema. "
+        f"Missing label column '{LABEL_COLUMN}' and required raw columns "
+        f"{sorted(RAW_REQUIRED_COLUMNS - header_set)}. Header columns: {header}"
+    )
 
 
 # ============================================================

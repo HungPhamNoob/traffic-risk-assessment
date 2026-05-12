@@ -7,7 +7,14 @@ echo "Node 1 startup script running..."
 
 echo "Installing base operating-system packages..."
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl git python3 python3-pip > /dev/null 2>&1 || true
+apt-get install -y -qq \
+  ca-certificates \
+  curl \
+  git \
+  openjdk-17-jre-headless \
+  python3 \
+  python3-pip \
+  python3-venv > /dev/null 2>&1 || true
 
 # Install Docker
 if ! command -v docker &> /dev/null; then
