@@ -205,7 +205,7 @@ services:
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
     command: >
       bash -c "
-        pip install --no-cache-dir h2o==3.46.0.6 pandas numpy scikit-learn &&
+        pip install --no-cache-dir h2o==3.46.0.6 pandas numpy scikit-learn google-auth google-cloud-storage &&
         mlflow models serve -m models:/${ML_MODEL_NAME:-traffic-risk-model}/latest -h 0.0.0.0 -p 5001 --env-manager local
       "
     depends_on:
