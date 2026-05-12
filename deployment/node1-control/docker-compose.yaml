@@ -263,8 +263,8 @@ services:
     
 networks:
   capstone-net:
-    driver: bridge
     name: capstone-net
+    external: true
 
 volumes:
   postgres_data:

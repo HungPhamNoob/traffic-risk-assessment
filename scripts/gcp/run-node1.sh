@@ -29,7 +29,23 @@ else
 fi
 
 echo "Starting Node 1 Docker services..."
-docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml up -d --build
+echo "Removing stale Node 1 containers from previous Compose project names..."
+docker rm -f \
+  node1-postgres \
+  node1-airflow-db \
+  node1-airflow \
+  node1-blackbox-exporter \
+  node1-prometheus \
+  node1-grafana \
+  node1-mlflow \
+  node1-mlflow-serving \
+  node1-fastapi \
+  2>/dev/null || true
+
+echo "Ensuring the shared Docker network exists before Compose starts."
+docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
+
+docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml up -d --remove-orphans
 
 echo "Checking whether a registered MLflow model already exists..."
 MODEL_EXISTS="false"
