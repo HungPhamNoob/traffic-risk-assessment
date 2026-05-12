@@ -151,7 +151,9 @@ def write_to_gcs_silver(features: Dict[str, Any]) -> None:
             prefix = "unknown_date"
 
         safe_event_id = str(features.get("event_id", "unknown_event")).replace("/", "_")
-        path = f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events/{safe_event_id}.json"
+        path = (
+            f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events/{safe_event_id}.json"
+        )
 
         fs = gcsfs.GCSFileSystem()
         payload = json.dumps(features, ensure_ascii=False) + "\n"
