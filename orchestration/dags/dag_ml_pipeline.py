@@ -6,8 +6,8 @@ Purpose:
     Runs every hour to retrain the H2O model with fresh data.
     Spark reads silver data -> cleans -> writes gold Parquet -> H2O retrains -> MLflow registers new version.
 
-    If Node 3 (Spot VM) is down, the DAG retries automatically.
-    Once the VM comes back, the next retry succeeds.
+    If the batch branch fails, Airflow recovers Node 2 and Node 3 together so
+    the replay timeline stays synchronized across both branches.
 """
 
 from airflow import DAG
@@ -55,8 +55,8 @@ with DAG(
                     --master spark://spark-master:7077 \
                     /opt/traffic/processing/spark_batch.py
             " || {
-                echo "WARNING: Node 3 batch flow failed. Restart Node 2 and Node 3 together before retry."
-                bash /opt/traffic/scripts/gcp/start-node23-synced.sh || true
+                echo "WARNING: Batch flow failed. Restarting the synchronized Node 2/Node 3 pair before retry."
+                bash /opt/traffic/scripts/gcp/node23-lifecycle.sh restart || true
                 exit 1
             }
         """,
@@ -74,7 +74,7 @@ with DAG(
                 export MLFLOW_TRACKING_URI=http://10.128.0.4:5000 &&
                 python ml/training/h2o_after_2020.py
             " || {
-                echo "WARNING: Node 3 retrain failed. Airflow will retry later."
+                echo "WARNING: Node 3 retrain failed. Airflow will retry the synchronized pair later."
                 exit 1
             }
         """,

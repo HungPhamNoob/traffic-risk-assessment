@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-Airflow DAG 2 - Streaming Health Check
+Airflow DAG 2 - Realtime Pair Health Check
 
 Purpose:
-    Runs every hour to verify the realtime pipeline is alive.
-    Checks Kafka, Flink, and the replay producer.
-    If any component is down, logs an error (can be extended to send alerts).
+    Runs every hour to verify the synchronized realtime pair is healthy.
+    Checks Kafka, Flink, the active Flink job, and Spark.
 
-    If Node 2 or Node 3 is unhealthy, the DAG restarts both realtime nodes as
-    one synchronized pair. If checkpoints are intentionally reset, both Flink
-    and Spark checkpoints must be reset together.
+    If either branch is unhealthy, Airflow restarts Node 2 and Node 3 together
+    so replay offsets, checkpoints, and retraining inputs stay aligned.
 """
 
 from airflow import DAG
@@ -52,6 +50,7 @@ with DAG(
                 docker exec node2-kafka-1 kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1
             " && echo "Kafka: OK" || {
                 echo "WARNING: Kafka is DOWN or Node 2 is unreachable"
+                exit 1
             }
         """,
     )
@@ -67,6 +66,7 @@ with DAG(
                 curl -sf http://localhost:8081/overview > /dev/null 2>&1
             " && echo "Flink: OK" || {
                 echo "WARNING: Flink JobManager is DOWN or Node 2 is unreachable"
+                exit 1
             }
         """,
     )
@@ -90,7 +90,10 @@ print(len([j for j in jobs if j.get('status') == 'RUNNING']))
                     echo \"WARNING: No Flink job is running\"
                     exit 1
                 fi
-            " || echo "WARNING: Could not verify Flink job status"
+            " || {
+                echo "WARNING: Could not verify Flink job status"
+                exit 1
+            }
         """,
         trigger_rule="all_done",  # Run even if check_flink fails
     )
@@ -108,12 +111,12 @@ print(len([j for j in jobs if j.get('status') == 'RUNNING']))
         """,
     )
 
-    restart_realtime_pair = BashOperator(
-        task_id="restart_realtime_pair",
+    recover_realtime_pair = BashOperator(
+        task_id="recover_realtime_pair",
         bash_command="""
-            echo "=== Restarting Node 2 and Node 3 together ==="
+            echo "=== Restarting the synchronized realtime pair ==="
             cd /opt/traffic
-            bash scripts/gcp/start-node23-synced.sh
+            bash scripts/gcp/node23-lifecycle.sh restart
         """,
         trigger_rule="one_failed",
     )
@@ -136,7 +139,7 @@ print(len([j for j in jobs if j.get('status') == 'RUNNING']))
     # ----------------------------------------------------------
     (
         [check_kafka, check_flink, check_flink_job, check_batch_node]
-        >> restart_realtime_pair
+        >> recover_realtime_pair
         >> summary
     )
     [check_kafka, check_flink, check_flink_job, check_batch_node] >> summary

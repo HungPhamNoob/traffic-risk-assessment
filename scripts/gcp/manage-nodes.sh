@@ -1,68 +1,109 @@
 #!/bin/bash
-# scripts/gcp/manage-nodes.sh - start, stop, or inspect GCP VMs on demand.
+# Start, stop, or inspect GCP VMs on demand.
+#
+# Node 2 and Node 3 are intentionally treated as one synchronized pair. Asking
+# for either node starts or stops both so replay state cannot drift.
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-big-data-group-4}"
 ZONE="${GCP_ZONE:-us-central1-a}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODES=("node1-control" "node2-streaming" "node3-batch")
 
 usage() {
-    echo "Usage: $0 {start|stop|status} [node-name]"
-    echo "  node-name: node1-control | node2-streaming | node3-batch | all"
-    exit 1
+  echo "Usage: $0 {start|stop|status} [node-name]"
+  echo "  node-name: node1-control | node2-streaming | node3-batch | pair | all"
+  exit 1
 }
 
 start_node() {
-    local node=$1
-    echo "Starting $node..."
-    gcloud compute instances start $node --zone=$ZONE --project=$PROJECT_ID
-    
-    # Wait for SSH to be available
-    echo "Waiting for SSH..."
-    gcloud compute ssh $node --zone=$ZONE --project=$PROJECT_ID \
-        --command="echo '$node is ready'" --quiet || true
+  local node_name="$1"
+  echo "Starting ${node_name}."
+  gcloud compute instances start "${node_name}" --zone="${ZONE}" --project="${PROJECT_ID}"
+
+  echo "Waiting for SSH on ${node_name}."
+  gcloud compute ssh "${node_name}" --zone="${ZONE}" --project="${PROJECT_ID}" \
+    --command="echo '${node_name} is ready'" --quiet || true
 }
 
 stop_node() {
-    local node=$1
-    echo "Stopping $node..."
-    gcloud compute instances stop $node --zone=$ZONE --project=$PROJECT_ID
+  local node_name="$1"
+  echo "Stopping ${node_name}."
+  gcloud compute instances stop "${node_name}" --zone="${ZONE}" --project="${PROJECT_ID}"
 }
 
 status_node() {
-    local node=$1
-    echo "Status of $node:"
-    gcloud compute instances describe $node --zone=$ZONE --project=$PROJECT_ID \
-        --format="table(status, scheduling.preemptible, networkInterfaces[0].networkIP)"
+  local node_name="$1"
+  echo "Status of ${node_name}:"
+  gcloud compute instances describe "${node_name}" --zone="${ZONE}" --project="${PROJECT_ID}" \
+    --format="table(status, scheduling.preemptible, networkInterfaces[0].networkIP)"
 }
 
-case "$1" in
-    start)
-        if [[ "$2" == "all" || -z "$2" ]]; then
-            for node in "${NODES[@]}"; do start_node $node; done
-        else
-            start_node "$2"
-        fi
+start_pair() {
+  bash "${SCRIPT_DIR}/node23-lifecycle.sh" start
+}
+
+stop_pair() {
+  bash "${SCRIPT_DIR}/node23-lifecycle.sh" stop
+}
+
+ACTION="${1:-}"
+TARGET="${2:-all}"
+
+case "${ACTION}" in
+  start)
+    case "${TARGET}" in
+      node1-control)
+        start_node "node1-control"
         ;;
-    stop)
-        if [[ "$2" == "all" || -z "$2" ]]; then
-            # Never stop node1 (control plane) by default
-            for node in node2-streaming node3-batch; do stop_node $node; done
-        else
-            stop_node "$2"
-        fi
+      node2-streaming|node3-batch|pair)
+        start_pair
         ;;
-    status)
-        if [[ "$2" == "all" || -z "$2" ]]; then
-            for node in "${NODES[@]}"; do status_node $node; done
-        else
-            status_node "$2"
-        fi
+      all)
+        start_node "node1-control"
+        start_pair
         ;;
-    *)
+      *)
         usage
         ;;
+    esac
+    ;;
+  stop)
+    case "${TARGET}" in
+      node1-control)
+        stop_node "node1-control"
+        ;;
+      node2-streaming|node3-batch|pair|all)
+        stop_pair
+        ;;
+      *)
+        usage
+        ;;
+    esac
+    ;;
+  status)
+    case "${TARGET}" in
+      node2-streaming|node3-batch|pair)
+        status_node "node2-streaming"
+        status_node "node3-batch"
+        ;;
+      all)
+        for node_name in "${NODES[@]}"; do
+          status_node "${node_name}"
+        done
+        ;;
+      node1-control)
+        status_node "node1-control"
+        ;;
+      *)
+        usage
+        ;;
+    esac
+    ;;
+  *)
+    usage
+    ;;
 esac
 
 echo "Done."
