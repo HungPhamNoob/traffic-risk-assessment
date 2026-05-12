@@ -358,7 +358,7 @@ services:
     command: >
       bash -c "
         apt-get update &&
-        apt-get install -y --no-install-recommends openjdk-17-jre-headless &&
+        apt-get install -y --no-install-recommends default-jre-headless &&
         rm -rf /var/lib/apt/lists/* &&
         pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
         python processing/flink_streaming.py
