@@ -52,6 +52,8 @@ LOCAL_GOLD_RETRAIN_CSV_PATH="${LOCAL_GOLD_RETRAIN_CSV_PATH:-${LOCAL_GOLD_RETRAIN
 echo "Syncing Silver data from GCS to local disk for Spark processing."
 echo "GCS Silver:   ${SILVER_FEATURES_PATH}"
 echo "Local Silver: ${LOCAL_SILVER_FEATURES_PATH}"
+echo "Removing the previous local Silver snapshot so Spark never reads stale files."
+sudo rm -rf "${LOCAL_SILVER_FEATURES_PATH}"
 mkdir -p "${LOCAL_SILVER_FEATURES_PATH}" "${LOCAL_GOLD_RETRAIN_PATH}"
 gcloud storage rsync -r "${SILVER_FEATURES_PATH}" "${LOCAL_SILVER_FEATURES_PATH}"
 
