@@ -52,8 +52,12 @@ echo "Creating GCS buckets..."
 for bucket in bronze silver gold backups ml-artifacts; do
   BUCKET_NAME="${PROJECT_ID}-${bucket}"
   if ! gsutil ls -b gs://$BUCKET_NAME &>/dev/null; then
-    gsutil mb -l $REGION gs://$BUCKET_NAME/
-    echo "Created gs://$BUCKET_NAME"
+    if gsutil mb -l $REGION gs://$BUCKET_NAME/; then
+      echo "Created gs://$BUCKET_NAME"
+    else
+      echo "WARNING: Could not verify or create gs://$BUCKET_NAME."
+      echo "WARNING: Continuing because the bucket may already exist but this account cannot inspect it."
+    fi
   else
     echo "gs://$BUCKET_NAME already exists"
   fi
