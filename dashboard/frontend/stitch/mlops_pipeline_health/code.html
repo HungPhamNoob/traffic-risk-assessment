@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MLOps &amp; Pipeline Health</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=Geist:wght@500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary-fixed": "#0b1c30",
+                        "primary-fixed": "#d8e3fb",
+                        "secondary-fixed": "#d3e4fe",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#eae7e9",
+                        "on-primary-container": "#8590a6",
+                        "on-primary": "#ffffff",
+                        "secondary": "#505f76",
+                        "on-error-container": "#93000a",
+                        "on-primary-fixed": "#111c2d",
+                        "on-surface": "#1b1b1d",
+                        "secondary-fixed-dim": "#b7c8e1",
+                        "outline-variant": "#c5c6cd",
+                        "on-error": "#ffffff",
+                        "on-surface-variant": "#45474c",
+                        "primary-container": "#1e293b",
+                        "tertiary": "#1e1200",
+                        "on-primary-fixed-variant": "#3c475a",
+                        "on-tertiary-container": "#a38c6a",
+                        "on-tertiary-fixed-variant": "#564427",
+                        "surface-container-lowest": "#ffffff",
+                        "outline": "#75777d",
+                        "tertiary-fixed": "#fadfb8",
+                        "tertiary-container": "#35260c",
+                        "inverse-surface": "#303032",
+                        "surface-container-highest": "#e4e2e3",
+                        "secondary-container": "#d0e1fb",
+                        "surface-tint": "#545f73",
+                        "surface-container-low": "#f5f3f4",
+                        "on-tertiary": "#ffffff",
+                        "background": "#fbf8fa",
+                        "on-secondary-container": "#54647a",
+                        "inverse-primary": "#bcc7de",
+                        "surface-bright": "#fbf8fa",
+                        "error": "#ba1a1a",
+                        "on-tertiary-fixed": "#271902",
+                        "on-secondary-fixed-variant": "#38485d",
+                        "tertiary-fixed-dim": "#ddc39d",
+                        "primary": "#091426",
+                        "surface-container": "#f0edef",
+                        "on-background": "#1b1b1d",
+                        "surface-variant": "#e4e2e3",
+                        "on-secondary": "#ffffff",
+                        "surface-dim": "#dcd9db",
+                        "inverse-on-surface": "#f3f0f2",
+                        "surface": "#fbf8fa",
+                        "primary-fixed-dim": "#bcc7de"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "gutter": "1.5rem",
+                        "grid-columns": "12",
+                        "stack-gap": "1rem",
+                        "margin-x": "2rem",
+                        "margin-y": "1.5rem",
+                        "container-max-width": "1440px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["Geist"],
+                        "headline-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "title-sm": ["Inter"],
+                        "mono-data": ["Geist"],
+                        "body-base": ["Inter"],
+                        "display-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["11px", { "lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-md": ["24px", { "lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-sm": ["13px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "title-sm": ["18px", { "lineHeight": "1.4", "fontWeight": "600" }],
+                        "mono-data": ["13px", { "lineHeight": "1.4", "fontWeight": "500" }],
+                        "body-base": ["14px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "display-lg": ["36px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-base antialiased flex">
+<!-- SideNavBar Component -->
+<nav class="fixed left-0 top-0 h-full w-64 z-40 bg-surface dark:bg-primary border-r border-outline-variant dark:border-outline flex flex-col pt-margin-y pb-margin-y px-4">
+<div class="mb-8 px-4 flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container shrink-0">
+<span class="material-symbols-outlined">monitoring</span>
+</div>
+<div>
+<h1 class="font-headline-md text-title-sm font-bold text-primary dark:text-primary-fixed">Risk Intelligence</h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Enterprise Monitoring</p>
+</div>
+</div>
+<button class="mb-6 mx-2 bg-primary text-on-primary font-title-sm text-body-sm py-2 px-4 rounded hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]">add</span>
+            New Simulation
+        </button>
+<div class="flex-1 flex flex-col gap-1 mt-4">
+<a class="flex items-center gap-3 px-4 py-3 rounded text-on-surface-variant dark:text-surface-variant hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-title-sm text-body-sm">Control Tower</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded text-on-surface-variant dark:text-surface-variant hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span class="font-title-sm text-body-sm">Scenario Simulation</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded text-primary dark:text-primary-fixed font-bold border-r-4 border-primary dark:border-primary-fixed bg-surface-container-low dark:bg-primary-container hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">hub</span>
+<span class="font-title-sm text-body-sm">MLOps Health</span>
+</a>
+</div>
+<div class="mt-auto pt-4 border-t border-outline-variant flex flex-col gap-1">
+<a class="flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant dark:text-surface-variant hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="font-body-sm text-body-sm">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant dark:text-surface-variant hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200" href="#">
+<span class="material-symbols-outlined text-[20px]">menu_book</span>
+<span class="font-body-sm text-body-sm">Documentation</span>
+</a>
+</div>
+</nav>
+<!-- Main Content Area Wrapper -->
+<div class="flex-1 flex flex-col min-h-screen ml-64">
+<!-- TopAppBar Component -->
+<header class="fixed top-0 right-0 left-64 z-30 bg-surface-bright dark:bg-primary border-b border-outline-variant dark:border-outline flex justify-between items-center h-16 px-gutter">
+<div class="flex items-center flex-1 max-w-md">
+<div class="relative w-full">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-surface-container-low border border-outline-variant rounded-full text-body-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all" placeholder="Search..." type="text"/>
+</div>
+</div>
+<div class="flex items-center justify-center absolute left-1/2 -translate-x-1/2">
+<span class="font-headline-md text-headline-md font-extrabold tracking-tight text-primary dark:text-primary-fixed">Risk Intel v2.4</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 px-3 py-1 bg-primary/5 rounded-full text-primary border border-primary/10">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="font-label-caps text-label-caps">System Healthy</span>
+</div>
+<button class="font-title-sm text-body-sm text-primary border border-outline-variant px-3 py-1.5 rounded hover:bg-surface-container transition-colors">Admin Panel</button>
+<div class="flex items-center gap-2 border-l border-outline-variant pl-4 ml-2">
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1 cursor-pointer active:opacity-80">
+<span class="material-symbols-outlined">notifications_active</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1 cursor-pointer active:opacity-80">
+<span class="material-symbols-outlined">refresh</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1 cursor-pointer active:opacity-80">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 mt-16 p-8">
+<div class="max-w-[1440px] mx-auto space-y-8">
+<!-- Page Header -->
+<div class="flex justify-between items-end mb-6">
+<div>
+<h2 class="font-headline-md text-display-lg text-primary mb-2">Pipeline Health</h2>
+<p class="font-body-base text-on-surface-variant">Real-time operational status and model tracking metrics.</p>
+</div>
+<div class="flex gap-2">
+<span class="font-mono-data text-mono-data text-on-surface-variant bg-surface-container px-3 py-1 rounded">Last Sync: Just now</span>
+</div>
+</div>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-12 gap-6 auto-rows-[minmax(180px,auto)]">
+<!-- System Status Section (Span 8) -->
+<div class="col-span-12 lg:col-span-8 space-y-4">
+<h3 class="font-title-sm text-title-sm text-primary border-b border-outline-variant pb-2">Infrastructure Pipeline</h3>
+<div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+<!-- Kafka Card -->
+<div class="bg-surface border border-outline-variant rounded p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded bg-primary-container flex items-center justify-center text-on-primary-container">
+<span class="material-symbols-outlined text-[18px]">queue</span>
+</div>
+<span class="font-title-sm text-body-sm font-semibold">Kafka Streams</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-[#E6F4EA] text-[#137333] font-label-caps text-label-caps flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-[#137333]"></span> Healthy</span>
+</div>
+<div>
+<p class="font-mono-data text-headline-md">14.2k <span class="text-body-sm text-on-surface-variant font-body-sm">msg/s</span></p>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">Latency: 12ms</p>
+</div>
+</div>
+<!-- Flink Card -->
+<div class="bg-surface border border-outline-variant rounded p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded bg-secondary-container flex items-center justify-center text-on-secondary-container">
+<span class="material-symbols-outlined text-[18px]">water_drop</span>
+</div>
+<span class="font-title-sm text-body-sm font-semibold">Apache Flink</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-[#E6F4EA] text-[#137333] font-label-caps text-label-caps flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-[#137333]"></span> Online</span>
+</div>
+<div>
+<p class="font-mono-data text-headline-md">98.5% <span class="text-body-sm text-on-surface-variant font-body-sm">Uptime</span></p>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">4 Active Jobs</p>
+</div>
+</div>
+<!-- Spark Card -->
+<div class="bg-surface border border-outline-variant rounded p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded bg-tertiary-fixed-dim flex items-center justify-center text-on-tertiary-fixed">
+<span class="material-symbols-outlined text-[18px]">bolt</span>
+</div>
+<span class="font-title-sm text-body-sm font-semibold">Spark Batch</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-[#FFF3E0] text-[#E65100] font-label-caps text-label-caps flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-[#E65100]"></span> Processing</span>
+</div>
+<div>
+<p class="font-mono-data text-headline-md">Hour 4 <span class="text-body-sm text-on-surface-variant font-body-sm">Sync</span></p>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">ETA: 14 mins</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Model Info Section (Span 4) -->
+<div class="col-span-12 lg:col-span-4 space-y-4">
+<h3 class="font-title-sm text-title-sm text-primary border-b border-outline-variant pb-2">Active Model Endpoint</h3>
+<div class="bg-primary text-on-primary rounded border border-primary-container p-6 h-full shadow-lg relative overflow-hidden">
+<div class="absolute -right-10 -top-10 opacity-10 pointer-events-none">
+<span class="material-symbols-outlined text-[120px]">psychology</span>
+</div>
+<div class="flex justify-between items-center mb-6">
+<span class="font-label-caps text-label-caps text-primary-fixed uppercase tracking-wider">Production V2.4.1</span>
+<span class="flex h-3 w-3 relative">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary-fixed opacity-75"></span>
+<span class="relative inline-flex rounded-full h-3 w-3 bg-secondary-fixed"></span>
+</span>
+</div>
+<div class="space-y-5">
+<div>
+<p class="font-label-caps text-label-caps text-primary-fixed-dim mb-1">Serving URI</p>
+<p class="font-mono-data text-body-sm truncate bg-on-primary-fixed-variant/30 px-2 py-1 rounded">grpc://model-serving.internal:8500</p>
+</div>
+<div class="grid grid-cols-2 gap-4 border-t border-on-primary-fixed-variant pt-4">
+<div>
+<p class="font-label-caps text-label-caps text-primary-fixed-dim mb-1">P99 Latency</p>
+<p class="font-mono-data text-title-sm">45ms</p>
+</div>
+<div>
+<p class="font-label-caps text-label-caps text-primary-fixed-dim mb-1">Drift Score</p>
+<p class="font-mono-data text-title-sm text-[#81C995]">0.02</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Events Log Table (Span 12) -->
+<div class="col-span-12 bg-surface border border-outline-variant rounded">
+<div class="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-[#F8FAFC]">
+<h3 class="font-title-sm text-title-sm text-primary">System Events Log</h3>
+<button class="font-label-caps text-label-caps text-primary hover:bg-surface-container px-2 py-1 rounded flex items-center gap-1 transition-colors">
+<span class="material-symbols-outlined text-[16px]">filter_list</span> Filter
+                            </button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-[#F1F5F9] border-b border-outline-variant">
+<th class="font-label-caps text-label-caps text-on-surface-variant py-3 px-6 uppercase">Timestamp</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-3 px-6 uppercase">Component</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-3 px-6 uppercase">Event Type</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-3 px-6 uppercase">Status</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-3 px-6 uppercase">Message</th>
+</tr>
+</thead>
+<tbody class="font-body-sm text-body-sm divide-y divide-outline-variant/50">
+<tr class="hover:bg-[#F8FAFC]/50 transition-colors">
+<td class="py-3 px-6 font-mono-data text-on-surface-variant whitespace-nowrap">2023-10-27 14:32:01</td>
+<td class="py-3 px-6 font-medium">Model Serving</td>
+<td class="py-3 px-6">Deployment</td>
+<td class="py-3 px-6"><span class="px-2 py-0.5 rounded text-xs bg-[#E6F4EA] text-[#137333]">Success</span></td>
+<td class="py-3 px-6 text-on-surface-variant truncate max-w-xs">Rolled out v2.4.1 to shadow cluster.</td>
+</tr>
+<tr class="hover:bg-[#F8FAFC]/50 transition-colors">
+<td class="py-3 px-6 font-mono-data text-on-surface-variant whitespace-nowrap">2023-10-27 14:28:45</td>
+<td class="py-3 px-6 font-medium">Data Lake</td>
+<td class="py-3 px-6">Ingestion</td>
+<td class="py-3 px-6"><span class="px-2 py-0.5 rounded text-xs bg-[#FFF3E0] text-[#E65100]">Warning</span></td>
+<td class="py-3 px-6 text-on-surface-variant truncate max-w-xs">Slight delay in stream parsing.</td>
+</tr>
+<tr class="hover:bg-[#F8FAFC]/50 transition-colors">
+<td class="py-3 px-6 font-mono-data text-on-surface-variant whitespace-nowrap">2023-10-27 14:15:00</td>
+<td class="py-3 px-6 font-medium">Spark Batch</td>
+<td class="py-3 px-6">Job Trigger</td>
+<td class="py-3 px-6"><span class="px-2 py-0.5 rounded text-xs bg-surface-container-high text-on-surface">Info</span></td>
+<td class="py-3 px-6 text-on-surface-variant truncate max-w-xs">Started hourly aggregation job.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

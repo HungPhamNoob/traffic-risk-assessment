@@ -27,15 +27,19 @@ from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaSource,
 )
 import requests
 
-# Feature engineering shared with Spark
+# Feature engineering shared with offline training and batch jobs.
 from processing.feature_engineering import build_features
+
+try:
+    from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
+except Exception:  # pragma: no cover - depends on the PyFlink distribution.
+    FileSystemCheckpointStorage = None
 
 # ============================================================
 # Environment
@@ -65,20 +69,12 @@ FLINK_INFERENCE_GROUP = os.getenv(
 )
 FLINK_CHECKPOINT_INTERVAL = int(os.getenv("FLINK_CHECKPOINT_INTERVAL", "30000"))
 FLINK_CHECKPOINT_DIR = os.getenv(
-    "FLINK_CHECKPOINT_DIR",
-    "file:///tmp/flink-checkpoints/us-accident-inference",
-)
-FLINK_LOCAL_CHECKPOINT_DIR = os.getenv(
     "FLINK_LOCAL_CHECKPOINT_DIR",
-    "file:///opt/flink/checkpoints/us-accident-inference",
-)
-FLINK_KAFKA_CONNECTOR_JAR = os.getenv(
-    "FLINK_KAFKA_CONNECTOR_JAR",
-    (
-        "file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,"
-        "file:///opt/flink/connectors/kafka-clients-3.6.1.jar"
+    os.getenv(
+        "FLINK_CHECKPOINT_DIR", "file:///tmp/flink-checkpoints/us-accident-inference"
     ),
 )
+FLINK_KAFKA_CONNECTOR_JAR = os.getenv("FLINK_KAFKA_CONNECTOR_JAR", "")
 
 # MLflow
 MLFLOW_SERVING_ENDPOINT = os.getenv(
@@ -136,9 +132,9 @@ def write_to_gcs_silver(features: Dict[str, Any]) -> None:
     """
     Write one feature-engineered event to the GCS Silver layer.
 
-    GCS does not support true append semantics. Writing one JSON document per
-    event keeps the streaming sink idempotent, avoids object overwrite loss,
-    and allows Spark to read the partition tree recursively.
+    GCS object writes are atomic but not append-friendly. One JSON document per
+    event keeps the sink idempotent, avoids concurrent append corruption, and
+    still lets Spark read the whole partition tree recursively.
     """
     try:
         import gcsfs
@@ -167,16 +163,86 @@ def write_to_gcs_silver(features: Dict[str, Any]) -> None:
 # ============================================================
 # Helper: MLflow client
 # ============================================================
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _severity_to_risk_score(severity: Any) -> Optional[float]:
+    severity_float = _to_float(severity)
+    if severity_float is None:
+        return None
+    return max(0.0, min(1.0, (severity_float - 1.0) / 3.0))
+
+
+def _class_probabilities_to_risk_score(prediction: Dict[str, Any]) -> Optional[float]:
+    probs = []
+    for severity in range(1, 5):
+        probability = _to_float(prediction.get(f"p{severity}"))
+        if probability is not None:
+            probs.append((severity, probability))
+    if not probs:
+        return None
+
+    total_probability = sum(probability for _, probability in probs)
+    if total_probability <= 0:
+        return None
+
+    expected_severity = (
+        sum(severity * probability for severity, probability in probs)
+        / total_probability
+    )
+    return _severity_to_risk_score(expected_severity)
+
+
+def _extract_prediction(prediction: Any) -> Tuple[Optional[int], Optional[float]]:
+    """
+    Normalize common MLflow serving response shapes into the database contract.
+
+    H2O and MLflow wrappers can return a scalar class, a dictionary with
+    `predict`, or class probability columns such as `p1` to `p4`. The streaming
+    sink stores a nullable integer severity plus a 0-1 risk score so the
+    dashboard can rank events even when probability output is unavailable.
+    """
+    if not isinstance(prediction, dict):
+        severity = prediction
+        return _to_int(severity), _severity_to_risk_score(severity)
+
+    severity = (
+        prediction.get("predict")
+        or prediction.get("prediction")
+        or prediction.get("predicted_severity")
+    )
+    risk = prediction.get("risk_score") or prediction.get("probability")
+
+    if isinstance(risk, (list, tuple)):
+        risk_score = max((_to_float(value) or 0.0) for value in risk) if risk else None
+    else:
+        risk_score = _to_float(risk)
+
+    if risk_score is None:
+        risk_score = _class_probabilities_to_risk_score(prediction)
+    if risk_score is None:
+        risk_score = _severity_to_risk_score(severity)
+
+    return _to_int(severity), risk_score
+
+
 def call_mlflow_model(
     features: Dict[str, Any]
 ) -> Tuple[Optional[int], Optional[float]]:
-    """
-    Call the MLflow model serving endpoint and normalize common response shapes.
-
-    MLflow can return a scalar class, a list of probabilities, or a dictionary
-    depending on the logged model wrapper. The streaming job stores both a
-    severity class and a risk score so the dashboard can rank high-risk events.
-    """
+    """Call MLflow serving and return normalized `(predicted_severity, risk_score)`."""
     row = []
     for col in MODEL_FEATURE_COLUMNS:
         if col not in features:
@@ -201,24 +267,7 @@ def call_mlflow_model(
         result = resp.json()
         preds = result.get("predictions", [])
         if preds:
-            first = preds[0]
-            if isinstance(first, dict):
-                severity = (
-                    first.get("predict")
-                    or first.get("prediction")
-                    or first.get("predicted_severity")
-                )
-                risk = first.get("risk_score") or first.get("probability")
-            else:
-                severity = first
-                risk = None
-            if isinstance(risk, list) and risk:
-                risk = max(float(value) for value in risk)
-            if risk is None and severity is not None:
-                risk = max(0.0, min(1.0, (float(severity) - 1.0) / 3.0))
-            return int(float(severity)) if severity is not None else None, (
-                float(risk) if risk is not None else None
-            )
+            return _extract_prediction(preds[0])
         else:
             return None, None
     except Exception:
@@ -230,6 +279,7 @@ def call_mlflow_model(
 # Helper: PostgreSQL insert
 # ============================================================
 CREATE_TABLE_SQL = f"""
+CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE TABLE IF NOT EXISTS {PG_TABLE} (
     event_id VARCHAR PRIMARY KEY,
     event_year INT,
@@ -316,24 +366,48 @@ INSERT INTO {PG_TABLE} (
 ) VALUES (
     %(event_id)s, %(event_year)s, %(event_time)s, %(lat)s, %(lon)s,
     %(true_severity)s, %(predicted_severity)s, %(risk_score)s,
-    %(weather_code)s, %(temperature_f)s, %(humidity)s, %(wind_speed_mph)s, %(visibility_mi)s,
-    %(road_type_code)s, %(hour)s, %(day_of_week)s, %(is_weekend)s, %(is_rush_hour)s,
-    %(is_junction)s, %(has_traffic_signal)s, %(is_crossing)s, %(is_roundabout)s,
-    %(is_stop)s, %(is_station)s, %(is_railway)s, %(is_night)s,
-    %(model_status)s, %(inference_latency_ms)s, %(ingestion_time)s,
-    %(processed_time)s, %(end_to_end_latency_ms)s,
+    %(weather_code)s, %(temperature_f)s, %(humidity)s,
+    %(wind_speed_mph)s, %(visibility_mi)s,
+    %(road_type_code)s, %(hour)s, %(day_of_week)s,
+    %(is_weekend)s, %(is_rush_hour)s,
+    %(is_junction)s, %(has_traffic_signal)s, %(is_crossing)s,
+    %(is_roundabout)s, %(is_stop)s, %(is_station)s, %(is_railway)s,
+    %(is_night)s, %(model_status)s, %(inference_latency_ms)s,
+    %(ingestion_time)s, %(processed_time)s, %(end_to_end_latency_ms)s,
     ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)
 )
 ON CONFLICT (event_id) DO UPDATE SET
+    event_year = EXCLUDED.event_year,
     event_time = EXCLUDED.event_time,
+    lat = EXCLUDED.lat,
+    lon = EXCLUDED.lon,
     true_severity = EXCLUDED.true_severity,
     predicted_severity = EXCLUDED.predicted_severity,
     risk_score = EXCLUDED.risk_score,
+    weather_code = EXCLUDED.weather_code,
+    temperature_f = EXCLUDED.temperature_f,
+    humidity = EXCLUDED.humidity,
+    wind_speed_mph = EXCLUDED.wind_speed_mph,
+    visibility_mi = EXCLUDED.visibility_mi,
+    road_type_code = EXCLUDED.road_type_code,
+    hour = EXCLUDED.hour,
+    day_of_week = EXCLUDED.day_of_week,
+    is_weekend = EXCLUDED.is_weekend,
+    is_rush_hour = EXCLUDED.is_rush_hour,
+    is_junction = EXCLUDED.is_junction,
+    has_traffic_signal = EXCLUDED.has_traffic_signal,
+    is_crossing = EXCLUDED.is_crossing,
+    is_roundabout = EXCLUDED.is_roundabout,
+    is_stop = EXCLUDED.is_stop,
+    is_station = EXCLUDED.is_station,
+    is_railway = EXCLUDED.is_railway,
+    is_night = EXCLUDED.is_night,
     model_status = EXCLUDED.model_status,
     inference_latency_ms = EXCLUDED.inference_latency_ms,
     ingestion_time = EXCLUDED.ingestion_time,
     processed_time = EXCLUDED.processed_time,
     end_to_end_latency_ms = EXCLUDED.end_to_end_latency_ms,
+    geom = EXCLUDED.geom,
     created_at = NOW();
 """
 
@@ -350,21 +424,20 @@ def insert_prediction_to_postgis(
     """Insert a prediction record into PostGIS."""
     global POSTGIS_SCHEMA_READY
 
-    conn = psycopg2.connect(
-        host=PG_HOST,
-        port=PG_PORT,
-        dbname=PG_DB,
-        user=PG_USER,
-        password=PG_PASSWORD,
-    )
     try:
+        conn = psycopg2.connect(
+            host=PG_HOST,
+            port=PG_PORT,
+            dbname=PG_DB,
+            user=PG_USER,
+            password=PG_PASSWORD,
+        )
         with conn:
             with conn.cursor() as cur:
                 if not POSTGIS_SCHEMA_READY:
-                    # The table may already exist from older dashboard demos.
-                    # Keep those rows, but evolve the schema so streaming
-                    # inference can write the full MLOps contract without
-                    # manual database resets.
+                    # Existing demo tables can be older than the streaming job.
+                    # Evolve them in place so deployments do not require manual
+                    # database resets before replaying fresh traffic events.
                     cur.execute(CREATE_TABLE_SQL)
                     for schema_statement in SCHEMA_EVOLUTION_SQL:
                         cur.execute(schema_statement)
@@ -406,12 +479,11 @@ def insert_prediction_to_postgis(
                     "end_to_end_latency_ms": end_to_end_latency_ms,
                 }
                 cur.execute(INSERT_SQL, data)
+        conn.close()
         logger.debug("Inserted prediction for event %s", features["event_id"])
     except Exception:
         logger.exception("Failed to insert prediction into PostGIS")
         raise
-    finally:
-        conn.close()
 
 
 # ============================================================
@@ -427,9 +499,8 @@ def process_raw_message(raw_message: str) -> str:
         # 1. Parse
         raw_row = json.loads(raw_message)
         ingestion_time = raw_row.get("_ingested_at_utc")
-        # 2. Feature engineering. The shared builder defines the single
-        # feature contract used by offline training, streaming inference, and
-        # Spark retraining.
+
+        # 2. Feature engineering
         features = build_features(raw_row)
         if features is None:
             raise ValueError("build_features returned None (missing fields)")
@@ -459,6 +530,7 @@ def process_raw_message(raw_message: str) -> str:
                 ).total_seconds() * 1000
             except ValueError:
                 end_to_end_latency_ms = None
+
         insert_prediction_to_postgis(
             features,
             predicted_severity,
@@ -489,29 +561,21 @@ def main():
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
-    kafka_connector_jars = [
-        jar_uri.strip()
-        for jar_uri in FLINK_KAFKA_CONNECTOR_JAR.replace(";", ",").split(",")
-        if jar_uri.strip()
-    ]
-    if kafka_connector_jars:
-        logger.info("Registering Flink Kafka connector JARs: %s", kafka_connector_jars)
-        env.add_jars(*kafka_connector_jars)
     env.enable_checkpointing(FLINK_CHECKPOINT_INTERVAL)
     checkpoint_config = env.get_checkpoint_config()
-    checkpoint_storage_path = FLINK_CHECKPOINT_DIR
-    if checkpoint_storage_path.startswith("gs://"):
-        logger.warning(
-            "Flink Java checkpoint storage cannot use %s without the GCS "
-            "filesystem plugin in the container. Using local durable volume "
-            "checkpoint storage instead: %s",
-            checkpoint_storage_path,
-            FLINK_LOCAL_CHECKPOINT_DIR,
+    if FileSystemCheckpointStorage is not None:
+        checkpoint_config.set_checkpoint_storage(
+            FileSystemCheckpointStorage(FLINK_CHECKPOINT_DIR)
         )
-        checkpoint_storage_path = FLINK_LOCAL_CHECKPOINT_DIR
-    checkpoint_config.set_checkpoint_storage(
-        FileSystemCheckpointStorage(checkpoint_storage_path)
-    )
+    else:
+        logger.warning(
+            "FileSystemCheckpointStorage is unavailable; using default checkpoint storage."
+        )
+    connector_jars = [
+        jar.strip() for jar in FLINK_KAFKA_CONNECTOR_JAR.split(",") if jar.strip()
+    ]
+    if connector_jars:
+        env.add_jars(*connector_jars)
 
     # Kafka source
     kafka_source = (

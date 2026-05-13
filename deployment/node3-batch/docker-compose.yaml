@@ -25,6 +25,7 @@ services:
       - GOLD_RETRAIN_PATH=${GOLD_RETRAIN_PATH:-gs://big-data-group-4-gold/features/retrain}
       - GOLD_RETRAIN_PARQUET_PATH=${GOLD_RETRAIN_PARQUET_PATH:-gs://big-data-group-4-gold/features/retrain/parquet}
       - GOLD_RETRAIN_CSV_PATH=${GOLD_RETRAIN_CSV_PATH:-gs://big-data-group-4-gold/features/retrain/csv}
+      - SPARK_READ_PARTITIONS=${SPARK_READ_PARTITIONS:-64}
       - SPARK_WRITE_PARTITIONS=${SPARK_WRITE_PARTITIONS:-4}
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-http://10.128.0.4:5000}
     volumes:
@@ -160,8 +161,8 @@ services:
 # ============================================================
 networks:
   capstone-net:
-    driver: bridge
     name: capstone-net
+    external: true
 
 volumes:
   spark_data:

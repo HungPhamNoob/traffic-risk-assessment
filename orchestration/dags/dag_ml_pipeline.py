@@ -44,7 +44,7 @@ with DAG(
     # ----------------------------------------------------------
     spark_silver_to_gold = BashOperator(
         task_id="spark_silver_to_gold",
-        bash_command="""
+        bash_command=r"""
             echo "=== Spark: Silver -> Gold ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&
@@ -67,7 +67,7 @@ with DAG(
     # ----------------------------------------------------------
     h2o_retrain = BashOperator(
         task_id="h2o_retrain",
-        bash_command="""
+        bash_command=r"""
             echo "=== H2O: Retrain ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&

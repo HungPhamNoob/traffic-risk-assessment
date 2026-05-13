@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.extras
 
 from app.core.config import get_settings
@@ -33,7 +34,10 @@ def fetch_one(
     """Execute a read query and return one row as a dictionary."""
     with get_connection() as connection:
         with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            cursor.execute(query, params)
+            try:
+                cursor.execute(query, params)
+            except psycopg2.errors.UndefinedTable:
+                return None
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -44,5 +48,8 @@ def fetch_all(
     """Execute a read query and return all rows as dictionaries."""
     with get_connection() as connection:
         with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            cursor.execute(query, params)
+            try:
+                cursor.execute(query, params)
+            except psycopg2.errors.UndefinedTable:
+                return []
             return [dict(row) for row in cursor.fetchall()]

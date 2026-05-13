@@ -43,8 +43,36 @@ mkdir -p \
   "${SIMULATION_DATA_DIR}/performance" \
   "${SIMULATION_DATA_DIR}/mlflow-artifacts"
 
+wait_for_container_health() {
+  local container_name="$1"
+  local label="$2"
+
+  echo "Waiting for ${label} health."
+  for attempt in $(seq 1 90); do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_name}" 2>/dev/null || true)"
+    if [ "${status}" = "healthy" ] || [ "${status}" = "running" ]; then
+      return 0
+    fi
+    sleep 2
+    if [ "${attempt}" = "90" ]; then
+      echo "ERROR: ${label} did not become healthy. Last status: ${status:-missing}"
+      docker compose --env-file "${ENV_FILE}" ps
+      exit 1
+    fi
+  done
+}
+
 echo "Starting local infrastructure: PostgreSQL, Redis, Kafka, MLflow, and FastAPI."
-docker compose --env-file "${ENV_FILE}" up -d --build postgres redis kafka-topic-init mlflow fastapi
+docker compose --env-file "${ENV_FILE}" up -d --build \
+  postgres redis zookeeper kafka-1 kafka-2 kafka-3 mlflow fastapi
+
+wait_for_container_health "local-kafka-1" "Kafka broker 1"
+wait_for_container_health "local-kafka-2" "Kafka broker 2"
+wait_for_container_health "local-kafka-3" "Kafka broker 3"
+
+echo "Starting Kafka topic initializer."
+docker compose --env-file "${ENV_FILE}" up -d kafka-topic-init
+wait_for_container_health "local-kafka-topic-init" "Kafka topic initializer"
 
 echo "Waiting for FastAPI health endpoint."
 for attempt in $(seq 1 60); do
@@ -297,21 +325,32 @@ print(f"Seeded {inserted} prediction rows into {table_name}.")
 connection.close()
 PY
 
-echo "Collecting API JSON outputs."
-curl -fsS "http://localhost:8000/api/v1/overview/summary" \
-  | tee "${SIMULATION_DATA_DIR}/api/overview_summary.json" >/dev/null
-curl -fsS "http://localhost:8000/api/v1/predictions/map?limit=20" \
-  | tee "${SIMULATION_DATA_DIR}/api/predictions_map.json" >/dev/null
-curl -fsS "http://localhost:8000/api/v1/hotspots?limit=10&min_events=1" \
-  | tee "${SIMULATION_DATA_DIR}/api/hotspots.json" >/dev/null
-curl -fsS "http://localhost:8000/api/v1/analytics/severity-distribution" \
-  | tee "${SIMULATION_DATA_DIR}/api/severity_distribution.json" >/dev/null
-curl -fsS "http://localhost:8000/api/v1/analytics/risk-by-hour" \
-  | tee "${SIMULATION_DATA_DIR}/api/risk_by_hour.json" >/dev/null
-curl -fsS "http://localhost:8000/api/v1/system/status" \
-  | tee "${SIMULATION_DATA_DIR}/api/system_status.json" >/dev/null
-curl -fsS "http://localhost:8000/api/v1/system/health" \
-  | tee "${SIMULATION_DATA_DIR}/api/system_health_alias.json" >/dev/null
+echo "Collecting API JSON outputs from the FastAPI backend."
+fetch_backend_json() {
+  local url="$1"
+  local output_path="$2"
+  local temp_path
+  temp_path="$(mktemp)"
+
+  curl -fsS -H "Accept: application/json" "${url}" -o "${temp_path}"
+  .venv/bin/python -m json.tool "${temp_path}" > "${output_path}"
+  rm -f "${temp_path}"
+}
+
+fetch_backend_json "http://localhost:8000/api/v1/overview/summary" \
+  "${SIMULATION_DATA_DIR}/api/overview_summary.json"
+fetch_backend_json "http://localhost:8000/api/v1/predictions/map?limit=20" \
+  "${SIMULATION_DATA_DIR}/api/predictions_map.json"
+fetch_backend_json "http://localhost:8000/api/v1/hotspots?limit=10&min_events=1" \
+  "${SIMULATION_DATA_DIR}/api/hotspots.json"
+fetch_backend_json "http://localhost:8000/api/v1/analytics/severity-distribution" \
+  "${SIMULATION_DATA_DIR}/api/severity_distribution.json"
+fetch_backend_json "http://localhost:8000/api/v1/analytics/risk-by-hour" \
+  "${SIMULATION_DATA_DIR}/api/risk_by_hour.json"
+fetch_backend_json "http://localhost:8000/api/v1/system/status" \
+  "${SIMULATION_DATA_DIR}/api/system_status.json"
+fetch_backend_json "http://localhost:8000/api/v1/system/health" \
+  "${SIMULATION_DATA_DIR}/api/system_health_alias.json"
 
 .venv/bin/python - <<'PY'
 import json

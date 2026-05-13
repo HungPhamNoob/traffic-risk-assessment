@@ -28,6 +28,25 @@ else
 fi
 
 echo "Starting Kafka, producers, Redis, and Flink streaming job..."
+echo "Removing stale Node 2 containers from previous Compose project names..."
+docker rm -f \
+  node2-zookeeper \
+  node2-kafka-1 \
+  node2-kafka-2 \
+  node2-kafka-3 \
+  node2-kafka-topic-init \
+  node2-producer-0 \
+  node2-producer-1 \
+  node2-producer-2 \
+  node2-flink-jm \
+  node2-flink-tm \
+  node2-redis \
+  node2-flink-python-job \
+  2>/dev/null || true
+
+echo "Ensuring the shared Docker network exists before Compose starts."
+docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
+
 docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml up -d
 
 echo "Node 2 services:"

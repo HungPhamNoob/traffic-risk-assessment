@@ -19,12 +19,26 @@ else
   echo "Service account $SA_EMAIL already exists"
 fi
 
-for role in roles/storage.admin roles/logging.logWriter roles/monitoring.metricWriter; do
+for role in roles/storage.admin roles/artifactregistry.reader roles/logging.logWriter roles/monitoring.metricWriter; do
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$SA_EMAIL" \
     --role="$role" \
     --condition=None >/dev/null 2>&1 || true
 done
+
+echo "Ensuring Artifact Registry Docker repository exists..."
+if ! gcloud artifacts repositories describe capstone \
+  --location="$REGION" \
+  --project="$PROJECT_ID" &>/dev/null; then
+  gcloud artifacts repositories create capstone \
+    --repository-format=docker \
+    --location="$REGION" \
+    --description="Capstone Docker images" \
+    --project="$PROJECT_ID"
+  echo "Created Artifact Registry repository capstone"
+else
+  echo "Artifact Registry repository capstone already exists"
+fi
 
 echo "Creating GCS buckets..."
 for bucket in bronze silver gold backups ml-artifacts; do
@@ -37,20 +51,34 @@ for bucket in bronze silver gold backups ml-artifacts; do
   fi
 done
 
+echo "Ensuring SSH firewall rules exist..."
+if ! gcloud compute firewall-rules describe capstone-iap-ssh \
+  --project="$PROJECT_ID" &>/dev/null; then
+  gcloud compute firewall-rules create capstone-iap-ssh \
+    --project="$PROJECT_ID" \
+    --network=default \
+    --allow=tcp:22 \
+    --source-ranges=35.235.240.0/20 \
+    --target-tags=capstone-control,capstone-streaming,capstone-batch \
+    --description="Allow IAP SSH tunnels to capstone VMs"
+  echo "Created capstone-iap-ssh"
+else
+  echo "capstone-iap-ssh already exists"
+fi
+
 echo "Creating node1-control for PostGIS, Airflow, MLflow, Prometheus, and Grafana..."
 if ! gcloud compute instances describe node1-control --zone=$ZONE --project=$PROJECT_ID &>/dev/null; then
   gcloud compute instances create node1-control \
     --zone=$ZONE \
     --project=$PROJECT_ID \
     --machine-type=e2-medium \
-    --network-interface=network=default,subnet=default,no-address \
+    --network-interface=network=default,subnet=default \
     --metadata-from-file=startup-script=scripts/gcp/startup-node1.sh \
     --service-account=$SA_EMAIL \
     --scopes=cloud-platform,storage-rw \
-    --boot-disk-size=20GB \
+    --boot-disk-size=40GB \
     --boot-disk-type=pd-balanced \
-    --tags=capstone-control \
-    --no-address
+    --tags=capstone-control
   echo "Created node1-control"
 else
   echo "node1-control already exists"
@@ -62,14 +90,13 @@ if ! gcloud compute instances describe node2-streaming --zone=$ZONE --project=$P
     --zone=$ZONE \
     --project=$PROJECT_ID \
     --machine-type=e2-standard-2 \
-    --network-interface=network=default,subnet=default,no-address \
+    --network-interface=network=default,subnet=default \
     --metadata-from-file=startup-script=scripts/gcp/startup-node2.sh \
     --service-account=$SA_EMAIL \
     --scopes=cloud-platform,storage-rw \
     --boot-disk-size=30GB \
     --boot-disk-type=pd-balanced \
-    --tags=capstone-streaming \
-    --no-address
+    --tags=capstone-streaming
   echo "Created node2-streaming"
 else
   echo "node2-streaming already exists"
@@ -81,15 +108,14 @@ if ! gcloud compute instances describe node3-batch --zone=$ZONE --project=$PROJE
     --zone=$ZONE \
     --project=$PROJECT_ID \
     --machine-type=e2-standard-2 \
-    --network-interface=network=default,subnet=default,no-address \
+    --network-interface=network=default,subnet=default \
     --metadata-from-file=startup-script=scripts/gcp/startup-node3.sh \
     --service-account=$SA_EMAIL \
     --scopes=cloud-platform,storage-rw \
     --boot-disk-size=30GB \
     --boot-disk-type=pd-balanced \
     --tags=capstone-batch \
-    --preemptible \
-    --no-address
+    --preemptible
   echo "Created node3-batch as a preemptible VM"
 else
   echo "node3-batch already exists"

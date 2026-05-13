@@ -48,6 +48,7 @@ GOLD_RETRAIN_CSV_PATH = os.getenv(
 )
 
 WRITE_PARTITIONS = int(os.getenv("SPARK_WRITE_PARTITIONS", "4"))
+READ_PARTITIONS = int(os.getenv("SPARK_READ_PARTITIONS", "64"))
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -122,6 +123,7 @@ def main() -> None:
     logger.info("Silver path: %s", SILVER_PATH)
     logger.info("Gold Parquet path: %s", GOLD_RETRAIN_PARQUET_PATH)
     logger.info("Gold CSV path:     %s", GOLD_RETRAIN_CSV_PATH)
+    logger.info("Read partitions:   %s", READ_PARTITIONS)
     logger.info("Write partitions: %s", WRITE_PARTITIONS)
     logger.info("=" * 80)
 
@@ -140,6 +142,8 @@ def main() -> None:
             .schema(FEATURE_SCHEMA)
             .json(SILVER_PATH)
         )
+        if READ_PARTITIONS > 0:
+            raw_df = raw_df.coalesce(READ_PARTITIONS)
 
         total_raw = raw_df.count()
         logger.info("Raw records read: %s", f"{total_raw:,}")

@@ -76,7 +76,7 @@ with DAG(
     # ----------------------------------------------------------
     check_flink_job = BashOperator(
         task_id="check_flink_job",
-        bash_command="""
+        bash_command=r"""
             echo "=== Checking Flink job status ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node2-streaming "
                 RUNNING=\$(curl -s http://localhost:8081/jobs | python3 -c \\"

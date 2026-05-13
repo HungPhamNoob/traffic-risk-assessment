@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Risk Intel - Control Tower</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Theme Config -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-secondary-fixed": "#0b1c30",
+                    "primary-fixed": "#d8e3fb",
+                    "secondary-fixed": "#d3e4fe",
+                    "error-container": "#ffdad6",
+                    "surface-container-high": "#eae7e9",
+                    "on-primary-container": "#8590a6",
+                    "on-primary": "#ffffff",
+                    "secondary": "#505f76",
+                    "on-error-container": "#93000a",
+                    "on-primary-fixed": "#111c2d",
+                    "on-surface": "#1b1b1d",
+                    "secondary-fixed-dim": "#b7c8e1",
+                    "outline-variant": "#c5c6cd",
+                    "on-error": "#ffffff",
+                    "on-surface-variant": "#45474c",
+                    "primary-container": "#1e293b",
+                    "tertiary": "#1e1200",
+                    "on-primary-fixed-variant": "#3c475a",
+                    "on-tertiary-container": "#a38c6a",
+                    "on-tertiary-fixed-variant": "#564427",
+                    "surface-container-lowest": "#ffffff",
+                    "outline": "#75777d",
+                    "tertiary-fixed": "#fadfb8",
+                    "tertiary-container": "#35260c",
+                    "inverse-surface": "#303032",
+                    "surface-container-highest": "#e4e2e3",
+                    "secondary-container": "#d0e1fb",
+                    "surface-tint": "#545f73",
+                    "surface-container-low": "#f5f3f4",
+                    "on-tertiary": "#ffffff",
+                    "background": "#fbf8fa",
+                    "on-secondary-container": "#54647a",
+                    "inverse-primary": "#bcc7de",
+                    "surface-bright": "#fbf8fa",
+                    "error": "#ba1a1a",
+                    "on-tertiary-fixed": "#271902",
+                    "on-secondary-fixed-variant": "#38485d",
+                    "tertiary-fixed-dim": "#ddc39d",
+                    "primary": "#091426",
+                    "surface-container": "#f0edef",
+                    "on-background": "#1b1b1d",
+                    "surface-variant": "#e4e2e3",
+                    "on-secondary": "#ffffff",
+                    "surface-dim": "#dcd9db",
+                    "inverse-on-surface": "#f3f0f2",
+                    "surface": "#fbf8fa",
+                    "primary-fixed-dim": "#bcc7de"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "gutter": "1.5rem",
+                    "grid-columns": "12",
+                    "stack-gap": "1rem",
+                    "margin-x": "2rem",
+                    "margin-y": "1.5rem",
+                    "container-max-width": "1440px"
+            },
+            "fontFamily": {
+                    "label-caps": ["Geist"],
+                    "headline-md": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "title-sm": ["Inter"],
+                    "mono-data": ["Geist"],
+                    "body-base": ["Inter"],
+                    "display-lg": ["Inter"]
+            },
+            "fontSize": {
+                    "label-caps": ["11px", { "lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                    "headline-md": ["24px", { "lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                    "body-sm": ["13px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                    "title-sm": ["18px", { "lineHeight": "1.4", "fontWeight": "600" }],
+                    "mono-data": ["13px", { "lineHeight": "1.4", "fontWeight": "500" }],
+                    "body-base": ["14px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                    "display-lg": ["36px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .filled-icon {
+        font-variation-settings: 'FILL' 1;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-surface antialiased">
+<!-- SideNavBar (Shared Component) -->
+<nav class="bg-surface dark:bg-primary text-primary dark:text-primary-fixed fixed left-0 top-0 h-full w-64 z-40 border-r border-outline-variant dark:border-outline flex flex-col h-full pt-margin-y pb-margin-y px-4">
+<!-- Header -->
+<div class="mb-8 px-2 flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary-container text-sm">shield</span>
+</div>
+<div>
+<h1 class="font-headline-md text-title-sm font-bold text-primary dark:text-primary-fixed">Risk Intelligence</h1>
+<p class="font-body-base text-label-caps text-on-surface-variant">Enterprise Monitoring</p>
+</div>
+</div>
+<!-- Main Tabs -->
+<ul class="flex flex-col gap-1 flex-1">
+<!-- Active Tab: Control Tower -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-primary dark:text-primary-fixed font-bold border-r-4 border-primary dark:border-primary-fixed bg-surface-container-low dark:bg-primary-container hover:bg-surface-container transition-colors duration-200 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined filled-icon">dashboard</span>
+<span class="font-body-base text-body-base">Control Tower</span>
+</a>
+</li>
+<!-- Inactive Tabs -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-surface-variant hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span class="font-body-base text-body-base">Scenario Simulation</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-surface-variant hover:bg-surface-container dark:hover:bg-primary-container transition-colors duration-200 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">hub</span>
+<span class="font-body-base text-body-base">MLOps Health</span>
+</a>
+</li>
+</ul>
+<!-- CTA -->
+<div class="mt-auto mb-6 px-2">
+<button class="w-full bg-primary text-on-primary hover:bg-primary-container hover:text-on-primary-container py-2.5 px-4 rounded-xl font-title-sm text-body-sm font-semibold transition-colors flex justify-center items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                New Simulation
+            </button>
+</div>
+<!-- Footer Tabs -->
+<ul class="flex flex-col gap-1 border-t border-outline-variant pt-4 px-2">
+<li>
+<a class="flex items-center gap-3 px-2 py-2 rounded-lg text-on-surface-variant dark:text-surface-variant hover:bg-surface-container transition-colors duration-200" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="font-body-base text-body-base">Settings</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-2 py-2 rounded-lg text-on-surface-variant dark:text-surface-variant hover:bg-surface-container transition-colors duration-200" href="#">
+<span class="material-symbols-outlined text-[20px]">menu_book</span>
+<span class="font-body-base text-body-base">Documentation</span>
+</a>
+</li>
+</ul>
+<!-- User Avatar minimal rep -->
+<div class="mt-4 px-4 flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-secondary-container overflow-hidden">
+<!-- Placeholder for avatar -->
+</div>
+<span class="font-body-sm text-body-sm text-secondary truncate">System Operator</span>
+</div>
+</nav>
+<!-- TopAppBar (Shared Component) -->
+<header class="bg-surface-bright dark:bg-primary text-primary dark:text-primary-fixed fixed top-0 right-0 left-64 z-30 border-b border-outline-variant dark:border-outline flex justify-between items-center h-16 px-gutter ml-64">
+<!-- Product Name & Search -->
+<div class="flex items-center gap-6">
+<span class="font-headline-md text-headline-md font-extrabold tracking-tight text-primary dark:text-primary-fixed">Risk Intel v2.4</span>
+<div class="relative w-64 hidden lg:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[18px]">search</span>
+<input class="w-full bg-surface-container-low border border-outline-variant rounded-full py-1.5 pl-9 pr-4 font-body-sm text-body-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-colors" placeholder="Search events, models..." type="text"/>
+</div>
+</div>
+<!-- Trailing Actions -->
+<div class="flex items-center gap-4">
+<!-- Trailing Secondary -->
+<button class="font-body-sm text-body-sm font-semibold text-secondary hover:text-primary transition-colors cursor-pointer active:opacity-80">
+                Admin Panel
+            </button>
+<!-- Trailing Primary -->
+<div class="flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-full border border-outline-variant">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="font-label-caps text-label-caps text-primary">System Healthy</span>
+</div>
+<!-- Icon Actions -->
+<div class="flex items-center gap-1 border-l border-outline-variant pl-4 ml-2">
+<button class="p-2 text-on-surface-variant hover:text-primary transition-colors cursor-pointer active:opacity-80 rounded-full hover:bg-surface-container">
+<span class="material-symbols-outlined text-[20px]">notifications_active</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:text-primary transition-colors cursor-pointer active:opacity-80 rounded-full hover:bg-surface-container">
+<span class="material-symbols-outlined text-[20px]">refresh</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:text-primary transition-colors cursor-pointer active:opacity-80 rounded-full hover:bg-surface-container ml-2">
+<span class="material-symbols-outlined text-[24px]">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-64 pt-16 px-margin-x py-margin-y min-h-screen flex flex-col gap-gutter">
+<!-- Row 1: KPI Cards -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-gutter">
+<!-- Card 1 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col gap-2">
+<h3 class="font-title-sm text-title-sm text-secondary">Total Events</h3>
+<div class="font-display-lg text-display-lg text-primary tracking-tight">12,450</div>
+<div class="flex items-center gap-1 text-secondary-container mt-auto">
+<span class="material-symbols-outlined text-[16px] text-secondary">trending_up</span>
+<span class="font-body-sm text-body-sm text-secondary">+5.2% 24h</span>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col gap-2">
+<h3 class="font-title-sm text-title-sm text-secondary">High Risk</h3>
+<div class="font-display-lg text-display-lg text-error tracking-tight">342</div>
+<div class="flex items-center gap-1 mt-auto">
+<span class="material-symbols-outlined text-[16px] text-error">warning</span>
+<span class="font-body-sm text-body-sm text-error">Needs attention</span>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col gap-2">
+<h3 class="font-title-sm text-title-sm text-secondary">Avg Risk Score</h3>
+<div class="font-display-lg text-display-lg text-primary tracking-tight">0.42</div>
+<div class="w-full bg-surface-container-highest h-1.5 rounded-full mt-2">
+<div class="bg-primary h-1.5 rounded-full" style="width: 42%"></div>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col gap-2">
+<h3 class="font-title-sm text-title-sm text-secondary">Latest Time</h3>
+<div class="font-display-lg text-title-sm text-primary tracking-tight mt-1">14:32:05</div>
+<div class="font-mono-data text-mono-data text-secondary mt-auto">UTC-0500</div>
+</div>
+<!-- Card 5 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col gap-2">
+<h3 class="font-title-sm text-title-sm text-secondary">Model Ver</h3>
+<div class="font-display-lg text-title-sm text-primary tracking-tight mt-1">XGB-Prod-v3</div>
+<div class="font-body-sm text-body-sm text-secondary mt-auto flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-secondary"></span> Active
+                </div>
+</div>
+<!-- Card 6 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col gap-2">
+<h3 class="font-title-sm text-title-sm text-secondary">System Latency</h3>
+<div class="font-display-lg text-display-lg text-primary tracking-tight">45<span class="text-title-sm">ms</span></div>
+<div class="font-body-sm text-body-sm text-secondary mt-auto">P99 SLA met</div>
+</div>
+</div>
+<!-- Row 2: Middle Section (Map & Sidebar) -->
+<div class="grid grid-cols-12 gap-gutter">
+<!-- 65% Map -->
+<div class="col-span-12 lg:col-span-8 bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col h-[500px]">
+<div class="p-4 border-b border-outline-variant flex justify-between items-center bg-surface-bright">
+<h2 class="font-title-sm text-title-sm text-primary">Global Event Topology</h2>
+<div class="flex gap-2">
+<button class="p-1.5 border border-outline-variant rounded bg-surface text-secondary hover:bg-surface-container"><span class="material-symbols-outlined text-[18px]">zoom_in</span></button>
+<button class="p-1.5 border border-outline-variant rounded bg-surface text-secondary hover:bg-surface-container"><span class="material-symbols-outlined text-[18px]">zoom_out</span></button>
+</div>
+</div>
+<div class="flex-1 relative bg-surface-container w-full h-full">
+<!-- Map Placeholder Image -->
+<div class="absolute inset-0 bg-secondary-fixed-dim/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary text-4xl opacity-50">map</span>
+<p class="absolute bottom-4 right-4 font-mono-data text-mono-data text-secondary">Deck.gl Render Layer</p>
+</div>
+</div>
+</div>
+<!-- 35% Sidebar (Hotspots & Health) -->
+<div class="col-span-12 lg:col-span-4 flex flex-col gap-gutter">
+<!-- Health Chips -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4">
+<h2 class="font-title-sm text-title-sm text-primary mb-4">Node Health</h2>
+<div class="flex flex-wrap gap-2">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container text-primary font-body-sm text-body-sm border border-outline-variant">
+<span class="w-2 h-2 rounded-full bg-primary-fixed-dim"></span> API Gateway
+                        </span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container text-primary font-body-sm text-body-sm border border-outline-variant">
+<span class="w-2 h-2 rounded-full bg-primary-fixed-dim"></span> Auth Service
+                        </span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-error-container text-on-error-container font-body-sm text-body-sm border border-error">
+<span class="w-2 h-2 rounded-full bg-error"></span> Ingestion Pipeline
+                        </span>
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container text-primary font-body-sm text-body-sm border border-outline-variant">
+<span class="w-2 h-2 rounded-full bg-primary-fixed-dim"></span> ML Compute
+                        </span>
+</div>
+</div>
+<!-- Hotspots Table -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl flex-1 flex flex-col overflow-hidden">
+<div class="p-4 border-b border-outline-variant bg-surface-bright">
+<h2 class="font-title-sm text-title-sm text-primary">Active Hotspots</h2>
+</div>
+<div class="flex-1 overflow-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low border-b border-outline-variant">
+<th class="py-2 px-4 font-label-caps text-label-caps text-secondary">Region</th>
+<th class="py-2 px-4 font-label-caps text-label-caps text-secondary text-right">Vol</th>
+<th class="py-2 px-4 font-label-caps text-label-caps text-secondary text-right">Trend</th>
+</tr>
+</thead>
+<tbody class="font-mono-data text-mono-data text-on-surface">
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="py-2.5 px-4">US-East-1</td>
+<td class="py-2.5 px-4 text-right">4.2k</td>
+<td class="py-2.5 px-4 text-right text-error">↑ 12%</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="py-2.5 px-4">EU-Central</td>
+<td class="py-2.5 px-4 text-right">2.8k</td>
+<td class="py-2.5 px-4 text-right text-secondary-container">↓ 3%</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="py-2.5 px-4">AP-South</td>
+<td class="py-2.5 px-4 text-right">1.9k</td>
+<td class="py-2.5 px-4 text-right text-error">↑ 8%</td>
+</tr>
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-2.5 px-4">US-West-2</td>
+<td class="py-2.5 px-4 text-right">0.8k</td>
+<td class="py-2.5 px-4 text-right text-secondary">--</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+<!-- Row 3: Charts -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-gutter h-[300px]">
+<!-- Chart 1 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col">
+<h3 class="font-title-sm text-title-sm text-primary mb-4">Risk By Hour</h3>
+<div class="flex-1 border-b border-l border-outline-variant relative mt-2 ml-4 mb-4">
+<!-- Line Chart Mock -->
+<svg class="absolute inset-0 w-full h-full" preserveaspectratio="none">
+<polyline fill="none" points="0,150 50,120 100,140 150,80 200,90 250,40 300,50" stroke="#505f76" stroke-width="2"></polyline>
+</svg>
+</div>
+</div>
+<!-- Chart 2 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col">
+<h3 class="font-title-sm text-title-sm text-primary mb-4">Severity Dist</h3>
+<div class="flex-1 flex items-end justify-between gap-2 mt-2 border-b border-outline-variant pb-1">
+<!-- Bar Chart Mock -->
+<div class="w-full bg-secondary-fixed h-[40%] rounded-t-sm"></div>
+<div class="w-full bg-primary-fixed-dim h-[70%] rounded-t-sm"></div>
+<div class="w-full bg-error-container h-[20%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-fixed h-[50%] rounded-t-sm"></div>
+<div class="w-full bg-primary h-[90%] rounded-t-sm"></div>
+</div>
+</div>
+<!-- Chart 3 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col">
+<h3 class="font-title-sm text-title-sm text-primary mb-4">Risk By Category</h3>
+<div class="flex-1 flex items-center justify-center relative">
+<!-- Radar/Donut Mock -->
+<div class="w-32 h-32 rounded-full border-4 border-outline-variant relative">
+<div class="absolute inset-0 border-4 border-primary rounded-full clip-half"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Row 4: Latest Predictions Table -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden mb-8">
+<div class="p-4 border-b border-outline-variant flex justify-between items-center bg-surface-bright">
+<h2 class="font-title-sm text-title-sm text-primary">Latest Predictions</h2>
+<button class="font-label-caps text-label-caps text-primary hover:underline uppercase">View All</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low border-b border-outline-variant">
+<th class="py-3 px-6 font-label-caps text-label-caps text-secondary">Event ID</th>
+<th class="py-3 px-6 font-label-caps text-label-caps text-secondary">Timestamp</th>
+<th class="py-3 px-6 font-label-caps text-label-caps text-secondary">Location / Entity</th>
+<th class="py-3 px-6 font-label-caps text-label-caps text-secondary">Risk Score</th>
+<th class="py-3 px-6 font-label-caps text-label-caps text-secondary text-right">Action</th>
+</tr>
+</thead>
+<tbody class="font-mono-data text-mono-data text-on-surface">
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="py-3 px-6 text-secondary">EVT-992A-X</td>
+<td class="py-3 px-6 text-on-surface-variant">2023-10-27 14:31:22</td>
+<td class="py-3 px-6">Gateway Node 04</td>
+<td class="py-3 px-6">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-error-container text-on-error-container">0.92</span>
+</td>
+<td class="py-3 px-6 text-right">
+<button class="text-primary hover:text-on-primary-fixed-variant material-symbols-outlined text-[18px]">visibility</button>
+</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="py-3 px-6 text-secondary">EVT-992B-Y</td>
+<td class="py-3 px-6 text-on-surface-variant">2023-10-27 14:30:15</td>
+<td class="py-3 px-6">Auth Cluster B</td>
+<td class="py-3 px-6">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-tertiary-fixed text-on-tertiary-fixed">0.65</span>
+</td>
+<td class="py-3 px-6 text-right">
+<button class="text-primary hover:text-on-primary-fixed-variant material-symbols-outlined text-[18px]">visibility</button>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-3 px-6 text-secondary">EVT-992C-Z</td>
+<td class="py-3 px-6 text-on-surface-variant">2023-10-27 14:28:44</td>
+<td class="py-3 px-6">DB Replica 01</td>
+<td class="py-3 px-6">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-surface-container-highest text-secondary">0.12</span>
+</td>
+<td class="py-3 px-6 text-right">
+<button class="text-primary hover:text-on-primary-fixed-variant material-symbols-outlined text-[18px]">visibility</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</main>
+</body></html>

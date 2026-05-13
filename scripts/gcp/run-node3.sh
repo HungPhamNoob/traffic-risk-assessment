@@ -27,6 +27,17 @@ else
 fi
 
 echo "Starting Spark services..."
+echo "Removing stale Node 3 containers from previous Compose project names..."
+docker rm -f \
+  node3-spark-master \
+  node3-spark-worker-1 \
+  node3-spark-worker-2 \
+  node3-spark-worker-3 \
+  2>/dev/null || true
+
+echo "Ensuring the shared Docker network exists before Compose starts."
+docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
+
 docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml up -d
 
 echo "Waiting for Spark master to accept jobs..."

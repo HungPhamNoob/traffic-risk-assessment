@@ -9,7 +9,7 @@ py-modules = []
 name = "road-accident-risk-platform"
 version = "0.1.0"
 description = "Kafka, Flink, Spark, Airflow, H2O, and MLflow pipeline for road accident risk analysis."
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "apache-airflow>=2.7.0",
     "apache-airflow-providers-google>=10.0.0",
@@ -30,7 +30,7 @@ dependencies = [
     "seaborn>=0.13.0",
     "prometheus-client>=0.19.0",
     "psycopg2-binary>=2.9.9",
-    "pyarrow>=11.0.0,<12.0.0",
+    "pyarrow>=14.0.0",
     "pyspark>=3.5.0",
     "pydantic-settings>=2.3.0",
     "python-dotenv>=1.0.0",
@@ -73,4 +73,3 @@ exclude = ".git,__pycache__,.venv,venv"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-pythonpath = ["."]

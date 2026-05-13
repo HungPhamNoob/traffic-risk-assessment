@@ -78,10 +78,11 @@ services:
       - "8080:8080"
     command: >
       bash -c "
-        airflow db upgrade &&
-        airflow users create --username ${AIRFLOW_USER:-admin} --password ${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true &&
+        set -e;
+        airflow db migrate || airflow db init;
+        airflow users create --username ${AIRFLOW_USER:-admin} --password ${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true;
         airflow webserver &
-        airflow scheduler
+        exec airflow scheduler
       "
     networks:
       - capstone-net
@@ -230,6 +231,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - ENV=${ENV:-production}
       - POSTGRES_USER=${POSTGRES_USER:-capstone}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme123}
       - POSTGRES_DB=${POSTGRES_DB:-capstone_db}

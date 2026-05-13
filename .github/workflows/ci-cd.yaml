@@ -24,6 +24,7 @@ concurrency:
 # ============================================================
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: us-central1
   GCP_ZONE: us-central1-a
 
 # ============================================================
@@ -106,6 +107,21 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure Artifact Registry repository
+        run: |
+          if ! gcloud artifacts repositories describe capstone \
+            --location="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            gcloud artifacts repositories create capstone \
+              --repository-format=docker \
+              --location="${GCP_REGION}" \
+              --description="Capstone Docker images" \
+              --project="${GCP_PROJECT_ID}"
+          fi
+
       # Step 3: Login to Google Artifact Registry (Docker)
       - name: Login to Google Artifact Registry
         uses: docker/login-action@v3
@@ -147,6 +163,10 @@ jobs:
       # Step 3: Setup gcloud CLI
       - name: Setup gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure GCP infrastructure
+        run: |
+          bash scripts/gcp/setup_gcp.sh
 
       - name: Prepare VM SSH key
         env:
@@ -193,23 +213,26 @@ jobs:
           echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
           {
             printf '\n# CI/CD deployment overrides. These values keep stale GitHub secret content from pointing VMs at retired buckets.\n'
+            NODE1_INTERNAL_IP="$(gcloud compute instances describe node1-control --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].networkIP)')"
+            NODE2_INTERNAL_IP="$(gcloud compute instances describe node2-streaming --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].networkIP)')"
+            NODE3_INTERNAL_IP="$(gcloud compute instances describe node3-batch --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].networkIP)')"
             printf 'GCP_PROJECT_ID=%s\n' "$GCP_PROJECT_ID"
             printf 'GCS_BUCKET_BRONZE=big-data-group-4-bronze\n'
             printf 'GCS_BUCKET_SILVER=big-data-group-4-silver\n'
             printf 'GCS_BUCKET_GOLD=big-data-group-4-gold\n'
-            printf 'NODE1_INTERNAL_IP=10.128.0.4\n'
-            printf 'NODE2_INTERNAL_IP=10.128.0.5\n'
-            printf 'NODE3_INTERNAL_IP=10.128.0.6\n'
-            printf 'POSTGRES_HOST=10.128.0.4\n'
+            printf 'NODE1_INTERNAL_IP=%s\n' "$NODE1_INTERNAL_IP"
+            printf 'NODE2_INTERNAL_IP=%s\n' "$NODE2_INTERNAL_IP"
+            printf 'NODE3_INTERNAL_IP=%s\n' "$NODE3_INTERNAL_IP"
+            printf 'POSTGRES_HOST=%s\n' "$NODE1_INTERNAL_IP"
             printf 'US_TRAIN_OFFLINE_PATH=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv\n'
             printf 'US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv\n'
             printf 'SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features\n'
             printf 'GOLD_RETRAIN_PATH=gs://big-data-group-4-gold/features/retrain\n'
             printf 'GOLD_RETRAIN_PARQUET_PATH=gs://big-data-group-4-gold/features/retrain/parquet\n'
             printf 'GOLD_RETRAIN_CSV_PATH=gs://big-data-group-4-gold/features/retrain/csv\n'
-            printf 'MLFLOW_TRACKING_URI=http://10.128.0.4:5000\n'
+            printf 'MLFLOW_TRACKING_URI=http://%s:5000\n' "$NODE1_INTERNAL_IP"
             printf 'MLFLOW_ARTIFACT_ROOT=gs://big-data-group-4-ml-artifacts\n'
-            printf 'MLFLOW_SERVING_ENDPOINT=http://10.128.0.4:5001/invocations\n'
+            printf 'MLFLOW_SERVING_ENDPOINT=http://%s:5001/invocations\n' "$NODE1_INTERNAL_IP"
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
           printf 'RUN_OFFLINE_TRAINING_ON_DEPLOY=false\n' >> .env.cloud
@@ -221,7 +244,6 @@ jobs:
       # Step 4: Deploy Node 1 (Control Plane - Standard VM)
       # -------------------------------------------------------
       - name: Deploy to Node 1 (Control Plane)
-        continue-on-error: true
         run: |
           echo "Deploying to Node 1 (Standard VM)..."
           BRANCH="${{ github.ref_name }}"
@@ -319,7 +341,6 @@ jobs:
       # Only if Spot VM is currently running
       # -------------------------------------------------------
       - name: Deploy to Node 2 (Streaming)
-        continue-on-error: true
         if: ${{ vars.DEPLOY_STREAMING == 'true' }}
         run: |
           echo "Deploying to Node 2 (Spot VM)..."
@@ -402,7 +423,6 @@ jobs:
       # Only if Spot VM is currently running
       # -------------------------------------------------------
       - name: Deploy to Node 3 (Batch)
-        continue-on-error: true
         if: ${{ vars.DEPLOY_BATCH == 'true' }}
         run: |
           echo "Deploying to Node 3 (Spot VM)..."
@@ -528,7 +548,6 @@ jobs:
           echo "SUCCESS: VM SSH key installed and parsed for smoke tests."
 
       - name: Run smoke tests
-        continue-on-error: true
         run: |
           echo "=== Getting Node 1 IP ==="
           SSH_USER="${{ vars.HUNG_SSH_USER }}"
