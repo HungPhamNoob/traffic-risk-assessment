@@ -130,6 +130,8 @@ def main() -> None:
     spark = (
         SparkSession.builder.appName("SilverToGoldRetrainDataset")
         .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.files.ignoreCorruptFiles", "true")
+        .config("spark.sql.files.ignoreMissingFiles", "true")
         .config("spark.sql.session.timeZone", "UTC")
         .getOrCreate()
     )
