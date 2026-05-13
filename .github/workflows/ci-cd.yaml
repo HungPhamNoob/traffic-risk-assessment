@@ -310,10 +310,10 @@ jobs:
                 # generated files, or partial previous deployments cannot block releases.
                 git fetch --prune origin
                 git reset --hard
-                git clean -fd
+                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
                 git checkout -B "$BRANCH" "origin/$BRANCH"
                 git reset --hard "origin/$BRANCH"
-                git clean -fd
+                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
             fi
 
             echo "=== Loading cloud environment ==="
@@ -413,10 +413,10 @@ jobs:
                 # generated files, or partial previous deployments cannot block releases.
                 git fetch --prune origin
                 git reset --hard
-                git clean -fd
+                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
                 git checkout -B "$BRANCH" "origin/$BRANCH"
                 git reset --hard "origin/$BRANCH"
-                git clean -fd
+                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
             fi
 
             echo "=== Restarting streaming services ==="
@@ -505,10 +505,10 @@ jobs:
                 # generated files, or partial previous deployments cannot block releases.
                 git fetch --prune origin
                 git reset --hard
-                git clean -fd
+                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
                 git checkout -B "$BRANCH" "origin/$BRANCH"
                 git reset --hard "origin/$BRANCH"
-                git clean -fd
+                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
             fi
 
             echo "=== Restarting batch services ==="
