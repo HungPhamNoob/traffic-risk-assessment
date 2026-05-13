@@ -393,6 +393,11 @@ jobs:
             set -e
 
             echo "=== Pulling latest code ==="
+            # Normalize ownership and trust for the deployment checkout. Older
+            # startup scripts may have created /opt/traffic with root ownership.
+            sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
+            git config --global --add safe.directory /opt/traffic 2>/dev/null || true
+
             if [ ! -d /opt/traffic/.git ]; then
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
@@ -480,6 +485,10 @@ jobs:
 
             echo "=== Pulling latest code ==="
             BRANCH="${{ github.ref_name }}"
+            # Normalize ownership and trust for the deployment checkout. Older
+            # startup scripts may have created /opt/traffic with root ownership.
+            sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
+            git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 
             if [ ! -d /opt/traffic/.git ]; then
                 echo "=== First deployment: cloning repository ==="
