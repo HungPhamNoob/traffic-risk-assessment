@@ -304,11 +304,14 @@ jobs:
                 cd /opt/traffic
                 git checkout $BRANCH
             else
-                echo "=== Repository exists: pulling latest ==="
+                echo "=== Repository exists: force-syncing deployment worktree ==="
                 cd /opt/traffic
-                git fetch origin
-                git checkout $BRANCH
-                git pull origin $BRANCH
+                # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
+                # generated files, or partial previous deployments cannot block releases.
+                git fetch --prune origin
+                git checkout -B $BRANCH origin/$BRANCH
+                git reset --hard origin/$BRANCH
+                git clean -fd
             fi
 
             echo "=== Loading cloud environment ==="
@@ -397,11 +400,14 @@ jobs:
                 cd /opt/traffic
                 git checkout $BRANCH
             else
-                echo "=== Repository exists: pulling latest ==="
+                echo "=== Repository exists: force-syncing deployment worktree ==="
                 cd /opt/traffic
-                git fetch origin
-                git checkout $BRANCH
-                git pull origin $BRANCH
+                # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
+                # generated files, or partial previous deployments cannot block releases.
+                git fetch --prune origin
+                git checkout -B $BRANCH origin/$BRANCH
+                git reset --hard origin/$BRANCH
+                git clean -fd
             fi
 
             echo "=== Restarting streaming services ==="
@@ -480,11 +486,14 @@ jobs:
                 cd /opt/traffic
                 git checkout $BRANCH
             else
-                echo "=== Repository exists: pulling latest ==="
+                echo "=== Repository exists: force-syncing deployment worktree ==="
                 cd /opt/traffic
-                git fetch origin
-                git checkout $BRANCH
-                git pull origin $BRANCH
+                # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
+                # generated files, or partial previous deployments cannot block releases.
+                git fetch --prune origin
+                git checkout -B $BRANCH origin/$BRANCH
+                git reset --hard origin/$BRANCH
+                git clean -fd
             fi
 
             echo "=== Restarting batch services ==="
