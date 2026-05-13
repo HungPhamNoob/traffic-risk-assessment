@@ -6,8 +6,16 @@ REGION="${GCP_REGION:-us-central1}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 SA_EMAIL="team4-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
-echo "Enabling required Google Cloud APIs..."
-gcloud services enable compute.googleapis.com storage.googleapis.com artifactregistry.googleapis.com iap.googleapis.com --project $PROJECT_ID
+echo "Ensuring required Google Cloud APIs are enabled..."
+if ! gcloud services enable \
+  compute.googleapis.com \
+  storage.googleapis.com \
+  artifactregistry.googleapis.com \
+  iap.googleapis.com \
+  --project "$PROJECT_ID"; then
+  echo "WARNING: The authenticated account cannot enable one or more Google Cloud APIs."
+  echo "WARNING: Continuing because the APIs may already be enabled in the project."
+fi
 
 echo "Ensuring the pipeline service account exists..."
 if ! gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT_ID" &>/dev/null; then

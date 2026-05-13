@@ -203,7 +203,7 @@ It performs these steps on every push to `hung1`:
 Required GitHub secrets:
 
 - `GCP_PROJECT_ID=big-data-group-4`
-- `GCP_SA_KEY`: JSON key for a service account that can manage Compute Engine, Storage, Artifact Registry, and IAM bindings.
+- `GCP_SA_KEY`: JSON key for a service account that can manage Compute Engine, Storage, Artifact Registry, and existing VM metadata. API enabling should be done once by a project owner; CI treats API enable as best-effort.
 - `ENV_CLOUD`: complete `.env.cloud` content.
 - `HUNG_SSH_PRIVATE_KEY`: private key matching the `runner` public key installed on VMs.
 
