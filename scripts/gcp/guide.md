@@ -147,12 +147,30 @@ gcloud projects add-iam-policy-binding big-data-group-4 \
 
 Use this when GitHub Actions is unavailable or when debugging a VM directly. Deploy Node 1 first, then Node 2, then Node 3.
 
+Use the same safe Git sync pattern on every VM. It handles first-time clone, old startup-script copies that do not contain `.git`, and dirty deployment worktrees:
+
+```bash
+cd /opt
+if [ ! -d /opt/traffic/.git ]; then
+  sudo rm -rf /opt/traffic
+  sudo mkdir -p /opt/traffic
+  sudo chown -R "$(whoami):$(whoami)" /opt/traffic
+  git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+fi
+
+cd /opt/traffic
+git config --global --add safe.directory /opt/traffic 2>/dev/null || true
+git fetch --prune origin
+git checkout -B hung1 origin/hung1
+git reset --hard origin/hung1
+git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
+```
+
+Then run the node-specific command.
+
 ```bash
 gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='
   cd /opt/traffic &&
-  git fetch origin &&
-  git checkout hung1 &&
-  git pull origin hung1 &&
   bash scripts/gcp/run-node1.sh
 '
 ```
@@ -160,9 +178,6 @@ gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4
 ```bash
 gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='
   cd /opt/traffic &&
-  git fetch origin &&
-  git checkout hung1 &&
-  git pull origin hung1 &&
   bash scripts/gcp/run-node2.sh
 '
 ```
@@ -170,9 +185,6 @@ gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group
 ```bash
 gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='
   cd /opt/traffic &&
-  git fetch origin &&
-  git checkout hung1 &&
-  git pull origin hung1 &&
   NODE3_H2O_MAX_RUNTIME=120 bash scripts/gcp/run-node3.sh
 '
 ```
@@ -287,6 +299,8 @@ gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 -
   find data/cloud/gold/features/retrain -maxdepth 4 -type f | head
 '
 ```
+
+If Node 2 is still actively writing Silver data, Node 3 may print transient `GcsNotFoundError` or rsync warnings while copying the moving snapshot. The run script continues with the files already copied, and Spark is configured to ignore missing/corrupt files for this active-streaming race.
 
 ### 7.5 Collect Backend JSON outputs
 
