@@ -309,8 +309,10 @@ jobs:
                 # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
                 # generated files, or partial previous deployments cannot block releases.
                 git fetch --prune origin
-                git checkout -B $BRANCH origin/$BRANCH
-                git reset --hard origin/$BRANCH
+                git reset --hard
+                git clean -fd
+                git checkout -B "$BRANCH" "origin/$BRANCH"
+                git reset --hard "origin/$BRANCH"
                 git clean -fd
             fi
 
@@ -405,8 +407,10 @@ jobs:
                 # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
                 # generated files, or partial previous deployments cannot block releases.
                 git fetch --prune origin
-                git checkout -B $BRANCH origin/$BRANCH
-                git reset --hard origin/$BRANCH
+                git reset --hard
+                git clean -fd
+                git checkout -B "$BRANCH" "origin/$BRANCH"
+                git reset --hard "origin/$BRANCH"
                 git clean -fd
             fi
 
@@ -491,8 +495,10 @@ jobs:
                 # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
                 # generated files, or partial previous deployments cannot block releases.
                 git fetch --prune origin
-                git checkout -B $BRANCH origin/$BRANCH
-                git reset --hard origin/$BRANCH
+                git reset --hard
+                git clean -fd
+                git checkout -B "$BRANCH" "origin/$BRANCH"
+                git reset --hard "origin/$BRANCH"
                 git clean -fd
             fi
 
