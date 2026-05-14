@@ -226,7 +226,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   fastapi:
-    image: ${FASTAPI_IMAGE:-traffic-risk-fastapi:latest}
+    image: us-central1-docker.pkg.dev/big-data-group-4/capstone/fastapi:latest
     container_name: node1-fastapi
     ports:
       - "8000:8000"

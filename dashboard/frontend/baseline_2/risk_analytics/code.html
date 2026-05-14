@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Analytics Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@600;700&amp;family=Inter:wght@400;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary": "#213145",
+                      "surface-container": "#171f33",
+                      "outline": "#87929a",
+                      "on-error": "#690005",
+                      "surface-container-high": "#222a3d",
+                      "primary-fixed-dim": "#7bd0ff",
+                      "on-primary-fixed": "#001e2c",
+                      "on-secondary-fixed-variant": "#38485d",
+                      "on-secondary-fixed": "#0b1c30",
+                      "background": "#0b1326",
+                      "primary-fixed": "#c4e7ff",
+                      "on-error-container": "#ffdad6",
+                      "surface-bright": "#31394d",
+                      "surface-dim": "#0b1326",
+                      "secondary-container": "#3a4a5f",
+                      "inverse-on-surface": "#283044",
+                      "on-primary-container": "#004965",
+                      "outline-variant": "#3e484f",
+                      "secondary-fixed": "#d3e4fe",
+                      "primary-container": "#38bdf8",
+                      "surface-container-highest": "#2d3449",
+                      "secondary": "#b7c8e1",
+                      "on-surface-variant": "#bdc8d1",
+                      "tertiary-fixed-dim": "#ffb960",
+                      "tertiary-fixed": "#ffddb8",
+                      "on-primary": "#00354a",
+                      "surface-container-lowest": "#060e20",
+                      "on-surface": "#dae2fd",
+                      "on-background": "#dae2fd",
+                      "tertiary": "#ffc176",
+                      "tertiary-container": "#f1a02b",
+                      "on-tertiary-container": "#613b00",
+                      "inverse-primary": "#00668a",
+                      "secondary-fixed-dim": "#b7c8e1",
+                      "on-secondary-container": "#a9bad3",
+                      "primary": "#8ed5ff",
+                      "error": "#ffb4ab",
+                      "on-tertiary": "#472a00",
+                      "surface-variant": "#2d3449",
+                      "surface-tint": "#7bd0ff",
+                      "surface-container-low": "#131b2e",
+                      "inverse-surface": "#dae2fd",
+                      "on-tertiary-fixed-variant": "#653e00",
+                      "error-container": "#93000a",
+                      "on-primary-fixed-variant": "#004c69",
+                      "surface": "#0b1326",
+                      "on-tertiary-fixed": "#2a1700"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "sidebar-width": "280px",
+                      "grid-columns": "12",
+                      "element-tight": "8px",
+                      "unit": "4px",
+                      "element-loose": "16px",
+                      "container-padding": "24px",
+                      "panel-gap": "12px"
+              },
+              "fontFamily": {
+                      "title-sm": [
+                              "Geist"
+                      ],
+                      "body-sm": [
+                              "Inter"
+                      ],
+                      "data-mono": [
+                              "JetBrains Mono"
+                      ],
+                      "label-caps": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Geist"
+                      ],
+                      "display-lg": [
+                              "Geist"
+                      ],
+                      "body-base": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "title-sm": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-sm": [
+                              "12px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "data-mono": [
+                              "13px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "label-caps": [
+                              "11px",
+                              {
+                                      "lineHeight": "1rem",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "display-lg": [
+                              "36px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "body-base": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+            },
+          }
+        }
+    </script>
+<style>
+        /* Ambient shadows for floating panels */
+        .glass-panel {
+            background-color: rgba(23, 31, 51, 0.75); /* surface-container approx */
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        /* Thin grid lines for charts */
+        .chart-grid-line {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen relative font-body-base overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- Ambient Map Background (Level 0) -->
+<div aria-hidden="true" class="fixed inset-0 z-0 bg-background overflow-hidden">
+<div class="absolute inset-0 opacity-20 bg-[url('https://images.unsplash.com/photo-1524661135-423995f22d0b?ixlib=rb-4.0.3&amp;auto=format&amp;fit=crop&amp;w=2000&amp;q=80')] bg-cover bg-center" data-alt="A highly detailed, dark-themed satellite map view showing intricate urban street grids and topographical data. The aesthetic is modern and analytical, dominated by deep blues and blacks representing the base layer, accented with faint, glowing lines tracing main arterial roads. The mood is precise, technical, and data-driven, fitting a high-end corporate analytics platform."></div>
+<!-- Additive overlay simulation -->
+<div class="absolute inset-0 bg-gradient-to-tr from-primary/5 to-transparent mix-blend-screen"></div>
+</div>
+<!-- SideNavBar (Level 1) -->
+<nav class="bg-surface-container dark:bg-surface-container-lowest text-primary dark:text-primary-fixed fixed left-0 top-0 h-full w-[280px] border-r border-outline-variant dark:border-white/10 shadow-md flex flex-col py-container-padding z-40">
+<!-- Header -->
+<div class="px-6 mb-8 flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-primary-container flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary-container" style="font-variation-settings: 'FILL' 1;">analytics</span>
+</div>
+<div class="overflow-hidden">
+<h1 class="font-title-sm text-title-sm font-bold tracking-tight text-primary dark:text-primary-fixed truncate">TrafficRisk AI</h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant dark:text-outline truncate">V3.2 Engine Active</p>
+</div>
+</div>
+<!-- Navigation Links -->
+<div class="flex-1 flex flex-col gap-1 px-4">
+<!-- Active Tab -->
+<a class="flex items-center gap-3 px-3 py-2 rounded text-primary dark:text-primary-fixed font-bold border-r-2 border-primary bg-secondary-container/20 active:scale-[0.98] transition-transform" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-label-caps text-label-caps uppercase tracking-widest">Dashboard</span>
+</a>
+<!-- Inactive Tabs -->
+<a class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-outline font-medium hover:bg-surface-variant/50 hover:text-on-surface transition-all duration-200 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">dynamic_form</span>
+<span class="font-label-caps text-label-caps uppercase tracking-widest">Simulation</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-outline font-medium hover:bg-surface-variant/50 hover:text-on-surface transition-all duration-200 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined">monitor_heart</span>
+<span class="font-label-caps text-label-caps uppercase tracking-widest">System Health</span>
+</a>
+</div>
+<!-- CTA / Status -->
+<div class="px-6 mt-auto">
+<div class="flex items-center gap-2 px-3 py-2 bg-surface-variant rounded-lg border border-outline-variant/30">
+<div class="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(142,213,255,0.8)]"></div>
+<span class="font-data-mono text-data-mono text-on-surface">API: CONNECTED</span>
+</div>
+</div>
+</nav>
+<!-- TopAppBar (Level 1) -->
+<header class="bg-surface-container/80 dark:bg-surface-container-lowest/80 backdrop-blur-xl fixed top-0 right-0 left-[280px] z-30 border-b border-outline-variant/30 shadow-sm flex items-center justify-between px-6 h-16 transition-all">
+<!-- Search Left -->
+<div class="flex-1 flex items-center">
+<div class="relative w-full max-w-md flex items-center">
+<span class="material-symbols-outlined absolute left-3 text-outline pointer-events-none">search</span>
+<input class="w-full bg-surface-container-high border-outline-variant/50 border text-on-surface text-sm rounded-lg pl-10 pr-4 py-2 focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition-colors font-data-mono text-data-mono" placeholder="Search geospatial index..." type="text"/>
+</div>
+</div>
+<!-- Product Name Center -->
+<div class="flex-1 flex justify-center">
+<span class="font-title-sm text-title-sm font-bold text-on-surface dark:text-on-background">RiskEngine Dashboard</span>
+</div>
+<!-- Actions Right -->
+<div class="flex-1 flex items-center justify-end gap-2">
+<button class="p-2 text-on-surface-variant dark:text-outline hover:bg-surface-variant/30 rounded-full transition-colors active:opacity-80 flex items-center justify-center">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-on-surface-variant dark:text-outline hover:bg-surface-variant/30 rounded-full transition-colors active:opacity-80 flex items-center justify-center">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="p-2 text-on-surface-variant dark:text-outline hover:bg-surface-variant/30 rounded-full transition-colors active:opacity-80 flex items-center justify-center">
+<span class="material-symbols-outlined">help</span>
+</button>
+<div class="w-px h-6 bg-outline-variant/50 mx-2"></div>
+<img alt="User profile" class="w-8 h-8 rounded-full border border-outline-variant object-cover ml-2" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAZe83PCNU6nJF_DRYnJbLntdjNBygk-_OfUfVXwxHu2Hv7N967ugMJdUt00118FODFVuz62BkzhUr0e6H7DFVnDEP4DkiD3kbE5pHZjev1qQYmpg9sxqPnpleRw1P1pZJyR778Bt_KwkFjforpSXQKMsi_4tLCBuCYQ36AOMQW88BCVU8O29eOzaTcSO_gc64xcBteWnggl45iZeSjjMIDs-PLIP5vRQmefOHqz-4gxPYU17_d97Utc6kNSMRqhJh5iMFxx0-RF2IF"/>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-[280px] pt-[88px] pb-container-padding px-container-padding min-h-screen relative z-10 flex flex-col gap-panel-gap">
+<!-- Filter Bar Panel (Level 2) -->
+<div class="glass-panel rounded-xl flex items-center justify-between px-6 py-3">
+<div class="flex items-center gap-6">
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-secondary mb-1">Date Range</span>
+<div class="flex items-center gap-2 font-data-mono text-data-mono text-on-surface">
+<span class="material-symbols-outlined text-[16px] text-outline">calendar_today</span>
+<span>2023-10-01 — 2023-10-31</span>
+</div>
+</div>
+<div class="w-px h-8 bg-outline-variant/50"></div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-secondary mb-1">Resolution</span>
+<div class="flex items-center gap-1 bg-surface-container-high rounded p-0.5 border border-outline-variant/30">
+<button class="px-3 py-1 text-xs font-medium rounded text-on-surface bg-surface-variant shadow-sm">Day</button>
+<button class="px-3 py-1 text-xs font-medium rounded text-on-surface-variant hover:text-on-surface transition-colors">Week</button>
+<button class="px-3 py-1 text-xs font-medium rounded text-on-surface-variant hover:text-on-surface transition-colors">Month</button>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-variant/50 transition-colors">
+<span class="material-symbols-outlined text-[18px]">filter_list</span>
+<span class="font-label-caps text-label-caps">Filters</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-on-primary hover:bg-primary-fixed transition-colors font-label-caps text-label-caps border border-transparent">
+<span class="material-symbols-outlined text-[18px]">download</span>
+                    Export
+                </button>
+</div>
+</div>
+<!-- Charts Grid -->
+<div class="grid grid-cols-12 gap-panel-gap flex-1">
+<!-- Chart 1: Risk Time Series (col-span-8) -->
+<div class="glass-panel rounded-xl col-span-8 flex flex-col relative overflow-hidden">
+<div class="absolute top-0 left-0 w-full h-[2px] bg-primary"></div>
+<div class="flex items-center justify-between mb-6">
+<div>
+<h2 class="font-title-sm text-title-sm text-on-surface">Aggregate Risk Index</h2>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Time series projection over active period</p>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<div class="w-3 h-3 rounded-full bg-primary"></div>
+<span class="font-label-caps text-label-caps text-secondary">Predicted</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-3 h-3 rounded-full bg-tertiary"></div>
+<span class="font-label-caps text-label-caps text-secondary">Observed</span>
+</div>
+</div>
+</div>
+<div class="flex-1 relative flex flex-col justify-between pt-4">
+<!-- Y-Axis Labels -->
+<div class="absolute left-0 top-0 h-full flex flex-col justify-between text-outline font-data-mono text-data-mono pb-8 text-xs">
+<span>100</span>
+<span>75</span>
+<span>50</span>
+<span>25</span>
+<span>0</span>
+</div>
+<!-- Chart Area -->
+<div class="ml-8 h-full relative border-l border-b border-outline-variant/30 flex flex-col justify-between pb-1">
+<!-- Grid Lines -->
+<div class="chart-grid-line w-full flex-1"></div>
+<div class="chart-grid-line w-full flex-1"></div>
+<div class="chart-grid-line w-full flex-1"></div>
+<div class="chart-grid-line w-full flex-1"></div>
+<!-- SVG Line (Simulated Recharts) -->
+<svg class="absolute inset-0 w-full h-full" preserveaspectratio="none" viewbox="0 0 100 100">
+<!-- Predicted Line -->
+<path class="text-primary drop-shadow-[0_0_6px_rgba(142,213,255,0.4)]" d="M0,80 Q10,70 20,75 T40,60 T60,40 T80,50 T100,20" fill="none" stroke="currentColor" stroke-width="2"></path>
+<path d="M0,80 Q10,70 20,75 T40,60 T60,40 T80,50 T100,20 L100,100 L0,100 Z" fill="url(#primary-grad)" opacity="0.1"></path>
+<!-- Observed Line -->
+<path class="text-tertiary" d="M0,85 Q15,75 25,65 T45,65 T65,45 T85,55" fill="none" stroke="currentColor" stroke-dasharray="4" stroke-width="2"></path>
+<defs>
+<lineargradient id="primary-grad" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#8ed5ff"></stop>
+<stop offset="100%" stop-color="transparent"></stop>
+</lineargradient>
+</defs>
+</svg>
+</div>
+<!-- X-Axis Labels -->
+<div class="ml-8 flex justify-between mt-2 text-outline font-data-mono text-data-mono text-xs">
+<span>Oct 01</span>
+<span>Oct 08</span>
+<span>Oct 15</span>
+<span>Oct 22</span>
+<span>Oct 29</span>
+</div>
+</div>
+</div>
+<!-- Chart 2: Severity Distribution (col-span-4) -->
+<div class="glass-panel rounded-xl col-span-4 flex flex-col relative overflow-hidden">
+<div class="absolute top-0 left-0 w-full h-[2px] bg-tertiary"></div>
+<h2 class="font-title-sm text-title-sm text-on-surface mb-1">Severity Distribution</h2>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-6">Categorical breakdown of flagged events</p>
+<div class="flex-1 flex flex-col items-center justify-center relative">
+<!-- Simulated Doughnut Chart -->
+<div class="relative w-40 h-40 rounded-full" style="background: conic-gradient(#8ed5ff 0% 45%, #ffc176 45% 75%, #ffb4ab 75% 100%);">
+<!-- Inner cut out -->
+<div class="absolute inset-[15%] bg-[#0b1326] rounded-full flex items-center justify-center border border-outline-variant/20 shadow-inner">
+<div class="text-center">
+<span class="block font-data-mono text-title-sm text-on-surface font-bold">4,291</span>
+<span class="block font-label-caps text-label-caps text-outline">Total</span>
+</div>
+</div>
+</div>
+<!-- Legend -->
+<div class="w-full mt-8 flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-3 h-3 rounded border border-primary bg-primary/20"></div>
+<span class="font-body-sm text-body-sm text-on-surface">Low (L1)</span>
+</div>
+<span class="font-data-mono text-data-mono text-on-surface">45%</span>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-3 h-3 rounded border border-tertiary bg-tertiary/20"></div>
+<span class="font-body-sm text-body-sm text-on-surface">Medium (L2)</span>
+</div>
+<span class="font-data-mono text-data-mono text-on-surface">30%</span>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-3 h-3 rounded border border-error bg-error/20"></div>
+<span class="font-body-sm text-body-sm text-on-surface">High (L3)</span>
+</div>
+<span class="font-data-mono text-data-mono text-error">25%</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Chart 3: Risk by Hour (col-span-6) -->
+<div class="glass-panel rounded-xl col-span-6 flex flex-col min-h-[300px]">
+<div class="flex items-center justify-between mb-6">
+<h2 class="font-title-sm text-title-sm text-on-surface">Temporal Density (0-23h)</h2>
+<span class="material-symbols-outlined text-outline">schedule</span>
+</div>
+<div class="flex-1 relative flex items-end gap-1 border-b border-outline-variant/30 pb-2 h-48">
+<!-- Simulate Bar Chart, array of heights -->
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[20%] relative group">
+<div class="absolute -top-8 left-1/2 -translate-x-1/2 bg-surface-container-highest border border-outline px-2 py-1 rounded text-xs font-data-mono opacity-0 group-hover:opacity-100 transition-opacity z-10">12</div>
+</div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[15%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[10%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[8%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[15%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[30%]"></div>
+<div class="flex-1 bg-primary/60 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[50%]"></div>
+<div class="flex-1 bg-tertiary/60 hover:bg-tertiary border border-tertiary/50 rounded-t transition-colors h-[75%]"></div>
+<div class="flex-1 bg-tertiary/60 hover:bg-tertiary border border-tertiary/50 rounded-t transition-colors h-[90%]"></div>
+<div class="flex-1 bg-error/60 hover:bg-error border border-error/50 rounded-t transition-colors h-[100%]"></div>
+<div class="flex-1 bg-error/60 hover:bg-error border border-error/50 rounded-t transition-colors h-[85%]"></div>
+<div class="flex-1 bg-tertiary/60 hover:bg-tertiary border border-tertiary/50 rounded-t transition-colors h-[60%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[40%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[45%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[50%]"></div>
+<div class="flex-1 bg-tertiary/60 hover:bg-tertiary border border-tertiary/50 rounded-t transition-colors h-[70%]"></div>
+<div class="flex-1 bg-error/60 hover:bg-error border border-error/50 rounded-t transition-colors h-[95%]"></div>
+<div class="flex-1 bg-error/60 hover:bg-error border border-error/50 rounded-t transition-colors h-[80%]"></div>
+<div class="flex-1 bg-tertiary/60 hover:bg-tertiary border border-tertiary/50 rounded-t transition-colors h-[55%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[35%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[25%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[20%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[15%]"></div>
+<div class="flex-1 bg-primary/40 hover:bg-primary border border-primary/50 rounded-t transition-colors h-[10%]"></div>
+</div>
+<div class="flex justify-between mt-2 text-outline font-data-mono text-data-mono text-[10px]">
+<span>00:00</span>
+<span>06:00</span>
+<span>12:00</span>
+<span>18:00</span>
+<span>23:00</span>
+</div>
+</div>
+<!-- Chart 4: Risk by Weather (col-span-6) -->
+<div class="glass-panel rounded-xl col-span-6 flex flex-col min-h-[300px]">
+<div class="flex items-center justify-between mb-6">
+<h2 class="font-title-sm text-title-sm text-on-surface">Environmental Correlation</h2>
+<span class="material-symbols-outlined text-outline">routine</span>
+</div>
+<div class="flex-1 flex flex-col gap-4 justify-center">
+<!-- Horizontal Bars -->
+<div class="flex items-center gap-4">
+<div class="w-16 flex items-center justify-end gap-2 text-outline">
+<span class="font-label-caps text-label-caps">Clear</span>
+<span class="material-symbols-outlined text-[16px]">sunny</span>
+</div>
+<div class="flex-1 h-6 bg-surface-container-high rounded border border-outline-variant/20 overflow-hidden relative">
+<div class="h-full bg-primary w-[35%] rounded-r relative border-r border-y border-white/20"></div>
+<span class="absolute left-[36%] top-1/2 -translate-y-1/2 font-data-mono text-data-mono text-on-surface text-xs pl-2">35%</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="w-16 flex items-center justify-end gap-2 text-outline">
+<span class="font-label-caps text-label-caps">Rain</span>
+<span class="material-symbols-outlined text-[16px]">rainy</span>
+</div>
+<div class="flex-1 h-6 bg-surface-container-high rounded border border-outline-variant/20 overflow-hidden relative">
+<div class="h-full bg-tertiary w-[65%] rounded-r relative border-r border-y border-white/20"></div>
+<span class="absolute left-[66%] top-1/2 -translate-y-1/2 font-data-mono text-data-mono text-on-surface text-xs pl-2">65%</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="w-16 flex items-center justify-end gap-2 text-outline">
+<span class="font-label-caps text-label-caps">Snow</span>
+<span class="material-symbols-outlined text-[16px]">ac_unit</span>
+</div>
+<div class="flex-1 h-6 bg-surface-container-high rounded border border-outline-variant/20 overflow-hidden relative">
+<div class="h-full bg-error w-[85%] rounded-r relative border-r border-y border-white/20"></div>
+<span class="absolute left-[86%] top-1/2 -translate-y-1/2 font-data-mono text-data-mono text-on-surface text-xs pl-2">85%</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="w-16 flex items-center justify-end gap-2 text-outline">
+<span class="font-label-caps text-label-caps">Fog</span>
+<span class="material-symbols-outlined text-[16px]">foggy</span>
+</div>
+<div class="flex-1 h-6 bg-surface-container-high rounded border border-outline-variant/20 overflow-hidden relative">
+<div class="h-full bg-tertiary w-[55%] rounded-r relative border-r border-y border-white/20"></div>
+<span class="absolute left-[56%] top-1/2 -translate-y-1/2 font-data-mono text-data-mono text-on-surface text-xs pl-2">55%</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>
