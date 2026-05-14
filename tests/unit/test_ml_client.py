@@ -22,24 +22,35 @@ class TestMLClient(unittest.TestCase):
     def test_build_feature_vector(self):
         """Test feature vector construction from enriched event."""
         event = {
-            "speed": 50.0,
-            "road_type": "highway",
-            "speed_limit_kmh": 80,
-            "num_lanes": 4,
-            "has_traffic_signal": True,
-            "temperature_c": 25.0,
-            "visibility_km": 10.0,
-            "precipitation_mm": 0.0,
-            "is_rush_hour": True,
-            "hour_of_day": 8,
+            "lat": 40.73,
+            "lon": -74.001,
+            "hour": 8,
             "day_of_week": 2,
-            "season": "summer",
+            "is_weekend": 0,
+            "is_rush_hour": 1,
+            "weather_code": 1,
+            "temperature_f": 72.0,
+            "humidity": 65.0,
+            "wind_speed_mph": 8.0,
+            "visibility_mi": 9.5,
+            "road_type_code": 1,
+            "is_junction": 0,
+            "has_traffic_signal": 1,
+            "is_crossing": 0,
+            "is_roundabout": 0,
+            "is_stop": 0,
+            "is_station": 0,
+            "is_railway": 0,
+            "is_night": 0,
         }
         features = self.client._build_feature_vector(event)
-        self.assertEqual(features["speed"], 50.0)
-        self.assertEqual(features["road_type"], "highway")
-        self.assertTrue(features["has_traffic_signal"])
-        self.assertEqual(features["season"], "summer")
+        self.assertEqual(features["lat"], 40.73)
+        self.assertEqual(features["lon"], -74.001)
+        self.assertEqual(features["weather_code"], 1)
+        self.assertEqual(features["temperature_f"], 72.0)
+        self.assertEqual(features["road_type_code"], 1)
+        self.assertEqual(features["has_traffic_signal"], 1)
+        self.assertNotIn("true_severity", features)
 
     @patch("processing.flink.common.ml_client.requests.Session")
     def test_predict_success(self, mock_session_class):
@@ -64,6 +75,10 @@ class TestMLClient(unittest.TestCase):
         self.assertEqual(result["inference_status"], "SUCCESS")
         self.assertEqual(result["risk_score"], 0.75)
         self.assertIsNotNone(result["risk_level"])
+        self.assertEqual(result["predicted_severity"], 4)
+        self.assertEqual(result["model_status"], "SUCCESS")
+        self.assertIn("prediction_timestamp", result)
+        self.assertIn("inference_latency_ms", result)
         self.assertIn("scored_at", result)
 
     @patch("processing.flink.common.ml_client.requests.Session")
@@ -82,7 +97,9 @@ class TestMLClient(unittest.TestCase):
         result = client.predict(event)
 
         self.assertEqual(result["inference_status"], "FAILED")
+        self.assertEqual(result["model_status"], "FAILED")
         self.assertEqual(result["risk_score"], -1)
+        self.assertEqual(result["predicted_severity"], 0)
         self.assertIsNotNone(result["inference_error"])
 
     @patch("processing.flink.common.ml_client.requests.Session")
@@ -132,7 +149,9 @@ class TestMLClient(unittest.TestCase):
                 "event_id", "grid_cell_id", "event_timestamp",
                 "risk_score", "risk_level", "is_high_risk",
                 "model_name", "model_version",
-                "inference_status", "inference_error", "scored_at"
+                "inference_status", "model_status", "inference_error",
+                "predicted_severity", "prediction_timestamp",
+                "inference_latency_ms", "end_to_end_latency_ms", "scored_at"
             ]
             for field in required_fields:
                 self.assertIn(field, result)

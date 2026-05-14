@@ -34,6 +34,7 @@ _GOLD_BUCKET   = os.getenv("GCS_GOLD_BUCKET", "")
 #   US_BRONZE_PATH=gs://big-data-group-4-bronze/us_accidents.csv
 _UK_BRONZE_PATH = os.getenv("UK_BRONZE_PATH", "")
 _US_BRONZE_PATH = os.getenv("US_BRONZE_PATH", "")
+_TOMTOM_BRONZE_PATH = os.getenv("TOMTOM_BRONZE_PATH", "")
 
 
 # ─── Path builders ────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ def get_bronze_path(source: str) -> str:
 
     Parameters
     ----------
-    source : "uk" | "us"
+    source : "uk" | "us" | "tomtom"
 
     Ví dụ đặt env:
       UK_BRONZE_PATH=gs://big-data-group-4-bronze/Road Safety Data - Collisions - last 5 years.csv
@@ -67,8 +68,14 @@ def get_bronze_path(source: str) -> str:
     if source == "us" and _US_BRONZE_PATH:
         logger.info("Using US_BRONZE_PATH override: %s", _US_BRONZE_PATH)
         return _US_BRONZE_PATH
+    if source == "tomtom" and _TOMTOM_BRONZE_PATH:
+        logger.info("Using TOMTOM_BRONZE_PATH override: %s", _TOMTOM_BRONZE_PATH)
+        return _TOMTOM_BRONZE_PATH
     # Convention path fallback
-    convention = bronze_path(f"{source}_accidents", "*.csv")
+    if source == "tomtom":
+        convention = bronze_path("tomtom_incidents", "*.json")
+    else:
+        convention = bronze_path(f"{source}_accidents", "*.csv")
     logger.info("Using convention bronze path: %s", convention)
     return convention
 

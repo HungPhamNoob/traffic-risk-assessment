@@ -5,6 +5,7 @@ Provides reusable producer and consumer factories with DLQ support.
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, Optional
 
 from confluent_kafka import Producer, Consumer, KafkaError
@@ -69,22 +70,56 @@ def ensure_topic(topic_name: str, num_partitions: int = 1, replication_factor: i
 
 def send_message(producer: Producer, topic: str, key: Optional[str],
                  value: Dict, timeout: float = 10.0) -> bool:
-    """Send a message to Kafka topic with JSON serialization."""
-    try:
-        def delivery_callback(err: Optional[KafkaError], msg):
-            if err:
-                logger.error(f"Message delivery failed: {err}")
-            else:
-                logger.debug(f"Message delivered to {msg.topic()} [{msg.partition()}]")
+    """
+    Send a message to Kafka topic with JSON serialization.
+    Uses delivery callback to track success/failure.
+    Returns True if message was delivered successfully, False otherwise.
+    """
+    delivery_result = {"delivered": False, "error": None}
 
+    def delivery_callback(err: Optional[KafkaError], msg):
+        if err:
+            delivery_result["error"] = str(err)
+            logger.error(f"Message delivery failed: {err}")
+        else:
+            delivery_result["delivered"] = True
+            logger.debug(f"Message delivered to {msg.topic()} [{msg.partition()}]")
+
+    def wait_for_delivery() -> bool:
+        deadline = time.monotonic() + timeout
+        while not delivery_result["delivered"] and delivery_result["error"] is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.error(f"Timed out delivering message to '{topic}' after {timeout}s")
+                return False
+            producer.poll(min(0.1, remaining))
+        return bool(delivery_result["delivered"])
+
+    try:
         producer.produce(
             topic=topic,
             key=key,
             value=json.dumps(value).encode("utf-8"),
             callback=delivery_callback
         )
+        return wait_for_delivery()
+    except BufferError:
+        logger.warning("Producer buffer full, flushing and retrying...")
         producer.poll(timeout)
-        return True
+        delivery_result["delivered"] = False
+        delivery_result["error"] = None
+        # Retry once
+        try:
+            producer.produce(
+                topic=topic,
+                key=key,
+                value=json.dumps(value).encode("utf-8"),
+                callback=delivery_callback
+            )
+            return wait_for_delivery()
+        except Exception as e:
+            logger.error(f"Failed to send message after retry to '{topic}': {e}")
+            return False
     except Exception as e:
         logger.error(f"Failed to send message to '{topic}': {e}")
         return False

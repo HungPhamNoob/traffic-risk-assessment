@@ -19,7 +19,7 @@ from pyflink.common.time import Duration
 # Add project root to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-from processing.flink.common.kafka_client import create_consumer, create_producer, ensure_topic
+from processing.flink.common.kafka_client import create_consumer, create_producer, ensure_topic, send_message
 from processing.flink.common.dlq_handler import DLQHandler
 from processing.flink.common.enricher import Enricher, EnrichmentConfig
 from processing.flink.common.metrics import StreamMetrics, setup_logging
@@ -131,19 +131,18 @@ def normalize_and_validate(stream_env, metrics: StreamMetrics, dlq_handler: DLQH
                 metrics.log_dlq_event("MAPPING_FAILED")
                 continue
 
-            # Write to enriched topic
-            success = producer.produce(
+            # Write to enriched topic using send_message (with delivery tracking)
+            success = send_message(
+                producer=producer,
                 topic=ENRICHED_TOPIC,
                 key=enriched.get("grid_cell_id"),
-                value=json.dumps(enriched).encode("utf-8")
+                value=enriched
             )
             if success:
                 metrics.log_event_enriched("traffic.events.enriched")
                 logger.debug(f"Enriched event {event_id} -> {enriched.get('grid_cell_id')}")
             else:
                 logger.error(f"Failed to write enriched event {event_id}")
-
-            producer.flush()
 
     except KeyboardInterrupt:
         logger.info("Shutting down...")

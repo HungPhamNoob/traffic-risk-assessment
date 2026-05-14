@@ -2,10 +2,30 @@
 Unit tests for DLQ handler module.
 """
 import json
+import sys
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
+if "confluent_kafka" not in sys.modules:
+    confluent_kafka = types.ModuleType("confluent_kafka")
+    confluent_kafka.Producer = MagicMock
+    confluent_kafka.Consumer = MagicMock
+    confluent_kafka.KafkaError = Exception
+    confluent_kafka_admin = types.ModuleType("confluent_kafka.admin")
+    confluent_kafka_admin.AdminClient = MagicMock
+    confluent_kafka_admin.NewTopic = MagicMock
+    sys.modules["confluent_kafka"] = confluent_kafka
+    sys.modules["confluent_kafka.admin"] = confluent_kafka_admin
+
 from processing.flink.common.dlq_handler import DLQHandler
+
+
+def _delivered_msg(topic="streaming.dlq"):
+    msg = MagicMock()
+    msg.topic.return_value = topic
+    msg.partition.return_value = 0
+    return msg
 
 
 class TestDLQHandler(unittest.TestCase):
@@ -13,6 +33,9 @@ class TestDLQHandler(unittest.TestCase):
 
     def setUp(self):
         self.mock_producer = MagicMock()
+        self.mock_producer.produce.side_effect = (
+            lambda topic, key, value, callback: callback(None, _delivered_msg(topic))
+        )
         self.dlq_handler = DLQHandler(producer=self.mock_producer)
 
     def test_send_to_dlq(self):
@@ -86,9 +109,6 @@ class TestDLQHandler(unittest.TestCase):
 
     def test_dlq_payload_structure(self):
         """Test DLQ payload has required fields."""
-        self.mock_producer.produce = MagicMock(side_effect=lambda topic, key, value, callback: 
-            callback(None, MagicMock(topic=topic)))  # Simulate successful delivery
-
         payload = {"event_id": "evt-test"}
         self.dlq_handler.send_to_dlq(
             event_id="evt-test",

@@ -39,19 +39,24 @@ def load_sample_data(file_path: str) -> List[Dict[str, Any]]:
 
 
 def generate_synthetic_event(event_id: int) -> Dict[str, Any]:
-    """Generate a synthetic traffic event."""
+    """Generate a synthetic traffic event in a US/UK demo area."""
     import random
-    # Hanoi bounding box
-    lat = random.uniform(20.9, 21.1)
-    lon = random.uniform(105.7, 106.0)
-    speed = random.uniform(10.0, 80.0)
+    if event_id % 2 == 0:
+        # New York City
+        lat = round(random.uniform(40.60, 40.85), 6)
+        lon = round(random.uniform(-74.05, -73.80), 6)
+    else:
+        # London
+        lat = round(random.uniform(51.40, 51.60), 6)
+        lon = round(random.uniform(-0.25, 0.10), 6)
+    speed = round(random.uniform(10.0, 80.0), 2)
     return {
         "event_id": f"sim_{event_id}_{int(time.time())}",
         "source": SOURCE,
         "flow_segment_id": f"seg_sim_{event_id % 100}",
         "latitude": lat,
         "longitude": lon,
-        "speed": round(speed, 2),
+        "speed": speed,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "raw_payload": {"synthetic": True},
     }
@@ -102,7 +107,7 @@ def main() -> None:
                 event = generate_synthetic_event(event_idx)
                 event_idx += 1
 
-            # Send to Kafka
+            # Send to Kafka using send_message (with delivery tracking)
             success = send_message(
                 producer=producer,
                 topic=TOPIC,

@@ -32,6 +32,7 @@ from processing.spark.utils.spark_session import get_spark, stop_spark
 from processing.spark.utils.gcs_utils import get_bronze_path, write_parquet_silver
 from processing.spark.bronze_to_silver.us_cleaner import clean_us_accidents
 from processing.spark.bronze_to_silver.uk_cleaner import clean_uk_accidents
+from processing.spark.bronze_to_silver.tomtom_cleaner import clean_tomtom_incidents
 from processing.spark.bronze_to_silver.schema_enforcer import enforce_schema
 
 logging.basicConfig(
@@ -52,7 +53,7 @@ def run(
     Parameters
     ----------
     run_date    : Ngày xử lý. None = lấy ngày hôm nay.
-    sources     : ["us", "uk"] mặc định
+    sources     : ["us", "uk"] mặc định. Có thể chạy thêm "tomtom".
     log_mlflow  : Log metrics lên MLflow không
 
     Returns
@@ -79,6 +80,10 @@ def run(
             elif src == "uk":
                 input_path = get_bronze_path("uk")  # đọc UK_BRONZE_PATH hoặc convention
                 clean_df   = clean_uk_accidents(spark, input_path, run_date)
+
+            elif src == "tomtom":
+                input_path = get_bronze_path("tomtom")
+                clean_df   = clean_tomtom_incidents(spark, input_path, run_date)
 
             else:
                 logger.warning("Unknown source: %s — skipping", src)
@@ -127,7 +132,7 @@ def _parse_args() -> argparse.Namespace:
         "--source",
         type=lambda s: [x.strip() for x in s.split(",")],
         default=["us", "uk"],
-        help="Comma-separated sources: us,uk",
+        help="Comma-separated sources: us,uk,tomtom",
     )
     parser.add_argument("--mlflow", action="store_true", help="Log metrics MLflow")
     return parser.parse_args()

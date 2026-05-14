@@ -15,6 +15,7 @@ Sources:
 from __future__ import annotations
 
 from pyspark.sql.types import (
+    ArrayType,
     DoubleType,
     IntegerType,
     StringType,
@@ -113,6 +114,43 @@ UK_BRONZE_SCHEMA = StructType([
     StructField("collision_injury_based",               IntegerType(),   True),  # cột mới
 ])
 
+# ─── TomTom Incidents bronze records ───────────────────────────────────────
+# Parsed JSON records produced from TomTom Traffic Incident Details.
+# This schema matches ingestion/kafka/producers/tomtom_producer.py output.
+TOMTOM_BRONZE_SCHEMA = StructType([
+    StructField("event_id",                  StringType(),  False),
+    StructField("source",                    StringType(),  True),
+    StructField("flow_segment_id",           StringType(),  True),
+    StructField("latitude",                  DoubleType(),  True),
+    StructField("longitude",                 DoubleType(),  True),
+    StructField("speed",                     DoubleType(),  True),
+    StructField("timestamp",                 StringType(),  True),
+    StructField("event_timestamp",           StringType(),  True),
+    StructField("ingestion_time",            StringType(),  True),
+    StructField("severity",                  IntegerType(), True),
+    StructField("true_severity",             IntegerType(), True),
+    StructField("road_type",                 StringType(),  True),
+
+    StructField("incident_id",               StringType(),  True),
+    StructField("icon_category",             IntegerType(), True),
+    StructField("delay_magnitude",           IntegerType(), True),
+    StructField("delay_seconds",             IntegerType(), True),
+    StructField("length_meters",             DoubleType(),  True),
+    StructField("geometry_wkt",              StringType(),  True),
+    StructField("incident_description",      StringType(),  True),
+    StructField("incident_code",             IntegerType(), True),
+    StructField("from_road",                 StringType(),  True),
+    StructField("to_road",                   StringType(),  True),
+    StructField("state_or_region",           StringType(),  True),
+    StructField("city",                      StringType(),  True),
+    StructField("tomtom_region",             StringType(),  True),
+    StructField("road_numbers",              ArrayType(StringType()), True),
+    StructField("time_validity",             StringType(),  True),
+    StructField("probability_of_occurrence", StringType(),  True),
+    StructField("number_of_reports",         IntegerType(), True),
+    StructField("last_report_time",          StringType(),  True),
+])
+
 # ─── Internal Silver Schema (unified sau clean) ────────────────────────────
 # Đây là schema chuẩn cho mọi output ở silver layer
 SILVER_SCHEMA = StructType([
@@ -161,6 +199,7 @@ def get_schema(name: str) -> StructType:
     mapping = {
         "us_bronze":    US_BRONZE_SCHEMA,
         "uk_bronze":    UK_BRONZE_SCHEMA,
+        "tomtom_bronze": TOMTOM_BRONZE_SCHEMA,
         "silver":       SILVER_SCHEMA,
         "gold_feature": GOLD_FEATURE_SCHEMA,
     }
