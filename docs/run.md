@@ -254,7 +254,7 @@ Use a bounded runtime during debugging. For final evidence, increase `H2O_MAX_RU
 gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='
   cd /opt/traffic &&
   docker compose --env-file .env.cloud -f deployment/node1-control/docker-compose.yaml ps mlflow &&
-  RUN_OFFLINE_TRAINING_ON_DEPLOY=true H2O_MAX_RUNTIME=300 bash scripts/gcp/run-node1.sh
+  IS_TRAIN_OFFLINE=true H2O_MAX_RUNTIME=300 bash scripts/gcp/run-node1.sh
 '
 ```
 

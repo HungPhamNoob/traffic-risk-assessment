@@ -29,7 +29,9 @@ else
 fi
 
 export MLFLOW_TRACKING_URI="${NODE1_MLFLOW_TRACKING_URI:-http://localhost:5000}"
+IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-false}"
 echo "Node 1 MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
+echo "IS_TRAIN_OFFLINE: ${IS_TRAIN_OFFLINE}"
 
 echo "Checking host dependencies required for offline H2O training."
 if ! command -v java >/dev/null 2>&1; then
@@ -86,13 +88,8 @@ if curl --max-time 10 -fsS "${MODEL_REGISTRY_URL}" >/dev/null 2>&1; then
   MODEL_EXISTS="true"
 fi
 
-if [ "${MODEL_EXISTS}" = "true" ]; then
-  echo "MLflow already has a registered model. Offline training bootstrap is skipped."
-elif [ "${RUN_OFFLINE_TRAINING_ON_DEPLOY:-true}" != "true" ]; then
-  echo "No registered model found, but RUN_OFFLINE_TRAINING_ON_DEPLOY is not true."
-  echo "Offline training bootstrap is skipped for this deployment run."
-else
-  echo "No registered model found. Running offline feature engineering and H2O training."
+run_offline_training() {
+  echo "Running offline feature engineering and H2O training."
   python3 -m venv "${PROJECT_ROOT}/.venv-node1"
 
   TRAINING_PYTHON="${PROJECT_ROOT}/.venv-node1/bin/python"
@@ -113,6 +110,16 @@ else
     echo "US_TRAIN_OFFLINE_PATH is a GCS feature CSV. Skipping local feature generation."
   fi
   "${TRAINING_PYTHON}" ml/training/h2o_before_2020.py
+}
+
+if [ "${IS_TRAIN_OFFLINE}" = "true" ]; then
+  echo "IS_TRAIN_OFFLINE=true. Forcing offline feature engineering and H2O training."
+  run_offline_training
+elif [ "${MODEL_EXISTS}" = "true" ]; then
+  echo "MLflow already has a registered model. Offline training bootstrap is skipped."
+else
+  echo "No registered model found in MLflow. Offline training is required."
+  run_offline_training
 fi
 
 echo "Restarting MLflow model serving after model bootstrap..."
