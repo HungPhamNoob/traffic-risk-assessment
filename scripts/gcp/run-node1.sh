@@ -33,6 +33,31 @@ IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-false}"
 echo "Node 1 MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
 echo "IS_TRAIN_OFFLINE: ${IS_TRAIN_OFFLINE}"
 
+NODE1_CANONICAL_NAME_PATTERN='^node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi)$'
+NODE1_TRANSIENT_NAME_PATTERN='^.+_node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi)$'
+
+remove_matching_node1_containers() {
+  # Remove containers that match the supplied pattern. The caller decides whether
+  # canonical service names or Compose-generated transient names should be cleaned up.
+  local container_name_pattern="$1"
+  local stale_containers=()
+
+  while IFS= read -r container_name; do
+    if [ -n "${container_name}" ]; then
+      stale_containers+=("${container_name}")
+    fi
+  done < <(docker ps -a --format '{{.Names}}' | grep -E "${container_name_pattern}" || true)
+
+  if [ "${#stale_containers[@]}" -eq 0 ]; then
+    echo "No stale Node 1 containers were found."
+    return 0
+  fi
+
+  echo "Removing stale Node 1 containers detected from previous Compose reconciliations:"
+  printf '  - %s\n' "${stale_containers[@]}"
+  docker rm -f "${stale_containers[@]}" >/dev/null
+}
+
 echo "Checking host dependencies required for offline H2O training."
 if ! command -v java >/dev/null 2>&1; then
   echo "Java is not installed. Installing OpenJDK 17 because H2O cannot start without a JVM."
@@ -53,17 +78,8 @@ chown -R 50000:0 orchestration/logs 2>/dev/null || true
 chmod -R g+rwX orchestration/logs 2>/dev/null || true
 
 echo "Removing stale Node 1 containers from previous Compose project names..."
-docker rm -f \
-  node1-postgres \
-  node1-airflow-db \
-  node1-airflow \
-  node1-blackbox-exporter \
-  node1-prometheus \
-  node1-grafana \
-  node1-mlflow \
-  node1-mlflow-serving \
-  node1-fastapi \
-  2>/dev/null || true
+remove_matching_node1_containers "${NODE1_CANONICAL_NAME_PATTERN}"
+remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
 
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
@@ -123,6 +139,8 @@ else
 fi
 
 echo "Restarting MLflow model serving after model bootstrap..."
+echo "Removing any transient Node 1 containers that could block the serving restart."
+remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
 docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml up -d mlflow-serving fastapi
 
 echo "Node 1 services:"
