@@ -235,7 +235,7 @@ jobs:
             printf 'MLFLOW_SERVING_ENDPOINT=http://%s:5001/invocations\n' "$NODE1_INTERNAL_IP"
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
-          printf 'RUN_OFFLINE_TRAINING_ON_DEPLOY=false\n' >> .env.cloud
+          printf 'IS_TRAIN_OFFLINE=false\n' >> .env.cloud
           chmod 600 .env.cloud
           gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud
           echo "SUCCESS: .env.cloud uploaded."

@@ -21,6 +21,11 @@ else
   exit 1
 fi
 
+export CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-/tmp/gcloud-config-$(id -u)}"
+mkdir -p "${CLOUDSDK_CONFIG}"
+chmod 700 "${CLOUDSDK_CONFIG}"
+echo "Cloud SDK runtime config: ${CLOUDSDK_CONFIG}"
+
 echo "Stopping Node 2 streaming services if this script is running on Node 2..."
 docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml down --remove-orphans 2>/dev/null || true
 

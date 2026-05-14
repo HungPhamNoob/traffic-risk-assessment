@@ -10,6 +10,8 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
+NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-600}"
+NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS="${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS:-15}"
 
 echo "Node 3 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
@@ -25,6 +27,51 @@ else
   echo "ERROR: ${ENV_FILE} does not exist."
   exit 1
 fi
+
+configure_cloud_sdk_runtime() {
+  # Some VM images have /home/<user>/.config/gcloud owned by root after startup
+  # scripts run with sudo. Use a writable runtime config directory so gcloud
+  # and gsutil commands can use the VM service account without touching HOME.
+  export CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-/tmp/gcloud-config-$(id -u)}"
+  mkdir -p "${CLOUDSDK_CONFIG}"
+  chmod 700 "${CLOUDSDK_CONFIG}"
+  echo "Cloud SDK runtime config: ${CLOUDSDK_CONFIG}"
+}
+
+wait_for_silver_data() {
+  # Node 2 writes Silver objects asynchronously. Node 3 must wait until at
+  # least one feature object is visible before taking a local snapshot for
+  # Spark, otherwise the batch job succeeds with an empty dataset.
+  local silver_glob="${SILVER_FEATURES_PATH%/}/**"
+  local waited_seconds=0
+
+  echo "Waiting for Silver feature objects before running Spark."
+  echo "Silver object glob: ${silver_glob}"
+
+  while [ "${waited_seconds}" -le "${NODE3_WAIT_FOR_SILVER_SECONDS}" ]; do
+    if gcloud storage ls "${silver_glob}" >/tmp/node3-silver-ls.txt 2>/tmp/node3-silver-ls.err; then
+      if [ -s /tmp/node3-silver-ls.txt ]; then
+        echo "Silver data is available. Sample objects:"
+        head -20 /tmp/node3-silver-ls.txt
+        return 0
+      fi
+    fi
+
+    echo "No Silver data visible yet after ${waited_seconds}s. Waiting ${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS}s."
+    sleep "${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS}"
+    waited_seconds=$((waited_seconds + NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS))
+  done
+
+  echo "ERROR: No Silver data found after ${NODE3_WAIT_FOR_SILVER_SECONDS}s."
+  echo "ERROR: Start Node 2 first and verify flink-python-job writes to ${SILVER_FEATURES_PATH}."
+  if [ -s /tmp/node3-silver-ls.err ]; then
+    echo "Last gcloud storage ls error:"
+    cat /tmp/node3-silver-ls.err
+  fi
+  exit 1
+}
+
+configure_cloud_sdk_runtime
 
 echo "Starting Spark services..."
 echo "Removing stale Node 3 containers from previous Compose project names..."
@@ -49,6 +96,8 @@ LOCAL_GOLD_RETRAIN_PATH="${LOCAL_GOLD_RETRAIN_PATH:-${LOCAL_CLOUD_DATA_DIR}/gold
 LOCAL_GOLD_RETRAIN_PARQUET_PATH="${LOCAL_GOLD_RETRAIN_PARQUET_PATH:-${LOCAL_GOLD_RETRAIN_PATH}/parquet}"
 LOCAL_GOLD_RETRAIN_CSV_PATH="${LOCAL_GOLD_RETRAIN_CSV_PATH:-${LOCAL_GOLD_RETRAIN_PATH}/csv}"
 
+wait_for_silver_data
+
 echo "Syncing Silver data from GCS to local disk for Spark processing."
 echo "GCS Silver:   ${SILVER_FEATURES_PATH}"
 echo "Local Silver: ${LOCAL_SILVER_FEATURES_PATH}"
@@ -58,6 +107,12 @@ mkdir -p "${LOCAL_SILVER_FEATURES_PATH}" "${LOCAL_GOLD_RETRAIN_PATH}"
 if ! gcloud storage rsync -r "${SILVER_FEATURES_PATH}" "${LOCAL_SILVER_FEATURES_PATH}"; then
   echo "WARNING: Silver rsync reported transient copy errors while streaming was active."
   echo "WARNING: Continuing with the files that were copied into the local snapshot."
+fi
+
+if ! find "${LOCAL_SILVER_FEATURES_PATH}" -type f | head -1 | grep -q .; then
+  echo "ERROR: Local Silver snapshot is empty after rsync."
+  echo "ERROR: Check Node 2 Flink logs and GCS permissions before running Node 3."
+  exit 1
 fi
 
 echo "Preparing local Spark output directories with container-writable permissions."

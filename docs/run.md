@@ -268,6 +268,11 @@ gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4
 
 ### 7.3 Run streaming replay
 
+Node 2 starts long-running Kafka, producer, and Flink containers in the
+background. The first container logs include dependency installation because
+the streaming services use lightweight base images; the replay starts after
+those dependencies are installed.
+
 ```bash
 gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='
   cd /opt/traffic &&
@@ -284,10 +289,14 @@ gcloud storage ls "gs://big-data-group-4-silver/process/flink_features/**" | hea
 
 ### 7.4 Run Spark Silver-to-Gold and H2O retraining
 
+Node 3 waits for at least one Silver feature object before running Spark. This
+prevents a successful but empty Spark job when Node 3 starts before Flink has
+written its first GCS object.
+
 ```bash
 gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='
   cd /opt/traffic &&
-  SPARK_READ_PARTITIONS=64 NODE3_H2O_MAX_RUNTIME=300 bash scripts/gcp/run-node3.sh
+  NODE3_WAIT_FOR_SILVER_SECONDS=600 SPARK_READ_PARTITIONS=64 NODE3_H2O_MAX_RUNTIME=300 bash scripts/gcp/run-node3.sh
 '
 ```
 
@@ -334,7 +343,7 @@ Restart Node 2 and Node 3 as a pair:
 
 ```bash
 gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && bash scripts/gcp/run-node2.sh'
-gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && bash scripts/gcp/run-node3.sh'
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && NODE3_WAIT_FOR_SILVER_SECONDS=600 bash scripts/gcp/run-node3.sh'
 ```
 
 ## 9. Common Failures
