@@ -182,6 +182,7 @@ services:
       --host 0.0.0.0 --port 5000 
       --backend-store-uri sqlite:////mlruns/mlflow.db 
       --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-gs://capstone-data-lake/mlflow-artifacts}/
+      --gunicorn-opts "--timeout ${MLFLOW_GUNICORN_TIMEOUT_SECONDS:-300} --workers ${MLFLOW_GUNICORN_WORKERS:-2}"
     networks:
       - capstone-net
     deploy:
