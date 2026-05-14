@@ -109,11 +109,13 @@ if ! gcloud storage rsync -r "${SILVER_FEATURES_PATH}" "${LOCAL_SILVER_FEATURES_
   echo "WARNING: Continuing with the files that were copied into the local snapshot."
 fi
 
-if ! find "${LOCAL_SILVER_FEATURES_PATH}" -type f | head -1 | grep -q .; then
+LOCAL_SILVER_SAMPLE_FILE="$(find "${LOCAL_SILVER_FEATURES_PATH}" -type f -print -quit)"
+if [ -z "${LOCAL_SILVER_SAMPLE_FILE}" ]; then
   echo "ERROR: Local Silver snapshot is empty after rsync."
   echo "ERROR: Check Node 2 Flink logs and GCS permissions before running Node 3."
   exit 1
 fi
+echo "Local Silver snapshot is ready. Sample file: ${LOCAL_SILVER_SAMPLE_FILE}"
 
 echo "Preparing local Spark output directories with container-writable permissions."
 sudo rm -rf "${LOCAL_GOLD_RETRAIN_PARQUET_PATH}" "${LOCAL_GOLD_RETRAIN_CSV_PATH}"
