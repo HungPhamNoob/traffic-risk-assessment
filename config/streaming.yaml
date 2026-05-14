@@ -35,12 +35,12 @@ flink:
 enrichment:
   grid:
     cell_size_meters: 100
-    # Hanoi bounding box (can be overridden via env)
+    # Global defaults so TomTom US/UK regions are accepted. Override via env for demos.
     bounds:
-      min_lat: 20.9
-      max_lat: 21.1
-      min_lon: 105.7
-      max_lon: 106.0
+      min_lat: -90.0
+      max_lat: 90.0
+      min_lon: -180.0
+      max_lon: 180.0
   redis:
     enabled: true
     host: "${REDIS_HOST:-localhost}"
@@ -50,6 +50,10 @@ enrichment:
   postgis:
     enabled: true
     connection_string: "${POSTGIS_CONNECTION_STRING:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-changeme}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-accident_risk}}"
+  weather:
+    enabled: "${WEATHER_ENRICHMENT_ENABLED:-true}"
+    endpoint: "${OPEN_METEO_ENDPOINT:-https://api.open-meteo.com/v1/forecast}"
+    timeout_seconds: "${WEATHER_TIMEOUT_SECONDS:-3}"
 
 ml:
   serving:
@@ -60,6 +64,10 @@ ml:
     fallback_risk_level: null
     fallback_status: "FAILED"
 
+sink:
+  postgis:
+    enabled: "${POSTGIS_SINK_ENABLED:-false}"
+
 producer:
   simulated:
     enabled: "${SIMULATED_PRODUCER_ENABLED:-true}"
@@ -68,8 +76,12 @@ producer:
   tomtom:
     enabled: "${TOMTOM_PRODUCER_ENABLED:-false}"
     api_key: "${TOMTOM_API_KEY:-}"
+    bbox: "${TOMTOM_BBOX:-}"
+    bboxes: "${TOMTOM_BBOXES:-US:New York:-74.25909,40.477399,-73.700181,40.917577;UK:London:-0.510375,51.28676,0.334015,51.691874}"
+    language: "${TOMTOM_LANGUAGE:-en-US}"
+    time_validity: "${TOMTOM_TIME_VALIDITY:-present}"
     endpoints:
-      - "https://api.tomtom.com/traffic/services/4/flowSegmentData.json"
+      - "${TOMTOM_ENDPOINT:-https://api.tomtom.com/traffic/services/5/incidentDetails}"
 
 metrics:
   enabled: true

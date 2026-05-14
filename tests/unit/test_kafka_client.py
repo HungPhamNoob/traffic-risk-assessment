@@ -3,12 +3,32 @@ Unit tests for Kafka client module.
 """
 import json
 import os
+import sys
+import types
 import unittest
 from unittest.mock import MagicMock, patch
+
+if "confluent_kafka" not in sys.modules:
+    confluent_kafka = types.ModuleType("confluent_kafka")
+    confluent_kafka.Producer = MagicMock
+    confluent_kafka.Consumer = MagicMock
+    confluent_kafka.KafkaError = Exception
+    confluent_kafka_admin = types.ModuleType("confluent_kafka.admin")
+    confluent_kafka_admin.AdminClient = MagicMock
+    confluent_kafka_admin.NewTopic = MagicMock
+    sys.modules["confluent_kafka"] = confluent_kafka
+    sys.modules["confluent_kafka.admin"] = confluent_kafka_admin
 
 from processing.flink.common.kafka_client import (
     create_producer, create_consumer, ensure_topic, send_message
 )
+
+
+def _delivered_msg(topic="test-topic"):
+    msg = MagicMock()
+    msg.topic.return_value = topic
+    msg.partition.return_value = 0
+    return msg
 
 
 class TestKafkaClient(unittest.TestCase):
@@ -59,6 +79,9 @@ class TestKafkaClient(unittest.TestCase):
         """Test successful message sending."""
         mock_producer = MagicMock()
         mock_producer_class.return_value = mock_producer
+        mock_producer.produce.side_effect = (
+            lambda topic, key, value, callback: callback(None, _delivered_msg(topic))
+        )
 
         test_value = {"event_id": "test-123", "speed": 50.0}
         result = send_message(
@@ -69,7 +92,6 @@ class TestKafkaClient(unittest.TestCase):
         )
         self.assertTrue(result)
         mock_producer.produce.assert_called_once()
-        mock_producer.poll.assert_called_once()
 
     @patch("processing.flink.common.kafka_client.Producer")
     def test_send_message_failure(self, mock_producer_class):
@@ -85,6 +107,25 @@ class TestKafkaClient(unittest.TestCase):
             key="test-123",
             value=test_value
         )
+        self.assertFalse(result)
+
+    @patch("processing.flink.common.kafka_client.Producer")
+    def test_send_message_delivery_error(self, mock_producer_class):
+        """Test delivery callback failure."""
+        mock_producer = MagicMock()
+        mock_producer_class.return_value = mock_producer
+        mock_producer.produce.side_effect = (
+            lambda topic, key, value, callback: callback(Exception("delivery failed"), None)
+        )
+
+        result = send_message(
+            producer=mock_producer,
+            topic="test-topic",
+            key="test-123",
+            value={"event_id": "test-123"},
+            timeout=0.1,
+        )
+
         self.assertFalse(result)
 
 

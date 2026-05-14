@@ -1,0 +1,25 @@
+# ============================================================
+# Spark Batch Processing Dependencies
+# Python 3.11 | PySpark 3.5.x
+# ============================================================
+
+# Core Spark
+pyspark==3.5.1
+pyarrow==15.0.2           # Columnar format, Parquet R/W
+
+# Geospatial
+apache-sedona[spark]==1.7.0   # Spatial SQL/RDD trên Spark
+h3==3.7.7                     # Uber H3 hexagonal grid indexing
+
+# Google Cloud
+google-cloud-storage==2.16.0  # GCS Python client
+
+# Database
+psycopg2-binary==2.9.10       # PostGIS writer
+
+# ML tracking
+mlflow==2.12.1
+
+# Utility
+python-dotenv==1.0.1          # Load .env
+pandas==2.2.3                 # Pre-processing nhỏ ngoài Spark

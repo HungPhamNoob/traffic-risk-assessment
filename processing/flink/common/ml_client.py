@@ -46,22 +46,31 @@ class MLClient:
 
     def _build_feature_vector(self, enriched_event: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Build feature vector from enriched event for model inference.
-        Adjust based on your model's expected input schema.
+        Build the realtime feature vector from the enriched event.
+        This matches docs/streaming/feature/feature_output.md and excludes
+        metadata/label fields such as event_id, event_time, and true_severity.
         """
         return {
-            "speed": enriched_event.get("speed", 0.0),
-            "road_type": enriched_event.get("road_type"),
-            "speed_limit_kmh": enriched_event.get("speed_limit_kmh", 0),
-            "num_lanes": enriched_event.get("num_lanes", 0),
-            "has_traffic_signal": enriched_event.get("has_traffic_signal", False),
-            "temperature_c": enriched_event.get("temperature_c", 0.0),
-            "visibility_km": enriched_event.get("visibility_km", 0.0),
-            "precipitation_mm": enriched_event.get("precipitation_mm", 0.0),
-            "is_rush_hour": enriched_event.get("is_rush_hour", False),
-            "hour_of_day": enriched_event.get("hour_of_day", 0),
+            "lat": enriched_event.get("lat", enriched_event.get("latitude", 0.0)),
+            "lon": enriched_event.get("lon", enriched_event.get("longitude", 0.0)),
+            "hour": enriched_event.get("hour", enriched_event.get("hour_of_day", 0)),
             "day_of_week": enriched_event.get("day_of_week", 0),
-            "season": enriched_event.get("season", "unknown"),
+            "is_weekend": enriched_event.get("is_weekend", 0),
+            "is_rush_hour": enriched_event.get("is_rush_hour", 0),
+            "weather_code": int(enriched_event.get("weather_code", 0) or 0),
+            "temperature_f": enriched_event.get("temperature_f", 50.0),
+            "humidity": enriched_event.get("humidity", 50.0),
+            "wind_speed_mph": enriched_event.get("wind_speed_mph", 0.0),
+            "visibility_mi": enriched_event.get("visibility_mi", 10.0),
+            "road_type_code": enriched_event.get("road_type_code", 0),
+            "is_junction": enriched_event.get("is_junction", 0),
+            "has_traffic_signal": enriched_event.get("has_traffic_signal", 0),
+            "is_crossing": enriched_event.get("is_crossing", 0),
+            "is_roundabout": enriched_event.get("is_roundabout", 0),
+            "is_stop": enriched_event.get("is_stop", 0),
+            "is_station": enriched_event.get("is_station", 0),
+            "is_railway": enriched_event.get("is_railway", 0),
+            "is_night": enriched_event.get("is_night", 0),
         }
 
     def predict(self, enriched_event: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,19 +97,24 @@ class MLClient:
         grid_cell_id = enriched_event.get("grid_cell_id", "unknown")
         event_timestamp = enriched_event.get("event_timestamp") or enriched_event.get("timestamp", "")
 
-        result = {
+        result = dict(enriched_event)
+        result.update({
             "event_id": event_id,
             "grid_cell_id": grid_cell_id,
             "event_timestamp": event_timestamp,
             "risk_score": self.config.fallback_risk_score,
             "risk_level": self.config.fallback_risk_level,
+            "predicted_severity": 0,
             "is_high_risk": False,
             "model_name": self.config.model_name,
             "model_version": self.config.model_version,
             "inference_status": self.config.fallback_status,
+            "model_status": self.config.fallback_status,
             "inference_error": None,
+            "inference_latency_ms": 0.0,
             "scored_at": "",
-        }
+            "prediction_timestamp": "",
+        })
 
         try:
             features = self._build_feature_vector(enriched_event)
@@ -118,6 +132,7 @@ class MLClient:
                 timeout=self.config.timeout_seconds
             )
             latency_ms = (time.time() - start_time) * 1000
+            result["inference_latency_ms"] = latency_ms
 
             if response.status_code == 200:
                 prediction = response.json()
@@ -132,8 +147,10 @@ class MLClient:
 
                 result["risk_score"] = risk_score
                 result["risk_level"] = self._compute_risk_level(risk_score)
+                result["predicted_severity"] = self._compute_predicted_severity(risk_score)
                 result["is_high_risk"] = risk_score >= 0.7
                 result["inference_status"] = "SUCCESS"
+                result["model_status"] = "SUCCESS"
                 logger.debug(f"Inference success for {event_id}: risk_score={risk_score} ({latency_ms:.1f}ms)")
             else:
                 error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
@@ -147,7 +164,13 @@ class MLClient:
             result["inference_error"] = str(e)[:200]
             logger.error(f"Inference error for {event_id}: {e}")
 
-        result["scored_at"] = self._now_iso()
+        scored_at = self._now_iso()
+        result["scored_at"] = scored_at
+        result["prediction_timestamp"] = scored_at
+        result["end_to_end_latency_ms"] = self._compute_e2e_latency_ms(
+            event_timestamp,
+            scored_at,
+        )
         return result
 
     def _compute_risk_level(self, risk_score: float) -> int:
@@ -163,6 +186,30 @@ class MLClient:
         if risk_score < 0.8:
             return 4
         return 5
+
+    def _compute_predicted_severity(self, risk_score: float) -> int:
+        """Convert model risk score to the shared 1-4 severity scale."""
+        if risk_score < 0:
+            return 0
+        if risk_score < 0.25:
+            return 1
+        if risk_score < 0.5:
+            return 2
+        if risk_score < 0.75:
+            return 3
+        return 4
+
+    @staticmethod
+    def _compute_e2e_latency_ms(event_timestamp: str, scored_at: str) -> float:
+        if not event_timestamp:
+            return 0.0
+        try:
+            from datetime import datetime
+            start = datetime.fromisoformat(event_timestamp.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(scored_at.replace("Z", "+00:00"))
+            return max(0.0, (end - start).total_seconds() * 1000)
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _now_iso() -> str:

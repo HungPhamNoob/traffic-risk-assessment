@@ -12,9 +12,10 @@ from datetime import datetime, timezone
 # Add project root to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-from processing.flink.common.kafka_client import create_consumer, create_producer, ensure_topic
+from processing.flink.common.kafka_client import create_consumer, create_producer, ensure_topic, send_message
 from processing.flink.common.ml_client import MLClient, MLClientConfig
 from processing.flink.common.metrics import StreamMetrics, setup_logging
+from processing.flink.sink_to_postgis import write_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 ENRICHED_TOPIC = os.getenv("KAFKA_TOPIC_ENRICHED", "traffic.events.enriched")
 PREDICTIONS_TOPIC = os.getenv("KAFKA_TOPIC_PREDICTIONS", "traffic.risk.predictions")
 CONSUMER_GROUP = os.getenv("FLINK_INFERENCE_GROUP", "flink-inference")
+POSTGIS_SINK_ENABLED = os.getenv("POSTGIS_SINK_ENABLED", "false").lower() == "true"
 
 
 def run_inference_job():
@@ -83,16 +85,18 @@ def run_inference_job():
                 metrics.log_prediction_failed()
                 logger.warning(f"Inference failed for {event_id}: {prediction.get('inference_error')}")
 
-            # Write prediction to output topic
-            try:
-                producer.produce(
-                    topic=PREDICTIONS_TOPIC,
-                    key=grid_cell_id,
-                    value=json.dumps(prediction).encode("utf-8")
-                )
-                producer.flush()
-            except Exception as e:
-                logger.error(f"Failed to write prediction for {event_id}: {e}")
+            # Write prediction to output topic using send_message (with delivery tracking)
+            success = send_message(
+                producer=producer,
+                topic=PREDICTIONS_TOPIC,
+                key=grid_cell_id,
+                value=prediction
+            )
+            if not success:
+                logger.error(f"Failed to write prediction for {event_id}")
+
+            if POSTGIS_SINK_ENABLED and not write_prediction(prediction):
+                logger.error(f"Failed to upsert prediction to PostGIS for {event_id}")
 
             # Update e2e latency if event has timestamp
             event_timestamp = event.get("event_timestamp") or event.get("timestamp")
