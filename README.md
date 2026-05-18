@@ -62,15 +62,6 @@ Bronze CSV / GCS
   -> MLflow Model Registry
   -> FastAPI analytics and prediction APIs
 ```
-
-## Why Only US Accidents
-
-After comparing `US`, `UK`, and `TomTom` candidates, the project keeps only the US Accidents dataset in the production path.
-
-- `US + UK` under one shared model would require aggressive schema mapping and discard too much information.
-- `TomTom` is an incident feed, not a severity-labeled accident dataset, so it does not match the feature space used for supervised training.
-- The capstone value is stronger in a complete, defendable end-to-end pipeline than in a multi-dataset merge with weak consistency.
-
 ## Dataset Strategy
 
 The pipeline uses a strict temporal split to avoid leakage:
