@@ -1,188 +1,281 @@
-# Traffic Risk Assessment EDA Summary
+# Traffic Risk Assessment EDA
 
-This document summarizes the current EDA notebook in `ml/notebooks/eda.ipynb`. The notebook compares before-2020 offline pretraining data and from-2020 realtime replay data side by side, while using only the before-2020 findings for model-selection decisions.
+This document rewrites the EDA summary from the end-to-end project notes in [`docs/notion.txt`](../../docs/notion.txt). It focuses on the production dataset actually used by the pipeline: **US Accidents**, with a strict temporal split between offline training and realtime replay.
 
-## Dataset Scope
+The EDA is not only descriptive. It is used to justify:
 
-| Period | Source file | Valid feature rows | Role |
-|---|---|---:|---|
-| before_2020_pretrain | `data/process/us_train_offline_before_2020.csv` | 2,975,837 | Offline H2O pretraining |
-| from_2020_realtime | `data/split/us_pipeline_from_2020.csv` | 3,733,887 | Realtime replay and online retraining simulation |
+- the pre-2020 vs post-2020 split
+- the feature schema shared by Flink, Spark, and H2O
+- class-balancing choices in training
+- which signals should remain in the final model
+- why post-2020 data is treated as replay/retraining input instead of offline feature-discovery input
 
-The raw replay scan skipped 0 invalid rows after applying the shared `build_features()` contract.
+## Data Views Compared
 
-## Temporal Split
+| Symbol | Meaning |
+| --- | --- |
+| `before_2020_raw` | raw records before 2020, used for offline training |
+| `from_2020_raw` | raw records from 2020 onward, used for streaming replay |
+| `before_2020_featured` | pre-2020 data after feature engineering |
 
-|   event_year |   before_count |   after_count |
-|-------------:|---------------:|--------------:|
-|         2016 |         410821 |             0 |
-|         2017 |         717290 |             0 |
-|         2018 |         893423 |             0 |
-|         2019 |         954303 |             0 |
-|         2020 |              0 |       1141630 |
-|         2021 |              0 |       1341177 |
-|         2022 |              0 |       1115901 |
-|         2023 |              0 |        135179 |
+The engineered schema used in the pipeline contains 26 columns. The original raw source has `7,728,394` rows; after normalization and quality filtering, `6,763,340` valid rows remain for EDA on the shared schema.
 
-The current local data matches the intended temporal separation: offline pretraining uses records before 2020, while replay data starts from 2020 onward. The after-2020 period should not be used to choose initial modeling decisions because it represents future/realtime data.
+## 1. Data Overview
 
-## Severity Distribution And Imbalance
+| Dataset | Rows | Columns | Start Year | End Year | Role |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `before_2020_raw` | 2,976,413 | 26 | 2016 | 2019 | offline raw data |
+| `from_2020_raw` | 3,786,927 | 26 | 2020 | 2023 | replay data |
+| `before_2020_featured` | 2,975,837 | 26 | 2016 | 2019 | engineered training data |
 
-|   severity |     before_count |   before_share |      after_count |   after_share |
-|-----------:|-----------------:|---------------:|-----------------:|--------------:|
-|          1 |    969           |       0.000326 |  66389           |      0.01778  |
-|          2 |      1.99465e+06 |       0.670283 |      3.17092e+06 |      0.849227 |
-|          3 | 887867           |       0.298359 | 411380           |      0.110175 |
-|          4 |  92347           |       0.031032 |  85201           |      0.022818 |
+Interpretation:
 
-| period               |    rows |   majority_class |   majority_count |   minority_class |   minority_count |   majority_to_minority_ratio |
-|:---------------------|--------:|-----------------:|-----------------:|-----------------:|-----------------:|-----------------------------:|
-| before_2020_pretrain | 2975837 |                2 |          1994654 |                1 |              969 |                      2058.47 |
-| from_2020_realtime   | 3733887 |                2 |          3170917 |                1 |            66389 |                        47.76 |
+- `before_2020_raw` and `before_2020_featured` are almost identical in size, so feature engineering does not discard much data.
+- `from_2020_raw` is larger than the pre-2020 split, which makes it suitable for long-running replay and incremental retraining.
+- The split is aligned with the real pipeline design:
 
-Severity is strongly imbalanced in both periods. The before-2020 split is dominated by severity 2, and severity 4 is rare. H2O training therefore uses `balance_classes=True`, bounded `class_sampling_factors`, `sort_metric="mean_per_class_error"`, and report metrics beyond accuracy: macro F1, weighted F1, per-class precision, per-class recall, and confusion matrix.
+```text
+before 2020  -> offline pretraining
+from 2020    -> streaming replay / online simulation / retraining source
+```
 
-## Engineered Schema Quality
+## 2. Accident Count by Year
 
-Top engineered missing rates:
+Pre-2020 counts:
 
-| feature            |   before_missing_count |   before_missing_share |   after_sample_missing_count |   after_sample_missing_share |
-|:-------------------|-----------------------:|-----------------------:|-----------------------------:|-----------------------------:|
-| event_id           |                      0 |                      0 |                            0 |                            0 |
-| event_year         |                      0 |                      0 |                            0 |                            0 |
-| event_time         |                      0 |                      0 |                            0 |                            0 |
-| true_severity      |                      0 |                      0 |                            0 |                            0 |
-| lat                |                      0 |                      0 |                            0 |                            0 |
-| lon                |                      0 |                      0 |                            0 |                            0 |
-| hour               |                      0 |                      0 |                            0 |                            0 |
-| day_of_week        |                      0 |                      0 |                            0 |                            0 |
-| is_weekend         |                      0 |                      0 |                            0 |                            0 |
-| is_rush_hour       |                      0 |                      0 |                            0 |                            0 |
-| weather_code       |                      0 |                      0 |                            0 |                            0 |
-| temperature_f      |                      0 |                      0 |                            0 |                            0 |
-| humidity           |                      0 |                      0 |                            0 |                            0 |
-| wind_speed_mph     |                      0 |                      0 |                            0 |                            0 |
-| visibility_mi      |                      0 |                      0 |                            0 |                            0 |
-| road_type_code     |                      0 |                      0 |                            0 |                            0 |
-| is_junction        |                      0 |                      0 |                            0 |                            0 |
-| has_traffic_signal |                      0 |                      0 |                            0 |                            0 |
-| is_crossing        |                      0 |                      0 |                            0 |                            0 |
-| is_roundabout      |                      0 |                      0 |                            0 |                            0 |
+| Year | Accident Count |
+| --- | ---: |
+| 2016 | 410,821 |
+| 2017 | 717,868 |
+| 2018 | 893,423 |
+| 2019 | 954,301 |
 
-The engineered schema is now consistent across both periods. This fixes the earlier risk where raw columns and engineered columns were mixed together, causing apparent 50% missingness after concatenation. Training and serving should consume only the unified feature schema.
+Post-2020 counts:
 
-## Numeric Feature Ranges
+| Year | Accident Count |
+| --- | ---: |
+| 2020 | 1,145,516 |
+| 2021 | 1,268,272 |
+| 2022 | 1,209,705 |
+| 2023 | 163,434 |
 
-| feature        |   count_before |   mean_before |   std_before |   min_before |   25%_before |   50%_before |   75%_before |   max_before |   count_after_sample |   mean_after_sample |   std_after_sample |   min_after_sample |   25%_after_sample |   50%_after_sample |   75%_after_sample |   max_after_sample |
-|:---------------|---------------:|--------------:|-------------:|-------------:|-------------:|-------------:|-------------:|-------------:|---------------------:|--------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|
-| temperature_f  |    2.97584e+06 |        62.11  |       18.687 |      -40     |       50     |       64     |       75.9   |      130     |               300000 |              60.88  |             21.082 |            -37     |             46     |             62     |             75     |            130     |
-| humidity       |    2.97584e+06 |        65.102 |       22.435 |        1     |       49     |       67     |       84     |      100     |               300000 |              66.884 |             23.044 |              1     |             50     |             70     |             87     |            100     |
-| wind_speed_mph |    2.97584e+06 |         7.065 |        5.356 |        0     |        3.5   |        6.9   |       10.4   |      100     |               300000 |               8.873 |             13.639 |              0     |              3     |              7     |             10     |            100     |
-| visibility_mi  |    2.97584e+06 |         9.07  |        2.259 |        0     |       10     |       10     |       10     |       10     |               300000 |               9.073 |              2.314 |              0     |             10     |             10     |             10     |             10     |
-| lat            |    2.97584e+06 |        36.495 |        4.919 |       24.555 |       33.551 |       35.851 |       40.378 |       49.002 |               300000 |              36.01  |              4.735 |             24.555 |             33.215 |             35.284 |             39.946 |             48.998 |
-| lon            |    2.97584e+06 |       -95.419 |       17.217 |     -124.624 |     -117.289 |      -90.24  |      -80.917 |      -67.113 |               300000 |             -91.734 |             15.835 |           -124.497 |            -97.675 |            -85.659 |            -80.794 |            -68.161 |
+Interpretation:
 
-Weather outliers are handled in `processing.feature_engineering` by clipping to defensible bounds:
+- 2016 to 2019 grows steadily, so the offline training window is large enough and temporally coherent.
+- 2020 to 2022 remains very large, which is useful for replay throughput and retraining.
+- 2023 drops sharply. This should not be interpreted as a real traffic improvement without verifying data completeness. The more defensible explanation is partial-year coverage.
 
-| Feature | Bound |
-|---|---|
-| temperature_f | -40 to 130 |
-| humidity | 0 to 100 |
-| wind_speed_mph | 0 to 100 |
-| visibility_mi | 0 to 10 |
+Conclusion:
 
-This keeps abnormal sensor or weather-station values from dominating H2O tree splits while preserving valid accident records.
+- the temporal split is meaningful
+- it reduces leakage risk
+- it matches the intended offline/online separation in the architecture
 
-## Hourly Pattern
+## 3. Severity Distribution and Class Imbalance
 
-|   hour |   before_count |   before_avg_severity |   after_sample_count |   after_sample_avg_severity |
-|-------:|---------------:|----------------------:|---------------------:|----------------------------:|
-|      0 |          23181 |                2.6355 |                 1274 |                      2.4882 |
-|      1 |          17979 |                2.6024 |                 1112 |                      2.5576 |
-|      2 |          18943 |                2.6207 |                 1867 |                      2.286  |
-|      3 |          18606 |                2.6411 |                 2016 |                      2.3135 |
-|      4 |          53613 |                2.4424 |                12978 |                      2.0606 |
-|      5 |          83929 |                2.4068 |                14234 |                      2.0668 |
-|      6 |         169213 |                2.3492 |                27036 |                      2.054  |
-|      7 |         273753 |                2.2959 |                40018 |                      2.0127 |
-|      8 |         284490 |                2.2864 |                38197 |                      1.995  |
-|      9 |         177627 |                2.323  |                13456 |                      2.2209 |
-|     10 |         157935 |                2.319  |                11406 |                      2.2839 |
-|     11 |         155403 |                2.3183 |                10434 |                      2.3485 |
-|     12 |         139220 |                2.3521 |                 8673 |                      2.5331 |
-|     13 |         142056 |                2.3631 |                 9624 |                      2.5072 |
-|     14 |         150269 |                2.3678 |                11032 |                      2.4928 |
-|     15 |         177683 |                2.3663 |                14999 |                      2.4292 |
-|     16 |         212684 |                2.3595 |                21108 |                      2.2771 |
-|     17 |         221759 |                2.3603 |                20906 |                      2.2682 |
-|     18 |         167452 |                2.3768 |                16757 |                      2.31   |
-|     19 |         115470 |                2.3872 |                 9834 |                      2.3319 |
-|     20 |          81772 |                2.4243 |                 4834 |                      2.5362 |
-|     21 |          57739 |                2.4662 |                 3883 |                      2.5856 |
-|     22 |          48328 |                2.4916 |                 2934 |                      2.6714 |
-|     23 |          26733 |                2.5694 |                 1388 |                      2.5821 |
+| Severity | `before_2020` Count | `before_2020` Share | `from_2020` Count | `from_2020` Share |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 969 | 0.03% | 66,389 | 1.78% |
+| 2 | 1,994,654 | 67.03% | 3,170,917 | 84.92% |
+| 3 | 887,867 | 29.84% | 411,380 | 11.02% |
+| 4 | 92,347 | 3.10% | 85,201 | 2.28% |
 
-The hourly profile supports keeping `hour`, `is_rush_hour`, `is_weekend`, and `is_night`. Rush-hour windows and night context provide interpretable operational features for both dashboard explanations and scenario simulation.
+Imbalance summary:
 
-## Correlation With Severity
+| Period | Majority Class | Minority Class | Ratio |
+| --- | ---: | ---: | ---: |
+| `before_2020` | 2 | 1 | 2058.47 : 1 |
+| `from_2020` | 2 | 1 | 47.76 : 1 |
 
-Top before-2020 correlations:
+Interpretation:
 
-| feature            |   before_corr_with_true_severity |
-|:-------------------|---------------------------------:|
-| road_type_code     |                        -0.215736 |
-| has_traffic_signal |                        -0.209038 |
-| is_crossing        |                        -0.17637  |
-| is_weekend         |                         0.130781 |
-| is_stop            |                        -0.07809  |
-| is_junction        |                         0.068347 |
-| is_night           |                         0.067376 |
-| is_station         |                        -0.062818 |
-| lon                |                         0.055519 |
-| is_rush_hour       |                        -0.053057 |
-| lat                |                         0.045368 |
-| temperature_f      |                        -0.029362 |
+- the dataset is strongly imbalanced, especially before 2020
+- a naive model can achieve misleading accuracy by overpredicting class `2`
+- severity `1` is extremely underrepresented in the offline split
 
-Top after-2020 sample correlations:
+Modeling implications:
 
-| feature            |   after_sample_corr_with_true_severity |
-|:-------------------|---------------------------------------:|
-| road_type_code     |                              -0.333452 |
-| has_traffic_signal |                              -0.26074  |
-| is_weekend         |                               0.224895 |
-| is_crossing        |                              -0.209912 |
-| hour               |                               0.205579 |
-| is_rush_hour       |                              -0.126706 |
-| humidity           |                              -0.10266  |
-| temperature_f      |                              -0.098993 |
-| is_stop            |                              -0.098809 |
-| is_junction        |                               0.085461 |
-| is_station         |                              -0.080751 |
-| lat                |                               0.070881 |
+- use `balance_classes=True`
+- bound class sampling factors
+- evaluate `macro_f1`, weighted F1, per-class recall, and confusion matrices
+- avoid defending the model with accuracy alone
 
-Linear correlations are generally weak, so a linear-only model is not a good primary model. H2O GBM, XGBoost, Random Forest, and stacked ensembles are more appropriate because severity risk is likely driven by nonlinear interactions between road context, time, location, and weather.
+## 4. Missing Values and Schema Quality
 
-## Vendor Notebook Lessons Used
+After moving to a unified engineered schema, the critical features used by training and serving are consistently populated:
 
-| source                         | reused_lessons                                                                                                                           |
-|:-------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
-| Vendor Kaggle notebooks        | Temporal feature extraction, missing-value review, outlier handling, severity imbalance review, and tree-based classification baselines. |
-| Project feature_engineering.py | Single schema for offline H2O training, Flink inference, and Spark Gold retraining.                                                      |
-| Before-2020 EDA only           | Model choices use the offline period only to avoid leakage from realtime replay data.                                                    |
+- `event_id`
+- `event_year`
+- `event_time`
+- `true_severity`
+- `lat`, `lon`
+- `hour`, `day_of_week`
+- weather features
+- road-context flags
 
-The project keeps the useful EDA ideas from the vendor notebooks but does not copy their notebook-only preprocessing directly. Production preprocessing is centralized in `processing.feature_engineering.build_features()` so Flink, Spark, H2O, and FastAPI stay aligned.
+Interpretation:
 
-## Modeling Decisions
+- the earlier risk of mixed raw and engineered schemas is removed
+- the shared `build_features()` contract is now suitable for Flink realtime inference, Spark Silver-to-Gold processing, and H2O AutoML training
 
-| Decision | Reason |
-|---|---|
-| Use `true_severity` as the only label | It is generated directly from US Accidents `Severity` and is present in both offline and replay features. |
-| Exclude `event_id`, `event_year`, and `event_time` from features | They are metadata or split keys, not stable model inputs. |
-| Keep `lat` and `lon` | The accident distribution is spatial, and location is useful for map risk serving. |
-| Keep weather and road flags | Individual correlations are modest, but tree models can learn interactions. |
-| Use class balancing and sampling factors | Severity 4 is rare and must not be ignored by the model. |
-| Evaluate macro F1 and class recall | Accuracy can look good while minority-class recall fails. |
+This is one of the strongest results of the EDA because it validates the production preprocessing path, not just a notebook-only workflow.
 
-## Conclusion
+## 5. Weather Features
 
-The data is suitable for the requested MLOps pipeline after enforcing the unified feature schema and clipped numeric ranges. The main risk is not schema anymore; it is class imbalance. The training scripts now expose explicit class-sampling factors and log complete MLflow metrics so the capstone report can defend the model beyond accuracy.
+Main engineered weather fields:
+
+- `temperature_f`
+- `humidity`
+- `wind_speed_mph`
+- `visibility_mi`
+
+Observed behavior:
+
+- values mostly fall in realistic ranges
+- visibility is concentrated near 10 miles, but low-visibility cases still exist and remain useful
+- wind speed has a long tail and contains outliers
+- temperature and humidity are broad enough to preserve seasonal variation
+
+Production treatment in feature engineering:
+
+| Feature | Clipping Bound |
+| --- | --- |
+| `temperature_f` | `-40` to `130` |
+| `humidity` | `0` to `100` |
+| `wind_speed_mph` | `0` to `100` |
+| `visibility_mi` | `0` to `10` |
+
+Interpretation:
+
+- clipping avoids extreme values dominating tree splits
+- weather features remain informative without allowing obvious sensor noise to distort training
+
+## 6. Time-of-Day Patterns
+
+Accident counts rise strongly during daytime and commute windows. Severity trends do not perfectly follow volume, which means frequency and severity should be analyzed separately.
+
+Important retained features:
+
+- `hour`
+- `day_of_week`
+- `is_weekend`
+- `is_rush_hour`
+- `is_night`
+
+Interpretation:
+
+- morning and evening commute periods explain traffic volume concentration
+- night and weekend context carry additional severity signal
+- these features are simple, interpretable, and operationally useful for scenario simulation
+
+## 7. Weather Code and Road Context
+
+The EDA indicates that severity changes under different:
+
+- `weather_code`
+- `road_type_code`
+- `is_junction`
+- `has_traffic_signal`
+- `is_crossing`
+- `is_roundabout`
+- `is_stop`
+- `is_station`
+- `is_railway`
+- `is_night`
+
+These are not individually strong linear predictors, but they provide meaningful structured context. In practice, the model should learn them through interactions rather than as isolated one-feature effects.
+
+This supports the choice of tree-based models over linear models.
+
+## 8. Correlation With Severity
+
+Top correlations with `true_severity` before 2020:
+
+| Feature | Correlation |
+| --- | ---: |
+| `road_type_code` | -0.2157 |
+| `has_traffic_signal` | -0.2090 |
+| `is_crossing` | -0.1764 |
+| `is_weekend` | 0.1308 |
+| `is_stop` | -0.0781 |
+| `is_junction` | 0.0683 |
+| `is_night` | 0.0674 |
+| `lon` | 0.0555 |
+| `is_rush_hour` | -0.0531 |
+| `lat` | 0.0454 |
+
+Interpretation:
+
+- linear correlations are generally modest
+- no single feature dominates the label
+- severity is likely produced by nonlinear combinations of road context, time, weather, and geography
+
+Modeling implication:
+
+- linear-only baselines are insufficient
+- H2O AutoML with GBM, XGBoost, Random Forest, and stacked ensembles is a better fit
+
+## 9. Spatial Distribution
+
+The spatial scatter view confirms that accidents are not uniformly distributed. Geographic clustering is expected and meaningful, so retaining `lat` and `lon` is justified for both severity prediction and downstream map-based dashboard analysis.
+
+Interpretation:
+
+- location is not just visualization metadata
+- it is part of the predictive structure
+
+## 10. Data Drift: Before 2020 vs From 2020
+
+The strongest drift appears in the label distribution:
+
+- class `2` becomes much more dominant after 2020
+- class `3` decreases substantially in share
+- class `1` appears more often post-2020 than in the offline split, but is still minor
+
+Interpretation:
+
+- the replay period is not i.i.d. with the offline training period
+- blind merging would hide temporal change and weaken the experimental design
+- retraining is justified as an explicit architecture component, not as optional polish
+
+Operational implication:
+
+```text
+before 2020: offline pretraining
+from 2020:   replay + incremental Gold data + scheduled retraining
+```
+
+## 11. Feature Engineering Assessment
+
+Strengths:
+
+| Observation | Why it matters |
+| --- | --- |
+| Pre- and post-processing row counts are nearly identical for pre-2020 data | the pipeline is stable |
+| Shared engineered schema is used across Flink, Spark, and H2O | training-serving skew is reduced |
+| Weather ranges are clipped consistently | outliers are controlled |
+| Time, location, and road context are preserved | the model keeps interpretable signals |
+
+Current limitations:
+
+| Issue | Impact |
+| --- | --- |
+| extreme class imbalance | severity `1` remains difficult to learn |
+| noticeable post-2020 drift | offline metrics may not transfer cleanly |
+| weak linear correlations | simpler models will underfit interactions |
+
+## 12. Final Conclusions
+
+The EDA supports the current end-to-end design.
+
+1. The temporal split is correct and should remain unchanged.
+2. The production feature schema is stable enough for shared use across streaming, batch, and training.
+3. The major modeling risk is class imbalance, not missing values or schema inconsistency.
+4. Weather, time, road, and spatial features all deserve to stay in the model.
+5. Post-2020 data should be used for replay and retraining, not for initial feature-discovery decisions, to avoid leakage.
+
+In short, the EDA validates the architecture choice:
+
+- **offline pretraining on pre-2020 data**
+- **realtime replay from 2020 onward**
+- **Spark-built Gold data for scheduled H2O retraining**
