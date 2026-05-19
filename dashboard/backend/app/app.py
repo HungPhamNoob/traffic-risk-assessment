@@ -12,6 +12,7 @@ from app.routes import (
     hotspots,
     model,
     overview,
+    pipeline,
     predictions,
     scenarios,
     system,
@@ -75,6 +76,7 @@ app.include_router(
 app.include_router(hotspots.router, prefix="/api/v1/hotspots", tags=["hotspots"])
 app.include_router(scenarios.router, prefix="/api/v1/scenarios", tags=["scenarios"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
+app.include_router(pipeline.router, prefix="/api/v1/pipeline", tags=["pipeline"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
 app.include_router(model.router, prefix="/api/v1/model", tags=["model"])
 app.include_router(
