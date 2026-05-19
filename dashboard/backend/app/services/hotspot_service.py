@@ -61,6 +61,44 @@ def nearby_events(
     lat: float, lon: float, radius_m: float, limit: int
 ) -> dict[str, Any]:
     """Return events inside an approximate radius around a map point."""
+    postgis_query = sql.SQL(
+        """
+        SELECT
+            event_id,
+            lat,
+            lon,
+            risk_score,
+            ST_Distance(
+                geom::geography,
+                ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)::geography
+            ) AS distance_m
+        FROM {table}
+        WHERE geom IS NOT NULL
+          AND ST_DWithin(
+                geom::geography,
+                ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)::geography,
+                %(radius_m)s
+          )
+        ORDER BY distance_m ASC
+        LIMIT %(limit)s
+        """
+    ).format(table=table_identifier())
+    postgis_params = {
+        "lat": lat,
+        "lon": lon,
+        "radius_m": radius_m,
+        "limit": limit,
+    }
+    try:
+        return {
+            "center": {"lat": lat, "lon": lon},
+            "radius_m": radius_m,
+            "events": fetch_all(postgis_query, postgis_params),
+            "method": "postgis",
+        }
+    except Exception:
+        pass
+
     lat_delta = radius_m / 111_320.0
     lon_delta = radius_m / max(1.0, 111_320.0 * cos(radians(lat)))
     params = {
@@ -91,6 +129,7 @@ def nearby_events(
         "center": {"lat": lat, "lon": lon},
         "radius_m": radius_m,
         "events": fetch_all(query, params),
+        "method": "lat_lon_fallback",
     }
 
 
