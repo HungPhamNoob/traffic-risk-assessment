@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 import threading
 import time
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("PIPELINE_EXPORTER_POLL_INTERVAL_SECONDS",
 EXPORTER_PORT = int(os.getenv("PIPELINE_EXPORTER_PORT", "9200"))
 POSTGRES_CONNECT_TIMEOUT = int(os.getenv("PIPELINE_EXPORTER_DB_TIMEOUT_SECONDS", "5"))
 HTTP_TIMEOUT_SECONDS = int(os.getenv("PIPELINE_EXPORTER_HTTP_TIMEOUT_SECONDS", "5"))
+PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/workspace")
 
 POSTGRES_TABLE = os.getenv("POSTGRES_PREDICTION_TABLE", "traffic_risk_predictions")
 ML_MODEL_NAME = os.getenv("ML_MODEL_NAME", "traffic-risk-model")
@@ -147,7 +149,7 @@ class PipelineExporter:
     """Refresh derived pipeline metrics without changing pipeline behavior."""
 
     def __init__(self) -> None:
-        self.storage_client = storage.Client()
+        self.storage_client: storage.Client | None = None
         self._stop_event = threading.Event()
 
     def run_forever(self) -> None:
@@ -162,14 +164,14 @@ class PipelineExporter:
 
     def refresh(self) -> None:
         self._refresh_postgres()
-        self._refresh_gcs_source(
+        self._refresh_path_source(
             source="silver",
             primary_path=SILVER_FEATURES_PATH,
             fallback_path=None,
             timestamp_metric=SILVER_LATEST_TIMESTAMP,
             freshness_metric=SILVER_FRESHNESS,
         )
-        self._refresh_gcs_source(
+        self._refresh_path_source(
             source="gold",
             primary_path=GOLD_RETRAIN_CSV_PATH,
             fallback_path=GOLD_RETRAIN_PARQUET_PATH or GOLD_RETRAIN_PATH,
@@ -214,7 +216,7 @@ class PipelineExporter:
             if connection is not None:
                 connection.close()
 
-    def _refresh_gcs_source(
+    def _refresh_path_source(
         self,
         source: str,
         primary_path: str,
@@ -224,9 +226,9 @@ class PipelineExporter:
     ) -> None:
         latest_ts = 0.0
         try:
-            latest_ts = self._latest_gcs_object_timestamp_seconds(primary_path)
+            latest_ts = self._latest_path_timestamp_seconds(primary_path)
             if latest_ts <= 0 and fallback_path:
-                latest_ts = self._latest_gcs_object_timestamp_seconds(fallback_path)
+                latest_ts = self._latest_path_timestamp_seconds(fallback_path)
 
             if latest_ts > 0:
                 SOURCE_UP.labels(source=source).set(1)
@@ -236,16 +238,42 @@ class PipelineExporter:
             timestamp_metric.set(latest_ts)
             freshness_metric.set(_freshness_from_timestamp(latest_ts))
         except Exception:
-            logger.exception("Failed to refresh %s GCS metrics.", source)
+            logger.exception("Failed to refresh %s path metrics.", source)
             _set_source_down(source)
             timestamp_metric.set(0)
             freshness_metric.set(0)
+
+    def _latest_path_timestamp_seconds(self, path_value: str) -> float:
+        if path_value.startswith("gs://"):
+            return self._latest_gcs_object_timestamp_seconds(path_value)
+        return self._latest_local_path_timestamp_seconds(path_value)
+
+    def _latest_local_path_timestamp_seconds(self, path_value: str) -> float:
+        local_path = path_value.replace("file://", "", 1)
+        path = Path(local_path)
+        if not path.is_absolute():
+            path = Path(PROJECT_ROOT) / path
+        if not path.exists():
+            return 0.0
+
+        candidates = [path]
+        if path.is_dir():
+            candidates = [item for item in path.rglob("*") if item.is_file()]
+        latest_mtime = max((item.stat().st_mtime for item in candidates), default=0.0)
+        return float(latest_mtime or 0.0)
+
+    def _storage_client(self) -> storage.Client:
+        if self.storage_client is None:
+            self.storage_client = storage.Client()
+        return self.storage_client
 
     def _latest_gcs_object_timestamp_seconds(self, gcs_uri: str) -> float:
         location = _parse_gcs_uri(gcs_uri)
         latest_updated: Optional[datetime] = None
 
-        for blob in self.storage_client.list_blobs(location.bucket, prefix=location.prefix):
+        for blob in self._storage_client().list_blobs(
+            location.bucket, prefix=location.prefix
+        ):
             if blob.name.endswith("/"):
                 continue
             if latest_updated is None or blob.updated > latest_updated:

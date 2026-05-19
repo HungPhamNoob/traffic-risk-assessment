@@ -465,6 +465,68 @@ services:
     restart: unless-stopped
     mem_limit: 128m
 
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: local-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-capstone}:${POSTGRES_PASSWORD:-123}@postgres:5432/${POSTGRES_DB:-capstone_db}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - traffic-local
+    restart: unless-stopped
+    mem_limit: 128m
+
+  pipeline-exporter:
+    build:
+      context: .
+      dockerfile: monitoring/Dockerfile
+    image: traffic-risk-pipeline-exporter:local
+    container_name: local-pipeline-exporter
+    environment:
+      PROJECT_ROOT: /workspace
+      POSTGRES_USER: ${POSTGRES_USER:-capstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_DB: ${POSTGRES_DB:-capstone_db}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_PREDICTION_TABLE: ${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      ML_MODEL_NAME: ${ML_MODEL_NAME:-traffic-risk-model}
+      SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-data/simulation/silver/flink_features}
+      GOLD_RETRAIN_PATH: ${GOLD_RETRAIN_PATH:-data/simulation/gold/features/retrain}
+      GOLD_RETRAIN_PARQUET_PATH: ${GOLD_RETRAIN_PARQUET_PATH:-data/simulation/gold/features/retrain/parquet}
+      GOLD_RETRAIN_CSV_PATH: ${GOLD_RETRAIN_CSV_PATH:-data/simulation/gold/features/retrain/csv}
+    volumes:
+      - ./:/workspace:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - traffic-local
+    restart: unless-stopped
+    mem_limit: 256m
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: local-node-exporter
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/host/root"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    networks:
+      - traffic-local
+    restart: unless-stopped
+    mem_limit: 128m
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: local-prometheus
@@ -480,6 +542,12 @@ services:
       fastapi:
         condition: service_healthy
       blackbox-exporter:
+        condition: service_started
+      postgres-exporter:
+        condition: service_started
+      pipeline-exporter:
+        condition: service_started
+      node-exporter:
         condition: service_started
     networks:
       - traffic-local
@@ -498,6 +566,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       prometheus:
         condition: service_started

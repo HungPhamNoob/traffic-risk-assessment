@@ -120,6 +120,83 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: node1-postgres-exporter
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${POSTGRES_USER:-capstone}:${POSTGRES_PASSWORD:-changeme123}@postgres:5432/${POSTGRES_DB:-capstone_db}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits: { memory: 128M }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  pipeline-exporter:
+    build:
+      context: ../..
+      dockerfile: monitoring/Dockerfile
+    image: traffic-risk-pipeline-exporter:cloud
+    container_name: node1-pipeline-exporter
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-capstone}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme123}
+      - POSTGRES_DB=${POSTGRES_DB:-capstone_db}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_PREDICTION_TABLE=${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - ML_MODEL_NAME=${ML_MODEL_NAME:-traffic-risk-model}
+      - SILVER_FEATURES_PATH=${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
+      - GOLD_RETRAIN_PATH=${GOLD_RETRAIN_PATH:-gs://big-data-group-4-gold/features/retrain}
+      - GOLD_RETRAIN_PARQUET_PATH=${GOLD_RETRAIN_PARQUET_PATH:-gs://big-data-group-4-gold/features/retrain/parquet}
+      - GOLD_RETRAIN_CSV_PATH=${GOLD_RETRAIN_CSV_PATH:-gs://big-data-group-4-gold/features/retrain/csv}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: node1-node-exporter
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/host/root"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits: { memory: 128M }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: node1-prometheus
@@ -133,6 +210,9 @@ services:
       - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_DAYS:-30}d"
     depends_on:
       - blackbox-exporter
+      - postgres-exporter
+      - pipeline-exporter
+      - node-exporter
     networks:
       - capstone-net
     deploy:
@@ -155,6 +235,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ../../config/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../config/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
     networks:

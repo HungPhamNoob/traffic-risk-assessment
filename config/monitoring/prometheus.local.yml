@@ -12,7 +12,20 @@ scrape_configs:
     static_configs:
       - targets: ["fastapi:8000"]
 
-  - job_name: local_http_health
+  - job_name: postgres_exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: pipeline_exporter
+    scrape_interval: 60s
+    static_configs:
+      - targets: ["pipeline-exporter:9200"]
+
+  - job_name: node_exporter_node1
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: blackbox_http
     metrics_path: /probe
     params:
       module: [http_2xx]
@@ -28,7 +41,7 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox-exporter:9115
 
-  - job_name: local_tcp_health
+  - job_name: blackbox_tcp
     metrics_path: /probe
     params:
       module: [tcp_connect]
