@@ -22,9 +22,6 @@ venv/
 *.json.key
 .gcp/*.json
 
-# Keep cloud/default templates versioned.
-!.env.cloud
-!.env.example
 
 # ==================== DATASETS AND GENERATED DATA ====================
 data/raw/*.csv

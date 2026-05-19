@@ -1,0 +1,3232 @@
+Sự khác nhau giữa doc end-to-end và doc spec/charter:
+
+- Doc spec/charter: VIết cho vui hoặc chỉ để nộp assignment hoặc chiều lòng NNH
+- Doc end-to-end: Được xây dựng dựa trên docs spec/charter nhưng có nhiều thay đổi. Được viết sau khi đã hoàn thành hệ thống end-to-end có thể chạy được
+
+Đây là một **hệ thống Big Data phân tích và dự đoán rủi ro tai nạn giao thông tại Mỹ**. Hệ thống đọc dữ liệu tai nạn lịch sử, xử lý qua pipeline streaming/batch, dùng machine learning để dự đoán mức độ nghiêm trọng, và hiển thị kết quả lên dashboard bản đồ.
+
+**Cho một vụ tai nạn ĐÃ XẢY RA (có thời gian, vị trí, thời tiết, loại đường...), hệ thống dự đoán mức độ nghiêm trọng của nó là bao nhiêu (Severity 1→4).**
+
+# Hãy đọc đầu tiên
+
+Sau 4 ngày codex code project + 2 ngày viết doc, đã hoàn thành tạm thòi end-to-end project và có thể còn một số bug
+
+Với việc đọc tài liệu này (nên đọc tuần tự, và đọc lướt để nắm được nội dung chính):
+
+Hiếu, Duy: Đọc hết.  Lý do; vì Spark và Filnk là core, chắc vậy v:
+
+Huy: Chờ quyết định từ Hiếu, Duy
+
+### Khi đã đọc xong thì mở
+
+#### TH1: Hiếu và Duy làm hẳn 1 project end-to-end (US + UK +Tomtom) rồi solo với branch hung1 xem cái nào xịn hơn thì chọn cái đấy ( trong 5 ngày)
+
+Với mỗi dataset, cần có EDA riêng, sau khi merge schema cần có EDA chung ⇒ Rút ra được Insights để feature engineering ⇒ Rút ra được schema chung ⇒ Huấn luyện H2O xem metric tốt không?
+
+Sau khi làm xong thì viết docs chi tiết
+
+Khi này, Huy sẽ phải chờ Hiếu và Duy làm xong. 
+
+Đăng nhảy vảo code end-to-end cùng luôn
+
+Tôi giải nghệ (phần H2O, Mlflow thì bảo codex code cho vì nó không khó nên ai cũng làm được)
+
+#### TH2: Cải tiến từ branch hung1 (trong 3 ngày)
+
+Tôi đã xong pipeline trừ frontend và có thể còn một số bug
+
+Hiếu và Duy làm theo phần “Những gì cần làm tiếp theo?/Về cải tiến pipeline + dashboard”. Tìm cách ỉa lên đầu baseline 1
+
+Huy: 
+
+- Nếu rảnh: Đọc hết
+- Nếu không rảnh: Đọc Architecture, Backend, So sánh 3 project năm ngoái, Cách chạy project end-to-end trên cloud, Những gì cần làm tiếp theo?/Về cải tiến pipeline + dashboard
+- Trong code, chỉ cần quan tâm folder dashboard/. Cần làm đẹp hơn các mẫu UI có sẵn của dashboard/frontend/…
+- Kiểm tra lại code backend và tiến hành code frontend end-to-end
+
+Đăng: Nhảy vảo code end-to-end cùng luôn
+
+Tôi giải nghệ 
+
+Tôi viết docs này mất 2 ngày nên hãy dành 2 tiếng để đọc
+
+# Dataset (US + UK +Tomtom)
+
+Hiện project này chỉ dùng US.csv vì
+
+Không nên gộp US + UK để train một model chung, và cũng không nên dùng TomTom làm realtime chính cho capstone này. Dưới đây là phân tích cụ thể và đề xuất thực tế.
+
+---
+
+## 1. Có nên dùng cả US và UK cùng schema, cùng model?
+
+**Không nên** vì 3 lý do chính:
+
+- **Schema quá khác biệt**:
+    
+    US.csv có 46 cột, UK.csv có 34 cột hoàn toàn khác về tên, mã hóa.
+    
+    Ví dụ:
+    
+    - Severity: US 1-4, UK cũng 1-4 nhưng phân bố rất khác (UK nhẹ hơn).
+    - Tọa độ: US dùng lat/lon trực tiếp, UK dùng Easting/Northing OSGR + lat/lon.
+    - Loại đường: US là Street text, UK có `road_type`, `first_road_class`, `second_road_class` theo mã số riêng.
+    - Thời tiết: US có `Weather_Condition` text, UK có `weather_conditions` mã số.
+    - Hạ tầng (junction, crossing...): US là boolean, UK cũng có nhưng mã hóa khác (có nhiều loại junction detail).
+    
+    Để ánh xạ về một schema chung sẽ phải bỏ rất nhiều thông tin và viết mapping phức tạp, dễ sai.
+    
+- **Khác miền địa lý – khác luật giao thông, thói quen lái xe**:
+    
+    Tai nạn ở Mỹ khác Anh về mật độ, loại đường, tốc độ, văn hóa tham gia giao thông.
+    
+    Gộp vào một model H2O AutoML có thể làm giảm độ chính xác cho từng miền riêng.
+    
+- **Capstone không đòi hỏi đa quốc gia**:
+    
+    Project của bạn đã rất mạnh về hạ tầng big data với US Dataset. Việc thêm UK chỉ làm tăng khối lượng mapping + cleaning mà không mang lại giá trị kiến trúc mới (vẫn chỉ là thêm một file CSV khác).
+    
+    Hội đồng sẽ đánh giá cao sự hoàn thiện của pipeline hiện có hơn là một dataset hỗn tạp.
+    
+
+**Kết luận:** Chỉ nên dùng UK nếu bạn muốn làm **transfer learning** (pretrain trên US → fine‑tune trên UK) hoặc so sánh mô hình hai nước. Nhưng đó là một bài toán riêng, không cần thiết cho project này.
+
+---
+
+## 2. Có nên dùng US/UK làm pretrained, TomTom làm realtime?
+
+**Không nên** vì TomTom không cùng kiểu dữ liệu với US/UK accidents.
+
+- US/UK là **dữ liệu tai nạn lịch sử** (có label severity, có đầy đủ mô tả đường xá, thời tiết…).
+- TomTom là **dữ liệu sự cố giao thông hiện tại** (iconCategory: tai nạn, kẹt xe, công trình…), **không có severity** thực sự của tai nạn, **không có weather, road type, time of day** như US.
+Muốn dự đoán risk từ TomTom, bạn phải train model trên **dữ liệu có cùng schema với TomTom**. US/UK không thể “pretrain” trực tiếp cho TomTom vì feature space khác.
+
+**Nếu bạn vẫn muốn có realtime với dữ liệu “sống”**, có thể:
+
+- Train một model đơn giản (LightGBM) dùng chính các trường của TomTom: `iconCategory`, `magnitudeOfDelay`, `length`, `delay`, vị trí (lat/lon), thời gian lấy từ timestamp request.
+- Label (severity) có thể được gán thủ công dựa trên iconCategory (vd: Accident → severity cao) hoặc dùng magnitudeOfDelay làm proxy.
+- Dùng model này để dự đoán “risk level” cho các incident TomTom đang diễn ra.
+
+Tuy nhiên, **đây là một bài toán hoàn toàn riêng**, không thay thế được pipeline replay US Accidents hiện tại.
+
+Trong khuôn khổ capstone, **giữ nguyên US Accidents cho cả train và realtime replay là an toàn và đủ mạnh**. Bạn có thể mention TomTom như hướng mở rộng tương lai trong báo cáo, nhưng không cần triển khai.
+
+---
+
+---
+
+## 3. Nếu chỉ chọn 1, nên chọn US hay UK?
+
+| Tiêu chí | US Accidents (Kaggle) | UK Road Safety (STATS19) |
+| --- | --- | --- |
+| **Quy mô** | ~7.7 triệu vụ (2016–2023) | ~1–2 triệu vụ/năm, có thể gộp nhiều năm nhưng thường < US |
+| **Số cột** | 46 cột | 34 cột |
+| **Đặc điểm thời tiết** | Text (`Weather_Condition`) + numeric (`Temperature(F)`, `Humidity(%)`, `Wind_Speed(mph)`, `Visibility(mi)`, …) | Chỉ mã số (`weather_conditions`, `road_surface_conditions`) – không có dữ liệu thời tiết định lượng |
+| **Đặc điểm đường xá** | Text (`Street`) + các cờ boolean (`Junction`, `Traffic_Signal`, …) | Mã số (`first_road_class`, `road_type`, `junction_detail`, …) – chi tiết hơn nhưng ít text |
+| **Tọa độ** | `Start_Lat`, `Start_Lng` (WGS84) | `latitude`, `longitude` (WGS84) + `easting_osgr`, `northing_osgr` (hệ OSGB) |
+| **Mục tiêu (label)** | `Severity` 1–4 (tác động lên giao thông) | `collision_severity` 1–4 (mức độ thương vong) |
+| **Tính sẵn có** | Tải về dễ dàng từ Kaggle, định dạng CSV, sẵn sàng dùng ngay | Phải tải từ cổng dữ liệu chính phủ Anh, cần gộp nhiều file CSV |
+| **Giấy phép** | CC BY‑NC‑SA 4.0 (chỉ nghiên cứu, phi thương mại) | Open Government Licence (tự do hơn) |
+| **Nghiên cứu học thuật** | 2 paper SIGSPATIAL, được trích dẫn nhiều | Nhiều bài báo nhưng dataset không có paper “chính thống” như US |
+| **Độ phức tạp feature engineering** | Cần xử lý text (weather, street) → encode → tăng độ khó, thể hiện kỹ năng NLP cơ bản | Dữ liệu đã được mã hóa sẵn, ít phải xử lý text, dễ hơn nhưng ít “big data” hơn |
+| **Khả năng mở rộng** | Có thể thêm TomTom, dữ liệu thời tiết thật | Có thể join với dữ liệu thời tiết từ bên ngoài |
+
+---
+
+| Trường hợp | Nên chọn |
+| --- | --- |
+| Muốn làm project khoa học hơn, target rõ nghĩa hơn, dễ bảo vệ hơn | **UK.csv** |
+| Muốn làm Big Data scale lớn, replay nhiều record, dashboard traffic delay | US.csv |
+| Muốn làm road safety / injury severity / collision risk | **UK.csv** |
+| Muốn demo realtime traffic incident giống TomTom | US.csv |
+
+| Tiêu chí | US.csv | UK.csv | Đánh giá |
+| --- | --- | --- | --- |
+| Dataset size | Rất lớn, ~7.7M records | Có thể nhỏ hơn tùy file | US hơn |
+| Official/government-style | Không mạnh bằng UK | Mạnh hơn | **UK hơn** |
+| Target injury severity | Không | Có | **UK hơn** |
+| Target traffic delay | Có | Không trực tiếp | US hơn |
+| Feature road safety | Có nhưng gián tiếp | Rất rõ | **UK hơn** |
+| Weather feature | Rất nhiều weather numeric/text | Có weather code | US hơn về weather |
+| Geospatial dashboard | Có | Có | Hòa |
+| Model explainability | Khá tốt | Rất tốt | **UK hơn** |
+| Big Data scale | Rất tốt | Tùy file | US hơn |
+| Dễ bảo vệ học thuật | Trung bình-khá | Cao hơn | **UK hơn** |
+| Hợp realtime traffic replay | Rất hợp | Trung bình | US hơn |
+| Hợp road safety policy | Trung bình | Rất hợp | **UK hơn** |
+
+### Kết luận: Cái nào cũng tốt nhưng vì US.csv nhiều data hơn nên chọn
+
+---
+
+## 4. Các paper trên US.csv
+
+Paper giới thiệu dataset: https://arxiv.org/pdf/1906.05409 
+
+Các papers train model trên dataset này (sẽ được đề cập chi tiết hơn ở [Train model H2O/Trước 2020](https://www.notion.so/End-to-end-MLOps-project-35e897a15cb2805cb2bfea8346f2f2e0?pvs=21))
+
+## Đề xuất thực tế cho project hiện tại
+
+- **Tiếp tục chỉ dùng US Dataset**, vì bạn đã có pipeline hoàn chỉnh: pretrain <2020, replay >=2020, retrain mỗi giờ từ Gold layer.
+- **Không thêm UK vội** – nó chỉ làm tăng độ phức tạp mà không cải thiện điểm mạnh kiến trúc.
+- **TomTom nên để dành cho phần “Future Work”**, minh họa khả năng mở rộng sang real-time incident API, không cần implement trong project chính.
+
+# EDA (US.csv)
+
+EDA này so sánh 3 tập dữ liệu chính:
+
+| Ký hiệu | Ý nghĩa |
+| --- | --- |
+| `before_2020_raw` | Dữ liệu raw trước năm 2020, dùng cho offline training |
+| `from_2020_raw` | Dữ liệu raw từ năm 2020 trở đi, dùng cho streaming replay |
+| `before_2020_featured` | Dữ liệu trước 2020 sau khi qua feature engineering |
+
+Lý do không có after_2020_featured vì nó là dữ liệu realtime, dù có phân tích thì cũng không được áp dụng phân tích của nó cho feat eng, tránh data leakage. Chỉ được dùng feat eng của before2020 áp dụng lên after2020.
+
+Mục tiêu của EDA là kiểm tra:
+
+- dữ liệu có đúng split thời gian không,
+- feature engineering có giữ đúng schema không,
+- label `true_severity` có bị imbalance không,
+- các feature thời tiết, thời gian, đường, vị trí có ý nghĩa không,
+- có dấu hiệu data drift giữa trước và sau 2020 không.
+
+Nguồn EDA kiểm tra 3 view dữ liệu trên cùng schema engineered gồm 26 cột, trong đó raw file ban đầu có 7,728,394 dòng, sau chuẩn hóa còn 6,763,340 dòng hợp lệ cho EDA.
+
+---
+
+# 1. Tổng quan dữ liệu
+
+| Tập dữ liệu | Số dòng | Số cột | Năm bắt đầu | Năm kết thúc | Vai trò |
+| --- | --- | --- | --- | --- | --- |
+| `before_2020_raw` | 2,976,413 | 26 | 2016 | 2019 | Dữ liệu raw trước 2020 |
+| `from_2020_raw` | 3,786,927 | 26 | 2020 | 2023 | Dữ liệu replay realtime |
+| `before_2020_featured` | 2,975,837 | 26 | 2016 | 2019 | Dữ liệu train sau feature engineering |
+
+## Đánh giá
+
+`before_2020_raw` và `before_2020_featured` gần như bằng nhau về số dòng. Điều này cho thấy bước feature engineering không làm mất nhiều dữ liệu. Đây là dấu hiệu tốt vì pipeline xử lý dữ liệu ổn định.
+
+Số dòng của `from_2020_raw` lớn hơn `before_2020_raw`, tức là giai đoạn replay sau 2020 có lượng accident records lớn hơn. Tuy nhiên, phân phối severity của giai đoạn này khác rất nhiều, nên không nên trộn trực tiếp dữ liệu trước và sau 2020 nếu chưa xử lý drift.
+
+---
+
+# 2. Biểu đồ Accident Count by Year
+
+![Screenshot from 2026-05-12 22-59-28.png](attachment:da442c8b-bce7-4d43-99d2-3e9220ce292a:Screenshot_from_2026-05-12_22-59-28.png)
+
+## Nhận xét theo biểu đồ
+
+| Giai đoạn | Xu hướng |
+| --- | --- |
+| 2016 → 2019 | Số accident tăng đều qua từng năm |
+| 2020 → 2022 | Số accident rất cao, cao hơn giai đoạn trước 2020 |
+| 2023 | Số accident giảm mạnh |
+
+## Đánh giá
+
+Ở giai đoạn trước 2020:
+
+| Năm | Số accident |
+| --- | --- |
+| 2016 | 410,821 |
+| 2017 | 717,868 |
+| 2018 | 893,423 |
+| 2019 | 954,301 |
+
+Dữ liệu tăng đều từ 2016 đến 2019, cho thấy tập before-2020 đủ lớn để pretrain model.
+
+Ở giai đoạn sau 2020:
+
+| Năm | Số accident |
+| --- | --- |
+| 2020 | 1,145,516 |
+| 2021 | 1,268,272 |
+| 2022 | 1,209,705 |
+| 2023 | 163,434 |
+
+Năm 2023 thấp bất thường. Không nên kết luận rằng tai nạn giảm thật, vì khả năng cao dữ liệu 2023 chưa đầy đủ hoặc chỉ gồm một phần năm.
+
+## Kết luận
+
+Temporal split là hợp lý:
+
+```
+before 2020  -> offline training
+from 2020    -> streaming replay / online simulation
+```
+
+Điểm này giúp giảm data leakage.
+
+---
+
+# 3. Biểu đồ Severity Share và Severity Count
+
+![Screenshot from 2026-05-12 22-59-40.png](attachment:a272eb5a-7a0a-4a6f-992b-7518c6ead560:Screenshot_from_2026-05-12_22-59-40.png)
+
+## Bảng phân phối severity
+
+| Severity | before_2020_raw | Tỷ lệ | from_2020_raw | Tỷ lệ | before_2020_featured | Tỷ lệ |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 969 | 0.03% | 66,394 | 1.75% | 969 | 0.03% |
+| 2 | 1,995,128 | 67.03% | 3,222,878 | 85.11% | 1,994,654 | 67.03% |
+| 3 | 887,928 | 29.83% | 411,377 | 10.86% | 887,867 | 29.84% |
+| 4 | 92,388 | 3.10% | 86,278 | 2.28% | 92,347 | 3.10% |
+
+## Nhận xét chính
+
+Severity 2 chiếm đa số tuyệt đối trong cả hai giai đoạn. Trước 2020, severity 2 chiếm khoảng 67%. Sau 2020, severity 2 tăng lên hơn 85%.
+
+Severity 1 cực kỳ hiếm trong before-2020, chỉ có 969 dòng, tương đương khoảng 0.03%. Đây là nguyên nhân chính khiến model gần như không học được class 1.
+
+## Mức độ mất cân bằng dữ liệu
+
+| Tập dữ liệu | Majority class | Minority class | Tỷ lệ majority/minority |
+| --- | --- | --- | --- |
+| `before_2020_raw` | Severity 2 | Severity 1 | 2058.96 lần |
+| `from_2020_raw` | Severity 2 | Severity 1 | 48.54 lần |
+| `before_2020_featured` | Severity 2 | Severity 1 | 2058.47 lần |
+
+## Đánh giá
+
+Đây là dataset imbalance rất nặng. Với before-2020 training set, class 2 nhiều hơn class 1 hơn 2000 lần. Vì vậy, nếu chỉ nhìn accuracy thì rất dễ bị đánh lừa.
+
+Ví dụ, model đoán nhiều về severity 2 vẫn có accuracy cao, nhưng có thể bỏ sót hoàn toàn severity 1 và severity 4.
+
+## Kết luận
+
+Bắt buộc phải báo cáo:
+
+- Macro F1
+- Weighted F1
+- Recall từng severity
+- Confusion matrix
+- Support từng class
+
+Không nên chỉ báo cáo accuracy.
+
+---
+
+# 4. Missing values và data quality
+
+## Nhận xét
+
+Các engineered features đều có missing rate bằng 0.
+
+Điều này nghĩa là sau khi qua feature engineering:
+
+- `event_id` không null,
+- `true_severity` không null,
+- `lat`, `lon` không null,
+- weather features không null,
+- road/context flags không null.
+
+## Đánh giá
+
+Đây là điểm mạnh của pipeline. Feature engineering đã chuẩn hóa dữ liệu tốt trước khi đưa vào model.
+
+Các giá trị thiếu ở raw data đã được xử lý bằng:
+
+- default value: Gán giá trị trung bình/0 nếu thiếu
+- clipping: Cắt về biên vật lý nếu outlier
+- boolean conversion: Mọi giá trị → 0 hoặc 1
+- validation critical fields: Loại bỏ dòng nếu không hợp lệ
+
+## Kết luận
+
+Schema hiện tại đủ ổn định cho cả:
+
+```
+Flink realtime inference
+Spark batch retraining
+H2O AutoML training
+```
+
+---
+
+# 5. Histogram thời tiết: temperature, humidity, wind speed, visibility
+
+![Screenshot from 2026-05-12 22-59-52.png](attachment:8e700206-fd63-4ecd-9e5f-05e22a77a59e:Screenshot_from_2026-05-12_22-59-52.png)
+
+![Screenshot from 2026-05-12 23-00-15.png](attachment:f9a66442-64b4-4594-a247-e71c9dbb2157:Screenshot_from_2026-05-12_23-00-15.png)
+
+![Screenshot from 2026-05-12 23-00-24.png](attachment:40bccf8a-a3af-40d1-8179-3d429162f399:Screenshot_from_2026-05-12_23-00-24.png)
+
+## 5.1 Temperature
+
+| Tập | Mean | Median | Min | Max |
+| --- | --- | --- | --- | --- |
+| before_2020_raw | 62.11 | 64.0 | -40 | 130 |
+| from_2020_raw | 60.77 | 63.0 | -40 | 130 |
+| before_2020_featured | 62.11 | 64.0 | -40 | 130 |
+
+## Nhận xét
+
+Phân phối temperature tập trung khoảng 50-80°F. Hai tập before raw và before featured gần như giống nhau, chứng minh feature engineering giữ phân phối ổn định.
+
+Giá trị min/max bị chặn trong khoảng `-40` đến `130`, đúng với logic clipping.
+
+---
+
+## 5.2 Humidity
+
+| Tập | Mean | Median | Min | Max |
+| --- | --- | --- | --- | --- |
+| before_2020_raw | 65.10 | 67.0 | 1 | 100 |
+| from_2020_raw | 64.45 | 66.0 | 1 | 100 |
+| before_2020_featured | 65.10 | 67.0 | 1 | 100 |
+
+## Nhận xét
+
+Humidity phân bố rộng, nhưng tập trung nhiều ở vùng 50-100%. Đây là phân phối hợp lý vì nhiều tai nạn xảy ra trong điều kiện độ ẩm trung bình đến cao.
+
+---
+
+## 5.3 Wind speed
+
+| Tập | Mean | Median | Min | Max |
+| --- | --- | --- | --- | --- |
+| before_2020_raw | 7.07 | 6.9 | 0 | 100 |
+| from_2020_raw | 7.11 | 7.0 | 0 | 100 |
+| before_2020_featured | 7.07 | 6.9 | 0 | 100 |
+
+## Nhận xét
+
+Wind speed lệch phải mạnh. Phần lớn giá trị nằm ở vùng thấp, khoảng 0-15 mph. Một số outlier được clip ở 100 mph.
+
+Điều này hợp lý vì gió cực mạnh hiếm gặp.
+
+---
+
+## 5.4 Visibility
+
+| Tập | Mean | Median | Min | Max |
+| --- | --- | --- | --- | --- |
+| before_2020_raw | 9.07 | 10.0 | 0 | 10 |
+| from_2020_raw | 9.04 | 10.0 | 0 | 10 |
+| before_2020_featured | 9.07 | 10.0 | 0 | 10 |
+
+## Nhận xét
+
+Visibility có spike rất lớn ở 10 miles. Đây là giá trị phổ biến trong weather reports khi tầm nhìn bình thường.
+
+## Kết luận nhóm weather features
+
+Các feature thời tiết đã được bounded hợp lý:
+
+| Feature | Range sau xử lý |
+| --- | --- |
+| `temperature_f` | -40 đến 130 |
+| `humidity` | 0 đến 100 |
+| `wind_speed_mph` | 0 đến 100 |
+| `visibility_mi` | 0 đến 10 |
+
+Điều này giúp model tránh bị ảnh hưởng bởi outlier vật lý không hợp lý.
+
+---
+
+# 6. Biểu đồ Accident Count by Hour
+
+![Screenshot from 2026-05-12 23-00-34.png](attachment:bd2be733-fcc2-4c6d-ac3d-24f557341aa9:Screenshot_from_2026-05-12_23-00-34.png)
+
+## Nhận xét
+
+Số accident tăng mạnh vào các khung giờ di chuyển trong ngày.
+
+Trước 2020, số lượng accident cao quanh:
+
+- 7h-8h sáng,
+- 16h-17h chiều.
+
+Sau 2020, số accident cũng cao trong giờ ban ngày và chiều.
+
+## Đánh giá
+
+Feature `is_rush_hour` là hợp lý vì biểu đồ cho thấy accident count có pattern theo giờ rõ ràng.
+
+Tuy nhiên, cần chú ý: nhiều accident xảy ra trong rush hour không có nghĩa là accident trong rush hour luôn nghiêm trọng hơn. Nó chỉ nói rằng số lượng vụ tai nạn nhiều hơn.
+
+---
+
+# 7. Biểu đồ Average Severity by Hour
+
+![Screenshot from 2026-05-12 23-00-44.png](attachment:8bfed6fd-7056-4c91-9286-62d344096dd1:Screenshot_from_2026-05-12_23-00-44.png)
+
+## Nhận xét
+
+Trước 2020, average severity cao hơn vào ban đêm và rạng sáng. Một số giờ như 0h-3h có average severity cao hơn ban ngày.
+
+Sau 2020, average severity thấp và ổn định hơn, quanh khoảng 2.1.
+
+## Đánh giá
+
+Điều này giải thích vì sao `hour` và `is_night` nên được giữ lại. Chúng có thể không có correlation tuyến tính quá mạnh, nhưng có thể kết hợp với road type, weather, location để giúp tree-based model học pattern.
+
+---
+
+# 8. Rush hour và weekend
+
+Bảng tóm tắt
+
+| Period | Rush hour | Weekend | Accident count | Avg severity | Severe rate |
+| --- | --- | --- | --- | --- | --- |
+| before_2020_raw | 0 | 0 | 1,410,389 | 2.3569 | 0.3222 |
+| before_2020_raw | 0 | 1 | 228,021 | 2.5659 | 0.5020 |
+| before_2020_raw | 1 | 0 | 1,243,970 | 2.3110 | 0.2925 |
+| before_2020_raw | 1 | 1 | 94,033 | 2.5578 | 0.5071 |
+| from_2020_raw | 0 | 0 | 1,839,071 | 2.1356 | 0.1268 |
+| from_2020_raw | 0 | 1 | 512,019 | 2.1561 | 0.1336 |
+| from_2020_raw | 1 | 0 | 1,250,022 | 2.1244 | 0.1335 |
+| from_2020_raw | 1 | 1 | 185,815 | 2.1760 | 0.1569 |
+
+## Đánh giá
+
+Trước 2020, weekend có severe rate cao hơn weekday rất rõ:
+
+| Điều kiện | Severe rate trước 2020 |
+| --- | --- |
+| Non-rush weekday | 0.3222 |
+| Non-rush weekend | 0.5020 |
+| Rush weekday | 0.2925 |
+| Rush weekend | 0.5071 |
+
+Điều này nghĩa là weekend là feature quan trọng hơn rush hour trong việc phân biệt severity cao.
+
+## Kết luận
+
+Nên giữ cả:
+
+- `hour`
+- `is_rush_hour`
+- `is_weekend`
+- `is_night`
+
+Trong đó, `is_weekend` và `is_night` có vẻ liên quan mạnh hơn đến severity cao trước 2020.
+
+---
+
+# 9. Weather code và severity
+
+## Bảng severe rate theo weather code trước 2020
+
+| Weather code | Ý nghĩa | Severe rate before 2020 |
+| --- | --- | --- |
+| 0 | Clear / unknown | 0.3132 |
+| 1 | Rain | 0.3660 |
+| 2 | Snow / ice / sleet | 0.4110 |
+| 3 | Fog / haze / mist | 0.3069 |
+| 4 | Storm / thunder | 0.4035 |
+| 5 | Cloudy / overcast | 0.3351 |
+| 6 | Windy | 0.2517 |
+
+## Nhận xét
+
+Trước 2020, các điều kiện thời tiết có severe rate cao nhất là:
+
+1. Snow / ice / sleet
+2. Storm / thunder
+3. Rain
+
+Điều này hợp lý vì mặt đường trơn, tầm nhìn xấu, và thời tiết cực đoan có thể làm tăng mức độ nghiêm trọng của tai nạn.
+
+## Đánh giá
+
+`weather_code` nên được giữ lại. Tuy nhiên, correlation tuyến tính với severity không quá mạnh, nên feature này có thể hiệu quả hơn khi kết hợp với:
+
+- `hour`
+- `visibility_mi`
+- `road_type_code`
+- `is_night`
+- `lat/lon`
+
+---
+
+# 10. Road type code và severity
+
+## Bảng severe rate theo road type trước 2020
+
+| Road type code | Ý nghĩa | Severe rate before 2020 |
+| --- | --- | --- |
+| 0 | Unknown / local | 0.2879 |
+| 1 | Interstate / freeway / highway | 0.5344 |
+| 2 | Route / state route / US route | 0.3727 |
+| 3 | Street | 0.1686 |
+| 4 | Avenue | 0.1923 |
+| 5 | Boulevard | 0.2129 |
+| 6 | Drive | 0.1114 |
+| 7 | Road | 0.1755 |
+
+## Nhận xét
+
+Road type code 1 có severe rate cao nhất, khoảng 53.44%.
+
+Điều này rất hợp lý vì highway/freeway thường có:
+
+- tốc độ cao hơn,
+- khoảng cách phanh dài hơn,
+- hậu quả tai nạn nghiêm trọng hơn.
+
+## Đánh giá
+
+`road_type_code` là một trong những feature quan trọng nhất. Điều này cũng khớp với correlation heatmap, vì `road_type_code` có correlation mạnh nhất với `true_severity` trong nhóm feature hiện tại.
+
+---
+
+# 11. Road flags: junction, signal, crossing, night
+
+## Severe rate khi flag xuất hiện trước 2020
+
+| Feature | Severe rate khi flag = 1 | Nhận xét |
+| --- | --- | --- |
+| `is_junction` | 0.4360 | Junction có liên quan đến severity cao |
+| `is_night` | 0.3749 | Ban đêm nghiêm trọng hơn ban ngày |
+| `is_railway` | 0.2243 | Có ảnh hưởng nhưng không quá mạnh |
+| `is_station` | 0.1291 | Thấp |
+| `has_traffic_signal` | 0.1180 | Thấp |
+| `is_crossing` | 0.0990 | Thấp |
+| `is_stop` | 0.0871 | Thấp |
+| `is_roundabout` | 0.0865 | Thấp, số lượng rất ít |
+
+## Đánh giá
+
+`is_junction` và `is_night` là 2 flag đáng chú ý nhất. Các flag như `has_traffic_signal`, `is_crossing`, `is_stop` có severe rate thấp hơn, có thể vì chúng thường nằm ở khu vực đô thị, tốc độ xe thấp hơn, nên accident ít nghiêm trọng hơn.
+
+## Kết luận
+
+Nên giữ các road flags vì tree-based model có thể học interaction. Nhưng nếu cần feature selection, có thể ưu tiên:
+
+- `is_junction`
+- `is_night`
+- `has_traffic_signal`
+- `is_crossing`
+
+---
+
+# 12. Correlation heatmap
+
+![Screenshot from 2026-05-12 23-01-11.png](attachment:cefcd0df-a9be-44a6-8ffc-47412f3a30c3:Screenshot_from_2026-05-12_23-01-11.png)
+
+![Screenshot from 2026-05-12 23-01-37.png](attachment:3563a3a4-d319-47e8-8a6a-d562eb0deb0a:Screenshot_from_2026-05-12_23-01-37.png)
+
+![Screenshot from 2026-05-12 23-01-21.png](attachment:13103766-d7a6-4df7-b993-ca8113854bfb:Screenshot_from_2026-05-12_23-01-21.png)
+
+## Top correlation với true_severity trước 2020
+
+| Feature | Correlation với `true_severity` |
+| --- | --- |
+| `road_type_code` | -0.2151 |
+| `has_traffic_signal` | -0.2082 |
+| `is_crossing` | -0.1746 |
+| `is_weekend` | 0.1309 |
+| `is_stop` | -0.0777 |
+| `is_night` | 0.0689 |
+| `is_junction` | 0.0665 |
+| `is_station` | -0.0643 |
+| `lon` | 0.0552 |
+| `is_rush_hour` | -0.0529 |
+
+## Nhận xét
+
+Không có feature đơn lẻ nào có correlation cực mạnh với severity. Feature mạnh nhất cũng chỉ khoảng `|0.21|`.
+
+Điều này nghĩa là severity không thể dự đoán tốt bằng một feature đơn giản. Model cần học tương tác giữa nhiều feature.
+
+Ví dụ:
+
+```
+road_type_code + hour + is_night + weather_code + lat lon
+```
+
+có thể hữu ích hơn từng feature riêng lẻ.
+
+## Đánh giá
+
+Correlation heatmap ủng hộ việc dùng:
+
+- Random Forest
+- XGBoost
+- H2O AutoML
+- tree-based models
+
+hơn là chỉ dùng linear model.
+
+---
+
+# 13. Spatial scatter plot
+
+![Screenshot from 2026-05-12 23-01-48.png](attachment:4444d597-7dbd-41c8-a392-643136267ba5:Screenshot_from_2026-05-12_23-01-48.png)
+
+## Nhận xét
+
+Các điểm accident nằm đúng trong phạm vi bản đồ Hoa Kỳ:
+
+- Longitude khoảng từ -125 đến -67
+- Latitude khoảng từ 24 đến 49
+
+Các điểm tập trung nhiều ở:
+
+- California,
+- Texas,
+- Florida,
+- miền Đông Hoa Kỳ,
+- các vùng đô thị và hành lang giao thông lớn.
+
+## Đánh giá
+
+Spatial sanity check tốt. `lat` và `lon` hợp lệ, không có điểm lệch rõ ràng ra ngoài vùng Mỹ.
+
+Tuy nhiên, chỉ dùng raw `lat/lon` có thể chưa đủ mạnh. Model có thể cải thiện nếu thêm feature không gian như:
+
+- state,
+- city,
+- county,
+- road segment,
+- geohash,
+- spatial grid,
+- distance to urban center.
+
+---
+
+# 14. Đánh giá data drift giữa before 2020 và from 2020
+
+Đây là điểm rất quan trọng.
+
+## Drift lớn nhất nằm ở label distribution
+
+| Severity | Before 2020 | From 2020 | Thay đổi |
+| --- | --- | --- | --- |
+| 1 | 0.03% | 1.75% | Tăng mạnh |
+| 2 | 67.03% | 85.11% | Tăng mạnh |
+| 3 | 29.83% | 10.86% | Giảm mạnh |
+| 4 | 3.10% | 2.28% | Giảm nhẹ |
+
+## Đánh giá
+
+Sau 2020, severity 2 áp đảo hơn rất nhiều, còn severity 3 giảm mạnh. Đây là dấu hiệu drift lớn.
+
+Điều này có thể đến từ:
+
+- thay đổi cách thu thập dữ liệu,
+- thay đổi reporting policy,
+- dữ liệu sau 2020 khác bản chất,
+- dữ liệu 2023 chưa đầy đủ,
+- ảnh hưởng giai đoạn COVID lên traffic pattern.
+
+## Kết luận
+
+Không nên đánh giá model chỉ bằng cách trộn before và after 2020. Cách hiện tại của bạn là hợp lý:
+
+```
+before 2020: offline pretraining
+from 2020: streaming replay and drift observation
+```
+
+---
+
+# 15. Đánh giá feature engineering
+
+## Điểm tốt
+
+| Điểm | Đánh giá |
+| --- | --- |
+| Schema thống nhất | Tốt |
+| Missing values sau engineering | 0 |
+| Weather features được clip | Tốt |
+| Road type được encode | Có ích |
+| Boolean flags được chuẩn hóa 0/1 | Tốt |
+| before raw và before featured gần giống nhau | Chứng minh pipeline ổn định |
+
+## Điểm cần cải thiện
+
+| Vấn đề | Gợi ý cải thiện |
+| --- | --- |
+| Severity 1 quá ít | Cần rare-class strategy mạnh hơn |
+| Lat/lon còn thô | Thêm state/city/geohash/grid |
+| Weather code còn đơn giản | Tách weather severity hoặc dùng nhiều nhóm hơn |
+| Road type suy từ text đơn giản | Cần thêm highway flag, urban/rural proxy |
+| Correlation đơn lẻ yếu | Cần tree-based model và interaction features |
+
+---
+
+---
+
+---
+
+# Architecture
+
+![deepseek_mermaid_20260512_521906.png](attachment:5db0c976-7128-4655-a1fb-e3fbc9920a4d:deepseek_mermaid_20260512_521906.png)
+
+## Mô tả từng lớp dữ liệu
+
+- **Bronze raw**: chứa dữ liệu CSV gốc của US Accidents. File sau năm 2020 được dùng để replay dữ liệu vào Kafka cho streaming.
+- **Silver**: chứa các bản ghi feature dạng JSONL do Flink ghi ra sau khi xử lý raw event.
+- **Gold**: chứa dataset sạch dạng Parquet và CSV để retrain model. Gold được tạo bởi Spark sau khi đọc Silver, làm sạch, xóa trùng và partition theo năm.
+
+## Streaming path realtime
+
+1. Kafka replay producer đọc CSV và đẩy từng raw row vào topic `traffic.us.raw`.
+2. Flink đọc message từ Kafka, parse JSON, tạo feature, rồi gọi MLflow Serving để suy diễn.
+3. Flink ghi hai output chính:
+    - Silver JSONL chứa feature đã xử lý.
+    - PostGIS table chứa prediction, metadata và tọa độ sự kiện.
+
+## Batch path retrain
+
+1. Spark đọc dữ liệu Silver do Flink tạo ra.
+2. Spark làm sạch, validate, fill null và deduplicate theo `event_id`.
+3. Spark ghi Gold dataset dưới dạng Parquet và CSV.
+4. H2O AutoML train hoặc retrain trên Gold dataset.
+5. Kết quả training được log vào MLflow, sau đó model tốt nhất được đăng ký vào MLflow Model Registry.
+
+## Orchestration và monitoring
+
+- Airflow DAG `model_retrain_hourly`: chạy theo giờ, gồm Spark silver to gold, sau đó H2O retraining.
+- Airflow DAG `streaming_health_check`: kiểm tra Kafka, Flink và Spark; nếu lỗi có thể restart đồng bộ Node2 và Node3.
+- FastAPI cung cấp endpoint `/metrics` cho Prometheus và Grafana theo dõi hệ thống.
+
+## Output
+
+- **PostGIS table**: lưu prediction và thông tin sự kiện, dùng cho dashboard và API.
+- **MLflow**: lưu metrics, artifacts, leaderboard, model và model registry.
+- **API JSON**: cung cấp dữ liệu cho overview, hotspots, analytics, scenarios và system status.
+
+# Streaming
+
+## Kafka
+
+![mermaid-diagram.png](attachment:608af6c1-64f0-4ef9-980e-7f1a181dca25:mermaid-diagram.png)
+
+**Luồng xử lý chi tiết một producer:**
+
+1. load_dotenv() → đọc file .env (các biến như KAFKA_BOOTSTRAP_SERVERS, TOTAL_PRODUCERS…)
+2. validate_config() → kiểm tra tham số hợp lệ từ .env (ví dụ time không được bé hơn 0)
+3. Mở file CSV (GCS hoặc local)
+4. Lặp qua từng dòng:
+    - Nếu row_index % 3 ≠ PRODUCER_INDEX → bỏ qua
+    - Nếu khớp:
+        - Key = ID của accident từ csv (ví dụ: A-1, A-2, A-3,… ). 
+        • Key quyết định message được ghi vào **partition nào** (hash(key) % số partition). 
+        • Các message **cùng key** luôn vào **cùng partition.**
+        - Thêm trường "_ingested_at_utc" = thời điểm gửi (UTC)
+        - Chuyển row thành JSON
+        - Gọi produce_with_backpressure() để gửi vào Kafka (tức producer gửi vào buffer cá nhân rồi gửi vào buffer của broker, sau vài giây broker đây data từ buffer vào disk của VM; buffer chính là ram của VM)
+5. Mỗi 1000 dòng đã gửi → log progress (số dòng đã gửi/quét, tốc độ)
+6. Mỗi 5000 dòng đã gửi tới broker→ flush producer (đảm bảo đẩy hết buffer). Flush là đợi ACK của 5000 dòng đã gửi đi, xem nó có thành công hay thất bại. Chỗ này hơi lằng nhằng v:
+7. Nếu có giới hạn (STREAM_MAX_RECORDS) thì dừng khi đủ
+8. Khi bị ngắt (Ctrl+C) hoặc lỗi → vẫn flush nốt message chưa gửi, in tổng kết
+
+![mermaid-diagram (1).png](attachment:d1e7114b-6206-48a2-b506-e648194f940e:mermaid-diagram_(1).png)
+
+| Biến | Giá trị | Ý nghĩa |
+| --- | --- | --- |
+| `KAFKA_BOOTSTRAP_SERVERS` | `10.128.0.5:9092,10.128.0.5:9093,10.128.0.5:9094` | Danh sách địa chỉ Kafka broker mà producer dùng để kết nối và gửi message vào Kafka cluster. |
+| `KAFKA_TOPIC_RAW` | `traffic.us.raw` | Kafka topic đích chứa dữ liệu tai nạn giao thông dạng raw JSON. |
+| `TOTAL_PRODUCERS` | `3` | Tổng số producer chạy song song để replay dữ liệu nhanh hơn và tránh gửi trùng dòng. |
+| `PRODUCER_MAX_BUFFER_MESSAGES` | `100000` | Số message tối đa được giữ tạm trong RAM của Kafka producer trước khi gửi sang broker. |
+| `PRODUCER_LINGER_MS` | `50` | Producer chờ tối đa 50ms để gom nhiều message thành batch rồi mới gửi nhằm tăng throughput. |
+| `PRODUCER_BATCH_NUM_MESSAGES` | `10000` | Số message tối đa trong một batch gửi sang Kafka. |
+| `STREAM_THROTTLE_SECONDS` | `0.01` | Producer nghỉ 0.01 giây sau mỗi message để điều tiết tốc độ replay, giúp luồng giống realtime hơn. |
+| `STREAM_MAX_RECORDS` | `0` | Giới hạn số record gửi đi. Giá trị `0` nghĩa là không giới hạn, producer sẽ gửi đến hết file CSV. |
+
+## Flink
+
+![deepseek_mermaid_20260512_fe4c47.png](attachment:7d72a0e3-0dd3-495b-a0d1-101ec2a19011:deepseek_mermaid_20260512_fe4c47.png)
+
+| Bước | Hành động | Input | Output | Nơi chạy |
+| --- | --- | --- | --- | --- |
+| Source | Flink consumer đọc message từ Kafka topic `traffic.us.raw` | Message thô dạng JSON string | Raw stream | Node2 |
+| 1 | `json.loads()` – parse JSON string thành Python dict | JSON string | `raw_row` (dict) | Node2 |
+| 2 | `build_features()` (module dùng chung với Spark) – tạo feature cho model | `raw_row` | `features` dict chứa ~20 feature | Node2 |
+| 3 | `write_to_gcs_silver()` – ghi feature xuống GCS Silver dạng JSONL, partition theo ngày | `features` dict | File JSONL trên GCS Silver | Node2 |
+| 4 | `call_mlflow_model()` – gửi HTTP POST sang MLflow Serving để inference | 20 feature đúng thứ tự model train | `predicted_severity`, `risk_score` | Gọi từ Node2 → model xử lý ở Node1 |
+| 5 | `insert_prediction_to_postgis()` – ghi prediction vào PostgreSQL/PostGIS | `features` + kết quả ML | Record trong bảng `incident_predictions` | Node2 gọi PostgreSQL trên Node1 |
+| DLQ / Error Handling | Nếu bất kỳ bước nào lỗi → catch exception, log FAIL, không crash toàn bộ Flink job | Exception | Log lỗi / status FAIL | Node2 |
+|  |  |  |  |  |
+
+## Feature Engineering
+
+## 📊 BẢNG CHI TIẾT 24 FEATURES OUTPUT
+
+| # | Feature | Kiểu dữ liệu | Cột gốc trong CSV | Hàm xử lý | Mô tả | Giá trị hợp lệ |
+| --- | --- | --- | --- | --- | --- | --- |
+|  | **METADATA (không dùng làm input model)** |  |  |  |  |  |
+| 1 | `event_id` | String | `ID` | `_safe_string` | Mã định danh tai nạn | A-12345, B-67890... |
+| 2 | `event_year` | Int | `Start_Time` | `parse_datetime` → `.year` | Năm xảy ra tai nạn | 2020, 2021, 2022... |
+| 3 | `event_time` | ISO String | `Start_Time` | `parse_datetime` → `.isoformat()` | Thời gian đầy đủ UTC | "2021-03-15T08:30:00" |
+|  | **LABEL (không dùng làm input model)** |  |  |  |  |  |
+| 4 | `true_severity` | Int | `Severity` | `_safe_int` | Mức độ nghiêm trọng thực tế | 1, 2, 3, 4 |
+|  | **GEOSPATIAL** |  |  |  |  |  |
+| 5 | `lat` | Float | `Start_Lat` | `_safe_float` | Vĩ độ điểm tai nạn | -90.0 đến 90.0 |
+| 6 | `lon` | Float | `Start_Lng` | `_safe_float` | Kinh độ điểm tai nạn | -180.0 đến 180.0 |
+|  | **TIME** |  |  |  |  |  |
+| 7 | `hour` | Int | `Start_Time` | `parse_datetime` → `.hour` | Giờ trong ngày (0-23) | 0 đến 23 |
+| 8 | `day_of_week` | Int | `Start_Time` | `spark_day_of_week` | Thứ trong tuần | 1=CN, 2=T2, 3=T3, 4=T4, 5=T5, 6=T6, 7=T7 |
+| 9 | `is_weekend` | Int (0/1) | `Start_Time` | So sánh `day_of_week` | Cuối tuần? | 0=không, 1=có (CN hoặc T7) |
+| 10 | `is_rush_hour` | Int (0/1) | `Start_Time` | `is_rush_hour(hour)` | Giờ cao điểm? | 0=không, 1=có (7-9h hoặc 16-18h) |
+|  | **WEATHER** |  |  |  |  |  |
+| 11 | `weather_code` | Int | `Weather_Condition` | `encode_weather_condition` | Mã hóa điều kiện thời tiết | 0=clear, 1=rain, 2=snow, 3=fog, 4=storm, 5=cloudy, 6=windy |
+| 12 | `temperature_f` | Float | `Temperature(F)` | `_clip_float(-40, 130)` | Nhiệt độ Fahrenheit | -40.0 đến 130.0 (default=50.0) |
+| 13 | `humidity` | Float | `Humidity(%)` | `_clip_float(0, 100)` | Độ ẩm phần trăm | 0.0 đến 100.0 (default=50.0) |
+| 14 | `wind_speed_mph` | Float | `Wind_Speed(mph)` | `_clip_float(0, 100)` | Tốc độ gió (dặm/giờ) | 0.0 đến 100.0 (default=0.0) |
+| 15 | `visibility_mi` | Float | `Visibility(mi)` | `_clip_float(0, 10)` | Tầm nhìn (dặm) | 0.0 đến 10.0 (default=10.0) |
+|  | **ROAD / CONTEXT** |  |  |  |  |  |
+| 16 | `road_type_code` | Int | `Street` | `encode_road_type` | Mã hóa loại đường | 0=unknown, 1=interstate, 2=route, 3=street, 4=avenue, 5=boulevard, 6=drive, 7=road |
+| 17 | `is_junction` | Int (0/1) | `Junction` | `_safe_bool_as_int` | Gần giao lộ? | 0=không, 1=có |
+| 18 | `has_traffic_signal` | Int (0/1) | `Traffic_Signal` | `_safe_bool_as_int` | Có đèn giao thông? | 0=không, 1=có |
+| 19 | `is_crossing` | Int (0/1) | `Crossing` | `_safe_bool_as_int` | Gần lối qua đường? | 0=không, 1=có |
+| 20 | `is_roundabout` | Int (0/1) | `Roundabout` | `_safe_bool_as_int` | Gần vòng xuyến? | 0=không, 1=có |
+| 21 | `is_stop` | Int (0/1) | `Stop` | `_safe_bool_as_int` | Gần biển STOP? | 0=không, 1=có |
+| 22 | `is_station` | Int (0/1) | `Station` | `_safe_bool_as_int` | Gần trạm dừng? | 0=không, 1=có |
+| 23 | `is_railway` | Int (0/1) | `Railway` | `_safe_bool_as_int` | Gần đường sắt? | 0=không, 1=có |
+|  | **LIGHT** |  |  |  |  |  |
+| 24 | `is_night` | Int (0/1) | `Sunrise_Sunset` | So sánh "night" | Trời tối? | 0=ban ngày, 1=ban đêm |
+
+---
+
+## 📋 CỘT CSV GỐC → XỬ LÝ → FEATURE OUTPUT
+
+| Cột CSV gốc (46 cột) | Xử lý | Feature | Giải thích |
+| --- | --- | --- | --- |
+| `ID` | `_safe_string()` | `event_id` | Giữ nguyên string |
+| `Severity` | `_safe_int()` | `true_severity` | Chỉ dùng đánh giá, KHÔNG input |
+| `Start_Time` | `parse_datetime()` | `event_year` | Extract năm |
+|  |  | `event_time` | ISO format đầy đủ |
+|  |  | `hour` | Extract giờ |
+|  |  | `day_of_week` | Encode thứ |
+|  |  | `is_weekend` | Boolean từ thứ |
+|  |  | `is_rush_hour` | Boolean từ giờ |
+| `Start_Lat` | `_safe_float()` | `lat` | Float, validate [-90, 90] |
+| `Start_Lng` | `_safe_float()` | `lon` | Float, validate [-180, 180] |
+| `Weather_Condition` | `encode_weather_condition()` | `weather_code` | Text → 0-6 |
+| `Temperature(F)` | `_clip_float(-40, 130)` | `temperature_f` | Float, clip [-40, 130] |
+| `Humidity(%)` | `_clip_float(0, 100)` | `humidity` | Float, clip [0, 100] |
+| `Wind_Speed(mph)` | `_clip_float(0, 100)` | `wind_speed_mph` | Float, clip [0, 100] |
+| `Visibility(mi)` | `_clip_float(0, 10)` | `visibility_mi` | Float, clip [0, 10] |
+| `Street` | `encode_road_type()` | `road_type_code` | Text → 0-7 |
+| `Junction` | `_safe_bool_as_int()` | `is_junction` | Boolean → 0/1 |
+| `Traffic_Signal` | `_safe_bool_as_int()` | `has_traffic_signal` | Boolean → 0/1 |
+| `Crossing` | `_safe_bool_as_int()` | `is_crossing` | Boolean → 0/1 |
+| `Roundabout` | `_safe_bool_as_int()` | `is_roundabout` | Boolean → 0/1 |
+| `Stop` | `_safe_bool_as_int()` | `is_stop` | Boolean → 0/1 |
+| `Station` | `_safe_bool_as_int()` | `is_station` | Boolean → 0/1 |
+| `Railway` | `_safe_bool_as_int()` | `is_railway` | Boolean → 0/1 |
+| `Sunrise_Sunset` | So sánh "night" | `is_night` | Day/Night → 0/1 |
+| `End_Time` | ❌ Bỏ qua | - | - |
+| `Description` | ❌ Bỏ qua | - | Text tự do |
+| `Street` (sau encode) | ❌ Bỏ qua | - | - |
+| `City` | ❌ Bỏ qua | - | Đã có lat/lon |
+| `County` | ❌ Bỏ qua | - | Đã có lat/lon |
+| `State` | ❌ Bỏ qua | - | Đã có lat/lon |
+| `Zipcode` | ❌ Bỏ qua | - | Đã có lat/lon |
+| `Country` | ❌ Bỏ qua | - | Luôn là US |
+| `Airport_Code` | ❌ Bỏ qua | - | - |
+| `Weather_Timestamp` | ❌ Bỏ qua | - | Trùng Start_Time |
+| `Wind_Chill(F)` | ❌ Bỏ qua | - | Tương quan Temperature |
+| `Precipitation(in)` | ❌ Bỏ qua | - | Đã có weather_code |
+| `Pressure(in)` | ❌ Bỏ qua | - | - |
+| `Amenity` | ❌ Bỏ qua | - | Quá hiếm |
+| `Bump` | ❌ Bỏ qua | - | Quá hiếm |
+| `Turning_Loop` | ❌ Bỏ qua | - | Quá hiếm |
+| `Nautical_Twilight` | ❌ Bỏ qua | - | Đã có is_night |
+| `Civil_Twilight` | ❌ Bỏ qua | - | Đã có is_night |
+| `Astronomical_Twilight` | ❌ Bỏ qua | - | Đã có is_night |
+
+---
+
+Khi train model ML như H2O, model **không hiểu chữ,** ví d**ụ** như:
+
+- `"Heavy Rain"`
+- `"Thunderstorm"`
+- `"I-95 Highway"`
+- `"Main Street"`
+
+Model chỉ hiểu **số**.
+
+Nên code phải biến text thành mã số (encoding).
+
+### Weather Encoding
+
+| Weather text trong CSV | Code trả về | Ý nghĩa |
+| --- | --- | --- |
+| Clear | 0 | Bình thường |
+| Sunny | 0 | Bình thường |
+| Heavy Rain | 1 | Mưa |
+| Light Drizzle | 1 | Mưa |
+| Snow | 2 | Tuyết |
+| Ice Pellets | 2 | Băng |
+| Fog | 3 | Sương mù |
+| Haze | 3 | Khói mờ |
+| Thunderstorm | 4 | Bão |
+| Storm | 4 | Giông |
+| Overcast | 5 | Nhiều mây |
+| Cloudy | 5 | Âm u |
+| Windy | 6 | Gió mạnh |
+
+![mermaid-diagram (3).png](attachment:556becb3-81fd-4316-af64-3470c1ddbe2a:mermaid-diagram_(3).png)
+
+### Street Encoding
+
+| Street name | Code | Ý nghĩa |
+| --- | --- | --- |
+| I-95 Highway | 1 | Highway |
+| Interstate 10 | 1 | Highway |
+| US Route 66 | 2 | Route |
+| SR-20 | 2 | State route |
+| Main Street | 3 | Street |
+| Park Avenue | 4 | Avenue |
+| Sunset Boulevard | 5 | Boulevard |
+| Ocean Drive | 6 | Drive |
+| Lake Road | 7 | Road |
+| Unknown name | 0 | Không xác định |
+
+![mermaid-diagram (4).png](attachment:b1c885ae-2258-4186-9f3a-cba6c6826d56:mermaid-diagram_(4).png)
+
+# Batching (Spark)
+
+Các bước:
+
+1. Spark mở job.
+2. Spark đọc toàn bộ file JSONL ở GCS Silver.
+3. Spark ép schema để dữ liệu đúng kiểu.
+4. Spark kiểm tra có dữ liệu không.
+5. Nếu không có dữ liệu thì dừng.
+6. Nếu có dữ liệu thì bỏ dòng thiếu cột quan trọng.
+7. Lọc severity hợp lệ từ 1 đến 4.
+8. Lọc lat lon hợp lệ.
+9. Điền giá trị mặc định cho các feature bị null.
+10. Xóa trùng theo event_id.
+11. Kiểm tra sau cleaning còn dữ liệu không.
+12. Nếu còn thì repartition theo event_year.
+13. Ghi ra Gold Parquet để train model.
+14. Ghi thêm Gold CSV để dễ kiểm tra.
+15. Dừng Spark session.
+
+![mermaid-diagram (5).png](attachment:74e3b1b9-2cd1-4934-8591-df1a91ada831:mermaid-diagram_(5).png)
+
+| Bước | Trong Mermaid | Code / function tương ứng | Giải thích  |
+| --- | --- | --- | --- |
+| 1 | `Create SparkSession` | `SparkSession.builder...getOrCreate()` | Tạo Spark job để xử lý dữ liệu lớn. Đây là điểm bắt đầu của batch job. |
+| 2 | `Read Silver JSONL from GCS` | `spark.read...json(SILVER_PATH)` | Đọc dữ liệu feature mà Flink đã ghi xuống GCS Silver. |
+| 3 | `Apply FEATURE_SCHEMA` | `.schema(FEATURE_SCHEMA)` | Ép schema cố định cho dữ liệu. Nghĩa là Spark biết cột nào là string, int, float, double. |
+| 4 | `recursiveFileLookup` | `.option("recursiveFileLookup", "true")` | Đọc cả file trong các thư mục con. Vì Flink ghi kiểu phân vùng theo ngày nên cần đọc đệ quy. |
+| 5 | `Create raw_df` | `raw_df = spark.read...json(...)` | Tạo DataFrame ban đầu từ Silver. Đây là dữ liệu chưa làm sạch. |
+| 6 | `Count raw records` | `total_raw = raw_df.count()` | Đếm số dòng đọc được từ Silver. |
+| 7 | `raw_df is empty` | `if total_raw == 0: return` | Nếu không có dữ liệu thì dừng job, không ghi gì sang Gold. |
+| 8 | `Drop missing required columns` | `raw_df.dropna(subset=REQUIRED_COLUMNS)` | Bỏ các dòng thiếu cột bắt buộc. |
+| 9 | Required columns | `REQUIRED_COLUMNS` | Các cột bắt buộc là `event_id`, `event_year`, `true_severity`, `lat`, `lon`. Thiếu mấy cột này thì không train tốt được. |
+| 10 | `Filter valid severity` | `filter(F.col("true_severity").between(1, 4))` | Chỉ giữ severity hợp lệ từ 1 đến 4. |
+| 11 | `Filter valid latitude` | `filter(F.col("lat").between(-90, 90))` | Chỉ giữ vĩ độ hợp lệ. Lat phải nằm từ -90 đến 90. |
+| 12 | `Filter valid longitude` | `filter(F.col("lon").between(-180, 180))` | Chỉ giữ kinh độ hợp lệ. Lon phải nằm từ -180 đến 180. |
+| 13 | `Fill null feature values` | `clean_df.fillna(FILL_DEFAULTS)` | Nếu các feature phụ bị null thì điền giá trị mặc định. |
+| 14 | Default values | `FILL_DEFAULTS` | Ví dụ `hour = 0`, `weather_code = 0`, `temperature_f = 0.0`, `is_weekend = 0`. |
+| 15 | `Deduplicate by event_id` | `dropDuplicates(["event_id"])` | Xóa dòng trùng. Một tai nạn chỉ giữ một record theo `event_id`. |
+| 16 | `Count final clean records` | `final_count = clean_df.count()` | Đếm số dòng sạch cuối cùng sau khi xử lý. |
+| 17 | `clean_df is empty` | `if final_count == 0: return` | Nếu làm sạch xong không còn dòng nào thì dừng job. |
+| 18 | `Repartition clean data by event_year` | `clean_df.repartition(WRITE_PARTITIONS, "event_year")` | Chia dữ liệu ra nhiều partition để ghi nhanh hơn và tổ chức theo năm. |
+| 19 | `Use 4 write partitions` | `WRITE_PARTITIONS = 4` | Số partition ghi ra là 4. |
+| 20 | `Write Gold Parquet` | `.write.mode("overwrite").partitionBy("event_year").parquet(...)` | Ghi dữ liệu sạch sang Gold dạng Parquet. Đây là format chính để train/retrain model. |
+| 21 | `Partition output by event_year` | `.partitionBy("event_year")` | Thư mục output Parquet được chia theo năm, ví dụ `event_year=2020`, `event_year=2021`. |
+| 22 | `Write Gold CSV` | `.write.mode("overwrite").option("header", "true").csv(...)` | Ghi thêm bản CSV để dễ mở kiểm tra hoặc dùng cho tool khác. |
+| 23 | `Stop SparkSession` | `spark.stop()` | Dù job thành công hay lỗi, Spark session sẽ được đóng trong `finally`. |
+
+# Train model H2O
+
+![Screenshot from 2026-05-12 22-59-40.png](attachment:a272eb5a-7a0a-4a6f-992b-7518c6ead560:Screenshot_from_2026-05-12_22-59-40.png)
+
+## Trước 2020
+
+Model sử dụng:
+
+- H2O AutoML
+- balance_classes=True
+- bounded class sampling factors
+- chọn model theo:
+    1. Macro F1
+    2. Nếu hòa thì chọn logloss thấp hơn
+
+Sampling factor theo thứ tự severity `[1,2,3,4]`:
+
+```
+[100.0, 1.0, 2.246568, 21.599554]
+```
+
+MLflow lưu:
+
+- metrics,
+- leaderboard,
+- confusion matrix,
+- precision/recall/F1 từng class,
+- artifacts,
+- model registry.
+
+Bảng kết quả model hiện tại:
+
+| Thành phần | Giá trị |
+| --- | --- |
+| Số dòng train | 2,380,970 |
+| Số dòng test | 594,867 |
+| Số feature | 20 |
+| Label | `true_severity` |
+| Model tốt nhất | H2O XGBoost |
+| Accuracy | 0.795512 |
+| Macro Precision | 0.550675 |
+| Macro Recall | 0.408873 |
+| Macro F1 | 0.418518 |
+| Weighted Precision | 0.790505 |
+| Weighted Recall | 0.795512 |
+| Weighted F1 | 0.785149 |
+| Logloss | 0.557677 |
+| Mean Per-Class Error | 0.591127 |
+
+Kết quả từng severity class:
+
+| Severity | Precision | Recall | F1-score | Support |
+| --- | --- | --- | --- | --- |
+| 1 | 0.000000 | 0.000000 | 0.000000 | 219 |
+| 2 | 0.842256 | 0.877560 | 0.859545 | 398,610 |
+| 3 | 0.687546 | 0.687949 | 0.687747 | 177,519 |
+| 4 | 0.672897 | 0.069982 | 0.126779 | 18,519 |
+
+**Support** nghĩa là: Số lượng mẫu thật của class đó trong tập test
+
+Tóm tắt các paper baseline:
+
+| Baseline | Dataset | Phương pháp | Metric chính | Nhận xét |
+| --- | --- | --- | --- | --- |
+| Baseline 1 | US Accident severity | Random Forest, XGBoost, Voting | RF accuracy 0.921, macro F1 0.72 | Baseline offline mạnh |
+| Baseline 2 | 499k accidents 2016-2023 | Weighted XGBoost | Accuracy 78.2% | Gần giống đề tài nhất |
+| Baseline 3 | Multi-year leakage-aware dataset | WCFR + feature selection | Accuracy ~0.84, macro F1 ~0.55 | Feature selection mạnh |
+| Baseline 4 | Dataset lớn, giảm còn 1% | XGBoost, LightGBM, RF, SVM,... | XGBoost ~85% | So sánh nhiều model |
+
+So sánh metric giữa đề tài và paper:
+
+| Project / Paper | Best Model | Accuracy | Macro F1 | Weighted F1 | Rare Class |
+| --- | --- | --- | --- | --- | --- |
+| Đề tài hiện tại | H2O XGBoost | 0.7955 | 0.4185 | 0.7851 | Severity 1 rất yếu |
+| Baseline 1 | Random Forest | 0.9210 | 0.7200 | 0.9200 | Rare class tốt hơn nhiều |
+| Baseline 2 | Weighted XGBoost | 0.7820 | Không ghi rõ | Không ghi rõ | Severity 4 recall ~0.13 |
+| Baseline 3 | WCFR + ML | ~0.8400 | ~0.5500 | Không ghi rõ | Macro F1 mạnh |
+| Baseline 4 | XGBoost | ~0.8500 | Không ghi rõ | Không ghi rõ | Không có metric rare-class |
+
+## Sau 2020 (có tính 2020)
+
+![deepseek_mermaid_20260512_d15281.png](attachment:b8c02559-5ee6-4890-b3ff-3717ded90f26:deepseek_mermaid_20260512_d15281.png)
+
+## 🔍 Giải thích từng bước và hàm tương ứng
+
+| Bước | Hàm/Phương thức | Mô tả |
+| --- | --- | --- |
+| **Tìm dữ liệu** | `find_latest_data()` | Duyệt thư mục GCS Gold Retrain, lấy thư mục mới nhất (hoặc fallback offline). |
+| **Khởi tạo H2O** | `h2o.init()` | Bắt đầu H2O cluster với RAM `H2O_MAX_MEM` và số luồng `H2O_NTHREADS`. |
+| **Cấu hình MLflow** | `mlflow.set_tracking_uri()`, `mlflow.set_experiment()` | Kết nối đến MLflow server để log thí nghiệm. |
+| **Tải dữ liệu** | `h2o.import_file()` | Nhập file CSV/Parquet vào H2O frame. |
+| **Xử lý nhãn** | `.asfactor()` | Chuyển cột `true_severity` thành categorical. |
+| **Cân bằng lớp** | `build_class_sampling_factors()` | Tính hệ số `class_sampling_factors` nếu được bật, giúp cải thiện mô hình với dữ liệu mất cân bằng. |
+| **Train/test split** | `.split_frame(ratios=[0.8])` | Chia dữ liệu thành 80% train, 20% test. |
+| **Chọn đặc trưng** | Loại thủ công | Lấy tất cả cột trừ `EXCLUDED_COLUMNS` (event_id, event_year, event_time...). |
+| **Bắt đầu MLflow run** | `mlflow.start_run()` | Tạo một run cha để log toàn bộ thí nghiệm. |
+| **Huấn luyện AutoML** | `H2OAutoML.train()` | Chạy H2O AutoML với `max_runtime_secs`, `balance_classes`, `class_sampling_factors`. |
+| **Leaderboard** | `aml.leaderboard` | Lấy danh sách 10 model tốt nhất. |
+| **Đánh giá từng model** | `h2o.get_model()` + `model.model_performance(test)` | Lấy model và đánh giá trên tập test. |
+| **Chỉ số sklearn** | `evaluate_classifier_with_sklearn()` | Tính accuracy, macro/weighted F1, precision, recall, confusion matrix. |
+| **Log metric** | `log_metric_if_exists()`, `log_classifier_metrics()` | Ghi logloss, F1, precision, recall, confusion matrix lên MLflow. |
+| **Lưu model** | `mlflow.h2o.log_model()` | Lưu model artifact vào MLflow. |
+| **Chọn model tốt nhất** | So sánh `macro_f1` | Lấy model có macro F1 cao nhất (nếu bằng thì ưu tiên logloss thấp). |
+| **Đăng ký model** | `mlflow.register_model()` | Đăng ký model vào MLflow Registry với kiểu `models:/traffic-risk-model/latest`. |
+| **Dọn dẹp** | `h2o.shutdown()` | Dừng H2O cluster. |
+
+# Airflow orchestration
+
+## Retraining model H20 with realtime data
+
+Airflow chạy trên Node1 và chạy mỗi giờ.
+
+Task 1:
+Airflow SSH sang Node3.
+Node3 chạy Spark job.
+Spark đọc dữ liệu feature từ GCS Silver.
+Spark clean, validate, deduplicate.
+Spark ghi dataset sạch sang GCS Gold dạng Parquet và CSV.
+
+Nếu Task 1 lỗi:
+Airflow restart cả Node2 và Node3.
+Sau đó task fail để Airflow retry sau 5 phút.
+
+Task 2:
+Airflow SSH sang Node3 lần nữa.
+Node3 chạy script H2O retraining.
+Script đọc Gold retrain dataset.
+H2O AutoML train model mới.
+Metrics và model được log về MLflow trên Node1.
+Model mới được register thành version mới.
+
+Task 3:
+Nếu Spark và H2O đều thành công, Airflow in timestamp báo hoàn tất.
+
+![deepseek_mermaid_20260512_037898.png](attachment:6d67bb28-ab4b-4e64-a07c-cb450346d203:deepseek_mermaid_20260512_037898.png)
+
+| Bước | Task | Hành động | Chạy ở đâu | Ý nghĩa |
+| --- | --- | --- | --- | --- |
+| 1 | DAG | `schedule_interval="@hourly"` | Node1 Airflow | Cứ mỗi giờ chạy pipeline retrain một lần. |
+| 2 | DAG config | `retries=5`, `retry_delay=5 minutes` | Node1 Airflow | Nếu task lỗi, Airflow thử lại tối đa 5 lần, mỗi lần cách nhau 5 phút. |
+| 3 | `spark_silver_to_gold` | SSH sang `node3-batch` | Node1 gọi Node3 | Airflow điều phối, còn Spark chạy trên Node3. |
+| 4 | `spark_silver_to_gold` | `docker compose up -d` | Node3 | Bật các service batch/Spark trên Node3. |
+| 5 | `spark_silver_to_gold` | `spark-submit processing/spark_batch.py` | Node3 Spark container | Spark đọc Silver, làm sạch dữ liệu, ghi Gold. |
+| 6 | Error recovery | `node23-lifecycle.sh restart` | Node1 script GCP | Nếu batch flow lỗi, restart đồng bộ Node2 và Node3. |
+| 7 | `h2o_retrain` | SSH sang `node3-batch` | Node1 gọi Node3 | Sau khi Gold data sẵn sàng, Airflow gọi Node3 train model. |
+| 8 | `h2o_retrain` | `export MLFLOW_TRACKING_URI=http://10.128.0.4:5000` | Node3 | Node3 train model nhưng log kết quả về MLflow trên Node1. |
+| 9 | `h2o_retrain` | `python ml/training/h2o_after_2020.py` | Node3 | Chạy H2O AutoML retraining. |
+| 10 | MLflow | Register model version mới | Node1 MLflow | Model mới được lưu và đăng ký trong MLflow Registry. |
+| 11 | `notify_success` | In timestamp thành công | Node1 Airflow | Báo pipeline retraining hoàn tất. |
+
+## Monitoring
+
+1. Airflow chạy DAG streaming_health_check mỗi giờ.
+2. DAG chạy 4 check song song:
+    - check Kafka trên Node2
+    - check Flink JobManager trên Node2
+    - check Flink job đang chạy trên Node2
+    - check Spark trên Node3
+3. Nếu tất cả đều OK:
+    - không restart gì cả
+    - chạy health_summary
+    - kết thúc DAG
+4. Nếu một trong các check bị fail:
+    - recover_realtime_pair được kích hoạt
+    - Airflow restart cả Node2 và Node3 cùng nhau
+    - sau đó chạy health_summary
+5. Lý do restart Node2 và Node3 cùng nhau:
+    - Node2 là realtime streaming branch
+    - Node3 là batch retraining branch
+    - restart cùng nhau giúp Kafka offset, Flink checkpoint, Silver data và Gold retraining input không bị lệch timeline
+
+![mermaid-diagram (7).png](attachment:051075a4-8fd9-4589-8e7f-996ff718627d:mermaid-diagram_(7).png)
+
+| Task | Node được check | Lệnh chính | Kiểm tra cái gì | Nếu lỗi thì sao |
+| --- | --- | --- | --- | --- |
+| `check_kafka` | Node2 | `kafka-broker-api-versions --bootstrap-server localhost:9092` | Kafka broker còn sống không | Task fail |
+| `check_flink` | Node2 | `curl -sf http://localhost:8081/overview` | Flink JobManager còn chạy không | Task fail |
+| `check_flink_job` | Node2 | `curl http://localhost:8081/jobs` | Có Flink job nào đang `RUNNING` không | Task fail |
+| `check_batch_node` | Node3 | `curl -sf http://localhost:8080` | Spark UI / Spark master còn chạy không | Task fail |
+| `recover_realtime_pair` | Node1 điều khiển Node2 + Node3 | `node23-lifecycle.sh restart` | Recovery khi có task fail | Restart Node2 và Node3 cùng nhau |
+| `health_summary` | Node1 | `echo ... date` | In báo cáo cuối | Luôn chạy |
+
+# Backend
+
+Chưa có frontend
+
+## API
+
+# 1. Overview
+
+Backend API được build bằng **FastAPI**.
+
+### Entrypoint
+
+```
+dashboard/backend/app/app.py
+```
+
+### Base URL
+
+| Environment | URL |
+| --- | --- |
+| Local | `http://localhost:8000` |
+| Cloud | Tuỳ deployment |
+
+### API Prefix
+
+```
+/api/v1/...
+```
+
+### System Endpoints
+
+| Method | Endpoint | Mô tả |
+| --- | --- | --- |
+| `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
+
+---
+
+# 2. Common Rules
+
+## Datetime Format
+
+Tất cả datetime trả về theo chuẩn ISO 8601.
+
+Ví dụ:
+
+```
+2024-01-01T08:30:00
+```
+
+Các query như:
+
+- `start_time`
+- `end_time`
+
+được truyền trực tiếp xuống SQL, nên frontend nên gửi datetime rõ ràng.
+
+---
+
+## Risk Level Mapping
+
+Backend convert `risk_score` → `risk_level`:
+
+| Risk Score | Level |
+| --- | --- |
+| `>= 0.7` | `high` |
+| `0.4 -> <0.7` | `medium` |
+| `<0.4` | `low` |
+
+Hiện tại có 4 kiểu tính  :
+
+1. `Model trả thẳng risk_score/probability`
+Ở backend scenario, nếu MLflow serving trả về `risk_score` hoặc `probability` thì hệ thống dùng luôn giá trị đó. Nếu `probability` là list thì lấy `max(list)`. Nếu model chỉ trả `severity` mà không trả score, backend suy ra:
+`risk_score = clip((predicted_severity - 1) / 3, 0, 1)`
+2. `Streaming path có thêm cách suy từ class probabilities`
+Trong Flink, nếu prediction dict có `p1..p4`, nó tính:
+`expected_severity = sum(severity * probability) / sum(probability)`
+rồi:
+`risk_score = clip((expected_severity - 1) / 3, 0, 1)`
+3. `Heuristic fallback khi MLflow chết`
+Ở scenario API, nếu gọi MLflow fail thì backend dùng công thức cộng trọng số tay:
+    - base `0.18`
+    - `+0.20` nếu `is_rush_hour`
+    - `+0.12` nếu `is_night`
+    - `+0.10` nếu `is_junction`
+    - `+0.08` nếu `is_crossing`
+    - `+0.08` nếu `has_traffic_signal`
+    - `+0.10` nếu `weather_code in {1,2,3,4,6}`
+    - `+ ((10 - visibility_mi) / 10) * 0.18`, chặn dưới `0`
+    - `+ clipped(wind_speed_mph, 0..100) / 100 * 0.10`
+    sau đó clip về `[0,1]`.
+    Rồi map score sang severity:
+    - `>= 0.75 -> 4`
+    - `>= 0.50 -> 3`
+    - `>= 0.25 -> 2`
+    - còn lại `1`
+4. `Local smoke không dùng model thật`
+Script local seed DB bằng:
+`predicted_severity = true_severityrisk_score = clip((predicted_severity - 1) / 3, 0, 1)`
+Nghĩa là local demo data không phản ánh inference thật. 
+
+### Risk score: Giải thích
+
+## 1. Risk Score là gì và từ đâu ra?
+
+---
+
+**Risk Score là một con số từ 0 đến 1** thể hiện mức độ rủi ro của một vụ tai nạn:
+
+- **0.0** = Rủi ro rất thấp
+- **1.0** = Rủi ro rất cao
+
+Nó **không có sẵn trong CSV gốc**. CSV chỉ có `Severity` (1-4). Risk Score được **tạo ra bởi model H2O trong quá trình dự đoán**.
+
+---
+
+### 2. Model H2O hoạt động thế nào?
+
+H2O AutoML train model **phân loại severity (1-4)**. Khi predict, model không chỉ trả về `predicted_severity`, mà còn trả về **xác suất cho từng lớp**:
+
+```
+Input: 1 event với features (lat, lon, hour, weather...)
+
+Model H2O → Output:
+{
+  "predict": 3,           ← predicted_severity (lớp có xác suất cao nhất)
+  "p1": 0.05,             ← xác suất severity=1 (5%)
+  "p2": 0.15,             ← xác suất severity=2 (15%)
+  "p3": 0.60,             ← xác suất severity=3 (60%) ← CAO NHẤT
+  "p4": 0.20              ← xác suất severity=4 (20%)
+}
+```
+
+**Risk Score được tính từ các xác suất này.**
+
+---
+
+### 3. Ba cách tính Risk Score trong hệ thống
+
+Dự án có **3 nơi tính risk score**, mỗi nơi một cách khác nhau:
+
+### Cách A – Model trả thẳng `risk_score/probability` (Scenario API)
+
+Backend gọi MLflow serving. Nếu response có sẵn `risk_score` hoặc `probability`:
+
+```python
+# Trong mlflow_service.py - predict_scenario()
+result = resp.json()
+preds = result.get("predictions", [])
+first = preds[0]
+
+if isinstance(first, dict):
+    severity = first.get("predict") or first.get("prediction")
+    risk = first.get("risk_score") or first.get("probability")
+else:
+    severity = first
+    risk = None
+
+# Nếu model chỉ trả severity, không trả score:
+if risk is None or risk < 0:
+    risk_score = (severity - 1) / 3  # Công thức suy ra
+```
+
+| Severity dự đoán | Risk Score tính ra |
+| --- | --- |
+| 1 | (1-1)/3 = **0.00** |
+| 2 | (2-1)/3 = **0.33** |
+| 3 | (3-1)/3 = **0.67** |
+| 4 | (4-1)/3 = **1.00** |
+
+### Cách B – Tính từ class probabilities (Flink Streaming)
+
+Flink gọi MLflow, nếu response có `p1, p2, p3, p4` (xác suất từng lớp):
+
+```python
+# Trong flink_streaming.py - process_raw_message()
+
+# Ví dụ: model trả về {"p1": 0.05, "p2": 0.15, "p3": 0.60, "p4": 0.20}
+
+expected_severity = (1*0.05 + 2*0.15 + 3*0.60 + 4*0.20) / (0.05+0.15+0.60+0.20)
+                 = (0.05 + 0.30 + 1.80 + 0.80) / 1.0
+                 = 2.95
+
+risk_score = (2.95 - 1) / 3 = 0.65  # ← Risk Score
+```
+
+| Xác suất các lớp | Expected Severity | Risk Score |
+| --- | --- | --- |
+| p1=0.8, p2=0.1, p3=0.1, p4=0 | 1.30 | 0.10 (Thấp) |
+| p1=0.1, p2=0.1, p3=0.7, p4=0.1 | 2.80 | 0.60 (Trung bình) |
+| p1=0.0, p2=0.1, p3=0.2, p4=0.7 | 3.60 | 0.87 (Cao) |
+
+### Cách C – Heuristic Fallback (khi MLflow chết)
+
+Nếu gọi MLflow thất bại, backend dùng công thức tính tay:
+
+```python
+# Trong mlflow_service.py - heuristic_prediction()
+
+base_score = 0.18
+
+# Cộng điểm theo điều kiện
+if is_rush_hour:     base_score += 0.20
+if is_night:         base_score += 0.12
+if is_junction:      base_score += 0.10
+if is_crossing:      base_score += 0.08
+if has_traffic_signal: base_score += 0.08
+if weather_code in {1,2,3,4,6}: base_score += 0.10
+base_score += ((10 - visibility_mi) / 10) * 0.18  # Tầm nhìn kém → nguy hiểm
+base_score += (wind_speed_mph / 100) * 0.10       # Gió mạnh → nguy hiểm
+
+risk_score = clip(base_score, 0, 1)
+
+# Map sang severity
+if risk_score >= 0.75: severity = 4
+elif risk_score >= 0.50: severity = 3
+elif risk_score >= 0.25: severity = 2
+else: severity = 1
+```
+
+---
+
+### 
+
+Những thứ khác:
+
+1. `risk_level`:
+    - `high` nếu `risk_score >= 0.7`
+    - `medium` nếu `risk_score >= 0.4`
+    - `low` nếu nhỏ hơn `0.`
+2. `high_risk_events` ở overview:
+    - đếm số row có `risk_score >= 0.7`
+3. `severe_count` ở hotspot:
+    - đếm row có `true_severity >= 3` hoặc `predicted_severity >= 3`
+4. `scenario delta`:
+    - `risk_score_change = scenario_score - baseline_score`
+    - `risk_percent_change = risk_score_change / baseline_score * 100`
+    - `severity_change = scenario.predicted_severity - baseline.predicted_severity`
+
+![image.png](attachment:a7d1d748-7c3b-48fd-b3e0-7b7dca05b36e:image.png)
+
+## Common Errors
+
+| Code | Ý nghĩa |
+| --- | --- |
+| `400` | Sai query format |
+| `404` | Không tìm thấy dữ liệu |
+| `422` | Body không đúng schema |
+
+---
+
+## Khi Database Chưa Có Table
+
+Một số APIs sẽ trả dữ liệu rỗng thay vì HTTP 500.
+
+Ví dụ:
+
+- overview → giá trị `0`
+- list APIs → `[]`
+
+---
+
+# 3. Health & Metrics
+
+## `GET /health`
+
+Kiểm tra FastAPI process còn hoạt động hay không.
+
+### Response
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### Notes
+
+Endpoint này:
+
+- không đọc database
+- không gọi MLflow
+- chỉ xác nhận API đang chạy
+
+---
+
+## `GET /metrics`
+
+Expose metrics cho Prometheus.
+
+### Response Type
+
+```
+Prometheus text format
+```
+
+Ví dụ:
+
+```
+http_requests_total 120
+http_request_duration_seconds 0.23
+```
+
+---
+
+# 4. Overview APIs
+
+## `GET /api/v1/overview/summary`
+
+Lấy KPI tổng quan cho dashboard.
+
+### Response
+
+```json
+{
+  "total_events": 125000,
+  "high_risk_events": 18400,
+  "avg_risk_score": 0.4381,
+  "latest_event_time": "2024-01-01T08:30:00",
+  "latest_model_version": "latest"
+}
+```
+
+### Fields
+
+| Field | Ý nghĩa |
+| --- | --- |
+| `total_events` | Tổng số events |
+| `high_risk_events` | Số events risk cao |
+| `avg_risk_score` | Risk trung bình |
+| `latest_event_time` | Event mới nhất |
+| `latest_model_version` | Version model hiện tại |
+
+---
+
+# 5. Prediction APIs
+
+## `GET /api/v1/predictions/map`
+
+Lấy prediction points để render map.
+
+### Query Params (input)
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `bbox` | string | `null` | Bounding box |
+| `min_risk` | float | `0.0` | Filter risk (Chỉ lấy điểm có `risk_score >= min_risk` (0.0 - 1.0)) |
+| `start_time` | string | `null` | Filter start |
+| `end_time` | string | `null` | Filter end |
+| `limit` | int | `5000` | Max rows |
+
+### Validation
+
+| Param | Constraint |
+| --- | --- |
+| `min_risk` | `[0,1]` |
+| `limit` | `[1,20000]` |
+| `bbox` | phải có 4 giá trị |
+
+### Response
+
+```json
+{
+  "points": [
+    {
+      "event_id": "A-123",
+      "lat": 39.8,
+      "lon": -84.1,
+      "risk_score": 0.82,
+      "predicted_severity": 4,
+      "true_severity": 3,
+      "event_time": "2024-01-01T08:30:00",
+      "model_status": "ok",
+      "risk_level": "high"
+    }
+  ]
+}
+```
+
+### Notes
+
+- Query spatial hiện tại dùng `lat/lon`
+- Chưa dùng PostGIS (`geom`, `ST_DWithin`)
+
+---
+
+## `GET /api/v1/predictions/latest`
+
+Lấy predictions mới nhất cho recent table.
+
+### Query Params
+
+| Param | Type | Default |
+| --- | --- | --- |
+| `limit` | int | `100` |
+
+### Response
+
+```json
+{
+  "predictions": [
+    {
+      "event_id": "A-123",
+      "risk_score": 0.82,
+      "risk_level": "high"
+    }
+  ]
+}
+```
+
+---
+
+## `GET /api/v1/predictions/{event_id}`
+
+Lấy chi tiết một event.
+
+### Path Params
+
+| Param | Type |
+| --- | --- |
+| `event_id` | string |
+
+### Notes
+
+Backend sẽ:
+
+- remove `geom`
+- convert datetime → ISO string
+- add `risk_level`
+- normalize `model_status`
+
+Nếu không tìm thấy:
+
+```
+404 Not Found
+```
+
+---
+
+# 6. Hotspot APIs
+
+## `GET /api/v1/hotspots`
+
+Lấy các hotspot risk cao.
+
+### Query Params
+
+| Param | Type | Default |
+| --- | --- | --- |
+| `limit` | int | `20` |
+| `min_events` | int | `5` |
+| `start_time` | string | `null` |
+| `end_time` | string | `null` |
+
+### Response
+
+```json
+{
+  "hotspots": [
+    {
+      "rank": 1,
+      "center_lat": 39.865,
+      "center_lon": -84.059,
+      "avg_risk_score": 0.8123,
+      "accident_count": 42,
+      "severe_count": 18,
+      "peak_hour": 17
+    }
+  ]
+}
+```
+
+### Hotspot Logic
+
+Backend:
+
+1. làm tròn `lat/lon`
+2. group theo tọa độ
+3. tính:
+    - average risk
+    - accident count
+    - severe count
+    - peak hour
+
+---
+
+## `GET /api/v1/hotspots/nearby`
+
+Lấy events gần một vị trí.
+
+### Query Params
+
+| Param | Type | Default |
+| --- | --- | --- |
+| `lat` | float | required |
+| `lon` | float | required |
+| `radius_m` | float | `5000` |
+| `limit` | int | `100` |
+
+### Response
+
+```json
+{
+  "center": {
+    "lat": 39.865,
+    "lon": -84.059
+  },
+  "events": [
+    {
+      "event_id": "A-123",
+      "distance_m": 423.7
+    }
+  ]
+}
+```
+
+### Notes
+
+Đây là approximate query.
+
+Chưa dùng:
+
+```sql
+ST_DWithin
+```
+
+---
+
+# 7. Scenario APIs
+
+Scenario APIs dùng cho:
+
+```
+What-if simulation
+```
+
+Ví dụ:
+
+- đổi weather
+- đổi traffic condition
+- simulate rush hour
+
+Các APIs này gọi MLflow trực tiếp, không đọc prediction table.
+
+---
+
+## ScenarioInput
+
+### Validation Rules
+
+| Field | Constraint |
+| --- | --- |
+| `hour` | `0..23` |
+| `day_of_week` | `1..7` |
+
+Các field boolean phải là:
+
+```
+0 hoặc 1
+```
+
+---
+
+## `POST /api/v1/scenarios/predict`
+
+Predict risk cho một scenario.
+
+### Response
+
+```json
+{
+  "predicted_severity": 3,
+  "risk_score": 0.6732,
+  "risk_level": "medium",
+  "model_status": "ok"
+}
+```
+
+### model_status
+
+| Value | Ý nghĩa |
+| --- | --- |
+| `ok` | MLflow hoạt động |
+| `heuristic_fallback` | MLflow fail → dùng fallback |
+
+---
+
+## `POST /api/v1/scenarios/compare`
+
+So sánh baseline vs modified scenario.
+
+### Response
+
+```json
+{
+  "baseline": {},
+  "scenario": {},
+  "delta": {
+    "risk_score_change": 0.5,
+    "risk_percent_change": 161.29,
+    "severity_change": 2
+  }
+}
+```
+
+---
+
+# 8. Analytics APIs
+
+## `GET /api/v1/analytics/timeseries`
+
+Lấy time series cho charts.
+
+### Query Params
+
+| Param | Default |
+| --- | --- |
+| `group_by` | `day` |
+| `metric` | `avg_risk` |
+
+### Response
+
+```json
+{
+  "series": [
+    {
+      "time": "2024-01-01",
+      "avg_risk_score": 0.421,
+      "accident_count": 320
+    }
+  ]
+}
+```
+
+### Notes
+
+Hiện tại `metric` chưa thay đổi SQL query.
+
+Backend luôn trả:
+
+- `avg_risk_score`
+- `accident_count`
+
+---
+
+## `GET /api/v1/analytics/severity-distribution`
+
+Đếm số events theo severity.
+
+### Response
+
+```json
+{
+  "distribution": [
+    {
+      "severity": 1,
+      "count": 1200
+    }
+  ]
+}
+```
+
+---
+
+## `GET /api/v1/analytics/risk-by-hour`
+
+Average risk theo giờ.
+
+---
+
+## `GET /api/v1/analytics/risk-by-weather`
+
+Average risk theo weather condition.
+
+---
+
+# 9. System APIs
+
+## `GET /api/v1/system/status`
+
+Trả metadata/config hệ thống.
+
+### Response
+
+```json
+{
+  "environment": "local",
+  "kafka": {
+    "topic": "traffic.us.raw",
+    "status": "configured"
+  }
+}
+```
+
+### Notes
+
+Đây không phải deep health check.
+
+Ví dụ:
+
+```
+status: configured
+```
+
+là metadata hardcoded, không phải connectivity test thật.
+
+---
+
+## `GET /api/v1/model/info`
+
+Trả thông tin model và MLflow serving backend.
+
+### Response
+
+```json
+{
+  "model_name": "traffic-risk-model",
+  "model_version": "latest",
+  "tracking_uri": "http://localhost:5000",
+  "serving_endpoint": "http://localhost:5001/invocations"
+}
+```
+
+---
+
+# 10. Alias APIs
+
+Các endpoint alias để backward compatibility.
+
+| Alias | Actual Endpoint |
+| --- | --- |
+| `/api/v1/risk/hotspots` | `/api/v1/hotspots` |
+| `/api/v1/accidents` | `/api/v1/predictions/map` |
+| `/api/v1/whatif/simulate` | `/api/v1/scenarios/compare` |
+
+Frontend mới nên dùng endpoint chính thay vì alias.
+
+---
+
+## Database PostgreSQL
+
+### Tổng quan
+
+Cơ sở dữ liệu sử dụng PostgreSQL kết hợp với extension PostGIS để lưu trữ kết quả dự đoán từ luồng Flink streaming. Bảng chính là `traffic_risk_predictions` (có thể tùy chỉnh tên bảng thông qua biến môi trường `POSTGRES_PREDICTION_TABLE`). Dữ liệu được lưu trên Node 1 (Control Plane) với IP nội bộ `10.128.0.4`.
+
+### Kết nối
+
+Backend (FastAPI) và Flink job đều kết nối đến PostgreSQL thông qua thư viện `psycopg2`. Các tham số kết nối được đọc từ biến môi trường (file `.env.cloud`):
+
+| Biến môi trường | Giá trị mặc định | Mô tả |
+| --- | --- | --- |
+| `POSTGRES_HOST` | `10.128.0.4` | Địa chỉ IP của máy chủ PostgreSQL (Node 1) |
+| `POSTGRES_PORT` | `5432` | Cổng kết nối PostgreSQL |
+| `POSTGRES_DB` | `capstone_db` | Tên cơ sở dữ liệu |
+| `POSTGRES_USER` | `capstone` | Tên người dùng |
+| `POSTGRES_PASSWORD` | `123` | Mật khẩu |
+
+### Schema bảng `traffic_risk_predictions`
+
+Bảng được tạo tự động bởi Flink job (sử dụng câu lệnh `CREATE TABLE IF NOT EXISTS`) nếu chưa tồn tại. Cấu trúc bảng như sau:
+
+| Cột | Kiểu dữ liệu | Ràng buộc | Mô tả |
+| --- | --- | --- | --- |
+| `event_id` | `VARCHAR` | `PRIMARY KEY` | Mã định danh duy nhất của sự kiện tai nạn (từ CSV gốc) |
+| `event_year` | `INT` |  | Năm xảy ra sự kiện (trích xuất từ `event_time`) |
+| `event_time` | `TIMESTAMP` |  | Thời gian xảy ra sự kiện (ISO 8601) |
+| `lat` | `DOUBLE PRECISION` |  | Vĩ độ điểm tai nạn |
+| `lon` | `DOUBLE PRECISION` |  | Kinh độ điểm tai nạn |
+| `true_severity` | `INT` |  | Mức độ nghiêm trọng thực tế (1-4) từ dữ liệu gốc |
+| `predicted_severity` | `INT` |  | Mức độ nghiêm trọng dự đoán từ mô hình ML |
+| `risk_score` | `DOUBLE PRECISION` |  | Điểm rủi ro (0-1) từ MLflow model serving |
+| `weather_code` | `INT` |  | Mã thời tiết sau khi encode (0-6) |
+| `road_type_code` | `INT` |  | Mã loại đường sau khi encode (0-7) |
+| `hour` | `INT` |  | Giờ trong ngày (0-23) |
+| `is_weekend` | `INT` |  | Cờ cuối tuần (0: không, 1: có) |
+| `is_rush_hour` | `INT` |  | Cờ giờ cao điểm (0: không, 1: 7-9h hoặc 16-18h) |
+| `model_status` | `VARCHAR(20)` |  | Trạng thái dự đoán: `ok` (thành công), `failed` (lỗi) |
+| `inference_latency_ms` | `DOUBLE PRECISION` |  | Thời gian suy diễn (từ lúc nhận message đến lúc INSERT xong) |
+| `geom` | `GEOMETRY(Point, 4326)` |  | Tọa độ không gian địa lý (PostGIS Point, SRID 4326 - WGS 84) |
+| `created_at` | `TIMESTAMP` | `DEFAULT NOW()` | Thời gian bản ghi được tạo trong database |
+
+### Luồng ghi và đọc dữ liệu
+
+**Ghi dữ liệu (Write Path):**
+
+- Flink job (`flink_streaming.py`) xử lý từng message từ Kafka topic `traffic.us.raw`.
+- Sau khi feature engineering và gọi MLflow model serving, kết quả được INSERT trực tiếp vào bảng `traffic_risk_predictions`.
+- Mỗi message tạo một bản ghi. Trường `event_id` đóng vai trò khóa chính, đảm bảo không trùng lặp.
+
+**Đọc dữ liệu (Read Path):**
+
+- Backend FastAPI đọc từ bảng này để phục vụ các API:
+    - **KPI Overview:** Đếm tổng sự kiện, sự kiện rủi ro cao, risk score trung bình, thời gian sự kiện mới nhất.
+    - **Map Points:** Lấy danh sách điểm có `lat`, `lon`, `risk_score`, `risk_level` cho bản đồ.
+    - **Latest Predictions:** Lấy N bản ghi mới nhất.
+    - **Hotspots:** Gom nhóm theo vị trí, đếm số vụ và risk trung bình.
+    - **Analytics:** Phân phối severity, risk theo giờ, theo thời tiết, timeseries.
+
+### Ghi chú về PostGIS
+
+- Cột `geom` được tạo bằng biểu thức `ST_SetSRID(ST_MakePoint(lon, lat), 4326)` trong câu lệnh INSERT.
+- SRID 4326 tương ứng với hệ tọa độ WGS 84 (GPS), phù hợp với dữ liệu đầu vào từ US Accidents dataset.
+- Hiện tại, backend chủ yếu truy vấn theo cột `lat` và `lon` riêng biệt để đơn giản hóa logic.
+- Có thể mở rộng trong tương lai để sử dụng các hàm không gian PostGIS như `ST_DWithin`, `ST_Distance`, hoặc tạo spatial index trên cột `geom` nhằm tối ưu truy vấn không gian (tìm sự kiện gần một điểm, trong bán kính, v.v.).
+
+# So sánh 3 project năm ngoái
+
+(trong folder vendor/, không được push lên github)
+
+Dưới đây là báo cáo chi tiết về ba dự án baseline và phân tích so sánh với project Traffic Risk Assessment của nhóm, tập trung vào kiến trúc, dữ liệu, monitoring, dashboard, và các bài học rút ra. 
+
+---
+
+Baseline chính là các project khóa trước;
+- Baseline 1: ‣
+
+- Baseline 2: ‣
+
+- Baseline 3: ‣
+
+## 1. Tổng quan các baseline
+
+### 1.1 Baseline 1 – Fraud Detection Big Data Pipeline
+
+**Phạm vi:** Pipeline phát hiện gian lận tài chính, kết hợp ingestion realtime, xử lý stream (Kafka, Flink), lưu trữ BigQuery, batch Spark, và dashboard Grafana.
+
+**Kiến trúc chính:**
+
+| Lớp | Thành phần | Vai trò |
+| --- | --- | --- |
+| Ingestion | Kafka producer | Gửi các bản ghi giao dịch vào Kafka để xử lý realtime. |
+| Streaming | Kafka, Flink, Kafka Connect | Xử lý sự kiện, tính toán dự đoán gian lận, ghi kết quả. |
+| Storage | BigQuery | Lưu giao dịch thô, dự đoán, trường latency, dữ liệu tổng hợp cho dashboard. |
+| Analytics | Spark, Grafana | Chạy batch analytics và hiển thị dashboard giám sát. |
+
+**Luồng dữ liệu:**
+
+1. `transactions_input.csv  (2019–2020)` cung cấp dữ liệu đầu vào.
+2. Kafka producers gửi từng giao dịch.
+3. Flink xử lý và tính toán tín hiệu gian lận.
+4. Kafka Connect (hoặc sink logic) ghi dự đoán vào BigQuery.
+5. Grafana sử dụng BigQuery views để hiển thị các chỉ số kinh doanh và vận hành.
+
+**Monitoring pattern:** Dashboard Grafana có các panel SQL cho:
+
+- Fraud distribution
+- Fraud ratio
+- Geographic distribution
+- Latency
+- Throughput
+
+Đây là điểm mạnh nhất của baseline 1: observability được coi là thành phần cốt lõi, với latency và throughput là trường dữ liệu “first-class”.
+
+**So sánh với Traffic Project:**
+
+| Tiêu chí | Baseline 1 | Traffic Risk Project |
+| --- | --- | --- |
+| Miền ứng dụng | Phát hiện gian lận tài chính | Đánh giá mức độ nghiêm trọng và rủi ro tai nạn giao thông |
+| Streaming | Kafka + Flink | Kafka + Flink (PyFlink) |
+| Batch | Spark | Spark (Silver → Gold) |
+| Lưu trữ | BigQuery | PostgreSQL/PostGIS + GCS Gold layer |
+| Quản lý model | Mô hình được lưu sẵn dưới dạng file pickle | H2O AutoML + MLflow Registry |
+| Dashboard | Grafana trên BigQuery SQL | FastAPI backend API + Prometheus/Grafana (monitoring) |
+| Latency metric | Cột latency rõ ràng trong SQL | Có `ingestion_time`, `processed_time`, `end_to_end_latency_ms` |
+| Throughput metric | Panel throughput dạng SQL | Có thể lấy từ local performance JSON và Prometheus API |
+
+**Bài học áp dụng:**
+
+- Monitoring phải được thiết kế như một phần của pipeline, không phải bước trực quan hóa cuối cùng.
+- Latency và throughput cần được lưu trữ như các trường dữ liệu chính.
+- Truy vấn dashboard nên dùng các bảng phục vụ sẵn (serving-ready) thay vì quét dữ liệu thô.
+- Grafana hữu ích cho operational health, trong khi backend sản phẩm phù hợp hơn cho các API tương tác bản đồ và kịch bản.
+
+---
+
+### 1.2 Baseline 2 – Smart Home Energy Optimization
+
+**Phạm vi:** Hệ thống tối ưu năng lượng nhà thông minh. Sinh dữ liệu IoT giả lập, huấn luyện mô hình ML để gợi ý tiết kiệm năng lượng, streaming qua Kafka, hiển thị gợi ý qua Flask web UI.
+
+**Kiến trúc:**
+
+| Lớp | Thành phần | Vai trò |
+| --- | --- | --- |
+| Data generation | `logic_gen_data.py` | Tạo dữ liệu hành vi hộ gia đình giả lập. |
+| Model training | LightGBM, XGBoost, CatBoost, RF, Decision Tree | So sánh các mô hình dự đoán năng lượng và gợi ý. |
+| Streaming | Kafka producer/consumer | Gửi dữ liệu realtime và nhận gợi ý. |
+| Application | Flask, HTML, JS, Chart.js, SSE | Hiển thị gợi ý và phân tích năng lượng. |
+
+**Workflow:**
+
+1. Tạo hoặc tải dữ liệu năng lượng hộ gia đình theo năm.
+2. Huấn luyện mô hình ban đầu trên dữ liệu lịch sử.
+3. Mô phỏng dữ liệu realtime.
+4. Gửi bản ghi realtime vào Kafka.
+5. Consumer/model service đưa ra gợi ý tiết kiệm năng lượng.
+6. Flask UI hiển thị biểu đồ và gợi ý.
+
+**So sánh với Traffic Project:**
+
+| Tiêu chí | Baseline 2 | Traffic Risk Project |
+| --- | --- | --- |
+| Miền ứng dụng | Gợi ý năng lượng nhà thông minh | Dự đoán mức độ nghiêm trọng/rủi ro tai nạn giao thông |
+| Dữ liệu | Dữ liệu hộ gia đình tổng hợp (synthetic) | US Accidents dataset (quốc gia) |
+| Thiết kế Kafka | 1 broker, nhiều topic | 3 broker, 1 topic, 3 producer song song |
+| Stack model | LightGBM, XGBoost, CatBoost, tree models | H2O AutoML với MLflow Registry |
+| Serving | Flask UI và script gợi ý | FastAPI backend cho dashboard/product APIs |
+| Mô phỏng realtime | Đọc dữ liệu hộ gia đình mỗi 15 phút | Replay tai nạn sau năm 2020 |
+| Phân chia huấn luyện | Cửa sổ dữ liệu theo năm | Trước 2020 (tiền huấn luyện), sau 2020 (replay/retrain) |
+| Monitoring | Trạng thái ở mức UI và test | Prometheus, Grafana, system status API |
+
+**Bài học áp dụng:**
+
+- Mô phỏng realtime phải có tính tất định và kiểm thử được.
+- Một đường dẫn test rõ ràng rất có giá trị cho mô phỏng kịch bản.
+- So sánh mô hình nên được thực hiện tường minh, không ẩn trong code huấn luyện.
+- UI/backend endpoint nên phơi bày cả đầu ra dự đoán và các trường giải thích được.
+
+**Khác biệt chính:** Baseline 2 thiên về ứng dụng, đơn giản hơn về hạ tầng. Project Traffic thiên về hạ tầng Big Data: chứng minh di chuyển dữ liệu đa node, nhất quán stream/batch, sử dụng model registry, monitoring nghiêm ngặt.
+
+---
+
+### 1.3 Baseline 3 – Kubeflow and MLflow MLOps Platform
+
+**Phạm vi:** Nền tảng MLOps trên Kubernetes, tích hợp Kubeflow Pipelines, MLflow, KServe, MinIO, MySQL, Istio, Spark, Kafka. Dùng cho nhiều use case như bank churn và stock price.
+
+**Kiến trúc:**
+
+| Lớp | Thành phần | Vai trò |
+| --- | --- | --- |
+| Orchestration | Kubeflow Pipelines | Chạy các pipeline ML có khả năng tái lập. |
+| Experiment tracking | MLflow | Theo dõi thí nghiệm, artifact, model registry. |
+| Model serving | KServe | Serving model trên Kubernetes. |
+| Artifact storage | MinIO | Lưu artifact và output pipeline. |
+| Metadata storage | MySQL | Lưu metadata cho MLflow và nền tảng. |
+| Network/security | Istio, AuthorizationPolicy | Kiểm soát truy cập giữa các service. |
+| Batch/stream examples | Spark, Kafka | Minh họa xử lý dữ liệu và tiêu thụ model. |
+
+**So sánh với Traffic Project:**
+
+| Tiêu chí | Baseline 3 | Traffic Risk Project |
+| --- | --- | --- |
+| Nền tảng runtime | Kubernetes + Kubeflow | GCP Compute Engine VMs + Docker Compose |
+| Model registry | MLflow | MLflow |
+| Model serving | KServe / Kubernetes-native | MLflow serving trên Node 1 |
+| Lưu trữ | MinIO + MySQL | GCS + PostgreSQL/PostGIS + local simulation folders |
+| Batch processing | Spark examples | Spark Silver-to-Gold cho retrain features |
+| Streaming | Kafka examples | Kafka + Flink cho replay/inference |
+| Monitoring | Kubernetes platform observability | Prometheus/Grafana + FastAPI system endpoints |
+| Độ phức tạp vận hành | Cao | Trung bình, phù hợp triển khai capstone VM |
+
+**Bài học áp dụng:**
+
+- MLflow cần backend store và artifact root ổn định.
+- Model registry và serving phải tách biệt với code huấn luyện.
+- Tài liệu hạ tầng cần ghi rõ credentials, ports, và service dependencies.
+- Bảo mật và ranh giới dịch vụ quan trọng khi chuyển từ local lên cloud.
+
+**Khác biệt chính:** Baseline 3 mạnh về nền tảng MLOps tổng quát, nhưng quá nặng cho yêu cầu khóa học. Traffic Project chọn Docker Compose trên 3 VM GCP để dễ demo, dễ debug, và phù hợp với yêu cầu hạ tầng Big Data của capstone.
+
+---
+
+## 2. Phân tích dữ liệu huấn luyện và realtime trong từng baseline
+
+| Baseline | Train dataset trong repo | Realtime dataset/source | Loại nguồn | Có giả lập? | Train và realtime cùng loại? |
+| --- | --- | --- | --- | --- | --- |
+| Baseline 1 | 0 dataset train (chỉ có model artifact) | 1 file CSV static replay | Static file | Có (replay) | Không xác minh được do không có train data |
+| Baseline 2 | 1 (data_2022.csv) cho train ban đầu; retrain dùng 2 năm gần nhất | 1 luồng synthetic (10 homes, 15 phút) + 1 luồng test riêng | Local/generated + Kafka | Có, rất rõ | Có, cùng schema smart-home |
+| Baseline 3 | Bank churn: 1 CSV ngoài repo (MinIO); Stock: 2 JSON local | Bank churn: chỉ inference API; Stock: 1 live API (Alpaca) | Vừa static, vừa live API | Một phần (stock là live thật) | Không hoàn toàn (2 use case khác nhau) |
+
+### Chi tiết thêm:
+
+**Baseline 1:**
+
+- Producer đọc đúng 1 file `transactions_input.csv` (7 rows) và đẩy vào Kafka. Flink không train model; nó load model đã train sẵn từ `model.pkl`. Dữ liệu train không có trong repo.
+
+**Baseline 2:**
+
+- Generator tạo 10 home_id và 5 loại thiết bị. Realtime simulator chạy từ 2023-01-01, bước 15 phút. Consumer ghi record realtime ngược lại vào `data_<year>.csv` và retrain khi sang ngày mới.
+- Dữ liệu hiện có: `data_2022.csv` (21422 rows, 10 homes), `data_2024.csv` (793 rows, 10 homes).
+- Train/realtime/test cùng kiểu dữ liệu, có giả lập rõ ràng nhất trong ba baseline.
+
+**Baseline 3:**
+
+- Bank churn: pipeline đọc `churn.csv` từ MinIO, split 80/20, train offline. “Realtime” là inference API.
+- Stock price: realtime dùng live API Alpaca lấy BTC/USD, đẩy vào Kafka topic `bitcoin-price`. Batch dùng hai file JSON local (tổng cộng 3672 bars).
+
+---
+
+## 3. Đánh giá dashboard của Traffic Project so với baselines (góc nhìn “nội dung có thể trình bày từ backend/API”)
+
+Nếu bỏ qua việc chưa có frontend thật và chỉ xét **chiều sâu nội dung dashboard có thể xây dựng từ API hiện có**:
+
+**So với Baseline 2 (Smart Home):**
+
+Project Traffic vượt trội về chiều sâu nội dung dashboard. Baseline 2 chỉ có:
+
+- Form nhập record thủ công.
+- 2 luồng SSE cho realtime/test.
+- 1 biểu đồ cột chi phí điện theo ngày/tuần/tháng.
+- 2 danh sách suggestion text.
+
+Trong khi đó, từ backend API của Traffic Project có thể dựng được:
+
+- KPI overview (tổng sự kiện, high‑risk events, avg risk, latest event time)
+- Live risk map (điểm có lat/lon, risk_score, risk_level)
+- Latest predictions feed
+- Hotspot ranking
+- Nearby risky events
+- Scenario simulation / compare
+- Severity distribution
+- Risk by hour / Risk by weather
+- Timeseries
+- System status / Model info
+
+→ Với frontend đúng cách, dashboard có thể gồm: map, table, KPI cards, bar chart, line chart, trend chart, what‑if panel, operational status panel. **Ở mức nội dung có thể present, project đã vượt Baseline 2.**
+
+**So với Baseline 1 (Fraud Detection):**
+
+Baseline 1 mạnh ở dashboard vận hành (operational) với các panel:
+
+- Fraud distribution
+- Fraud ratio
+- Geographic distribution
+- Latency
+- Throughput
+
+Traffic Project hiện mạnh về business/risk analytics và geospatial, nhưng còn thiếu vài mảng quan trọng để thắng rõ Baseline 1:
+
+- Chưa có API dashboard‑ready cho throughput.
+- Chưa có API dashboard‑ready cho end‑to‑end latency.
+- Chưa có replay lag / ingestion lag / checkpoint freshness.
+- Chưa có dữ liệu panel‑ready cho retrain history.
+- Chưa có model performance trend / version‑over‑version comparison.
+- Chưa có pipeline SLA / DAG run health API cho frontend.
+
+**Kết luận:**
+
+- Business/risk dashboard content: Traffic Project **tốt hơn** Baseline 1.
+- Operational/monitoring dashboard content: Baseline 1 **vẫn nhỉnh hơn**.
+
+**So với Baseline 3 (Kubeflow/MLOps):**
+
+Baseline 3 không mạnh về “dashboard end‑user” mà mạnh về MLOps platform. Nếu xét riêng dashboard presentability thì không phải đối thủ trực tiếp. Tuy nhiên, ấn tượng kỹ thuật tổng thể vẫn nặng ký vì có Kubeflow/KServe/Istio. Để không thua, frontend của Traffic Project cần đem lại chất “control tower”.
+
+---
+
+## 4. Đề xuất cải thiện backend để vượt baseline
+
+(sẽ được nói chi tiết ở phần “Những gì cần làm tiếp theo?”)
+
+### 4.1 Thêm các endpoint “dashboard‑first”
+
+**Nhóm pipeline & vận hành:**
+
+- `GET /api/v1/pipeline/latency?window=1h` → p50/p95/p99 inference latency, end‑to‑end latency.
+- `GET /api/v1/pipeline/throughput` → events/min, predictions/min, replay velocity.
+- `GET /api/v1/pipeline/checkpoints` → last Flink checkpoint time, checkpoint age, Spark refresh age.
+- `GET /api/v1/pipeline/replay‑health` → latest Kafka event time, latest predicted event time, lag.
+- `GET /api/v1/pipeline/dag‑health` → trạng thái các DAG Airflow gần nhất, SLA.
+
+**Nhóm model lifecycle:**
+
+- `GET /api/v1/model/versions` → danh sách version, active version, deployed time, training source.
+- `GET /api/v1/model/retrain‑history` → retrain time, input rows, duration, registered version.
+- `GET /api/v1/model/performance‑trend` → các metric (macro F1, logloss) qua từng version.
+
+**Nhóm analytics mở rộng:**
+
+- `GET /api/v1/analytics/risk‑by‑day‑of‑week`
+- `GET /api/v1/analytics/risk‑by‑city` (nếu dữ liệu cho phép)
+- `GET /api/v1/analytics/severity‑vs‑prediction` → dữ liệu để dựng confusion‑like panel.
+- `GET /api/v1/hotspots/trend` → hotspot persistence theo thời gian.
+
+**Nhóm KPIs chi tiết:**
+
+Bổ sung `severe_ratio`, `model_fallback_ratio`, `latest_successful_retrain`, `latest_checkpoint_age` vào API KPI overview.
+
+### 4.2 Đề xuất bố cục UI/UX lý tưởng (dạng wireframe mô tả)
+
+Trang chính nên là **dashboard vận hành + risk intelligence**. Bố cục gợi ý:
+
+- **Hàng 1:** 6 KPI cards – Total Events, High Risk Events, Avg Risk, Current Throughput, P95 Latency, Active Model Version.
+- **Cột trái (lớn):** Live risk map (điểm sự kiện có màu theo risk_level, hỗ trợ cluster khi zoom xa).
+- **Cột phải:** Top hotspots table + System health status.
+- **Hàng 2:** Risk by Hour (line/bar chart) + Severity Distribution (donut/stacked bar).
+- **Hàng 3:** Scenario Compare panel (so sánh thông số trước/sau khi thay đổi điều kiện) + Latest Predictions realtime feed (table tự động cập nhật).
+- **Hàng 4:** Retraining History timeline + Checkpoint / Replay Health metrics (dạng sparkline hoặc bar chỉ thị).
+- **Hàng 5 (tùy chọn):** Risk by Weather (bar chart), Pipeline Incident Timeline.
+
+**Loại biểu đồ nên dùng:**
+
+Map có điểm cluster, hotspot heatmap, line chart cho throughput/latency, stacked bar cho severity distribution theo thời gian, bar chart cho risk by weather/hour/day, table có sort/filter, comparison cards cho scenario, timeline cho model version changes.
+
+**Phong cách UI:** Tối giản, đậm chất operations console, ít màu nhưng dùng màu có ý nghĩa (risk level nhận biết ngay, map là viewport đầu tiên).
+
+---
+
+## 5. Tổng kết chất lượng hiện tại và rủi ro
+
+**Điểm mạnh:**
+
+- Kiến trúc backend rõ ràng: routes, services, config, DB helpers, schemas.
+- Có pipeline cloud đa node, MLflow, Airflow, Spark/Flink.
+- API đa dạng: map, hotspot, scenario simulation, analytics, system status.
+- Chuẩn bị đầy đủ nội dung cho một dashboard “control tower” nếu xây dựng frontend.
+
+**Điểm yếu & rủi ro chính:**
+
+- **Repo hygiene:** Thư mục `dashboard/backend/app` chứa `__pycache__` và file `.pyc`.
+- **Trùng lặp endpoint:** `/api/v1/system/model/info` và `/api/v1/model/info`.
+- **CI deploy chưa đáng tin cậy:** SHA drift giữa các host có thể tồn tại dù deploy job báo thành công.
+- **Triển khai Node 3 bị bỏ qua** trong lần chạy workflow gần đây, nên thay đổi “pair lifecycle” chưa được triển khai đầy đủ.
+- **Thiếu frontend thật:** Dù backend mạnh, việc không có UI khiến ấn tượng trình bày kém hơn Baseline 2 và khó cạnh tranh với Baseline 1 về observability.
+
+**Đánh giá tổng thể:**
+
+- Mạnh hơn Baseline 2 về chiều sâu backend và hạ tầng.
+- Mạnh hơn Baseline 1 về ML lifecycle và backend interaction; Baseline 1 có BigQuery/Grafana rõ ràng hơn nhưng thiếu model registry/retraining.
+- Baseline 3 mạnh hơn về nền tảng MLOps, nhưng Traffic Project phù hợp hơn với yêu cầu 3 VM GCP và stack Kafka/Flink/Spark/H2O/MLflow/Postgres.
+
+---
+
+*Kết luận:* Với việc bổ sung các API vận hành và một frontend “control tower”, dự án hoàn toàn có thể vượt qua tất cả baseline về tính hoàn thiện của dashboard và khả năng giám sát hệ thống, đồng thời giữ vững ưu thế về kiến trúc dữ liệu lớn và vòng đời ML.
+
+# Cách chạy project end-to-end trên cloud (branch hung1)
+
+Hướng dẫn này dành cho sinh viên mới, muốn chạy toàn bộ hệ thống Big Data trên Google Cloud.
+
+---
+
+## Kiến trúc 3 VM
+
+Dự án dùng **3 máy ảo Google Compute Engine**:
+
+| VM | Vai trò | Service chính |
+| --- | --- | --- |
+| `node1-control` | Control Plane | PostgreSQL/PostGIS, Airflow, MLflow, FastAPI, Prometheus, Grafana |
+| `node2-streaming` | Streaming | Kafka, Flink, Redis, Replay Producers |
+| `node3-batch` | Batch Processing | Spark (Silver→Gold), H2O AutoML Retraining |
+
+### Luồng dữ liệu tổng thể
+
+```
+Bronze GCS → Node2 Kafka/Flink → Silver GCS + PostgreSQL
+    → Node3 Spark → Gold GCS → H2O/MLflow → FastAPI JSON → Dashboard
+```
+
+---
+
+## 1. Quy tắc làm việc trên máy local
+
+Chạy mọi lệnh từ **thư mục gốc của project (ví dụ: ~/YEAR_3/Bigdata/BTL/…)**
+
+### Tạo file .env.cloud
+
+```bash
+ENV=production
+STORAGE_TYPE=gcs
+PROJECT_ROOT=/opt/traffic
+
+# ==================== GCP CONFIG ====================
+GCP_PROJECT_ID=big-data-group-4
+GCP_REGION=us-central1
+GCP_ZONE=us-central1-a
+NODE1_INTERNAL_IP=10.128.0.4
+NODE2_INTERNAL_IP=10.128.0.5
+NODE3_INTERNAL_IP=10.128.0.8
+
+GCS_BUCKET_BRONZE=big-data-group-4-bronze
+GCS_BUCKET_SILVER=big-data-group-4-silver
+GCS_BUCKET_GOLD=big-data-group-4-gold
+GCS_BUCKET_BACKUPS=big-data-group-4-backups
+GCS_BUCKET_ML=big-data-group-4-ml-artifacts
+GCS_ENV_PATH=gs://big-data-group-4-bronze/env/.env.cloud
+
+# ==================== DATABASE: PostgreSQL/PostGIS on Node1 ====================
+POSTGRES_USER=capstone
+POSTGRES_PASSWORD=123
+POSTGRES_DB=capstone_db
+POSTGRES_HOST=10.128.0.4
+POSTGRES_PORT=5432
+
+POSTGRES_PREDICTION_TABLE=traffic_risk_predictions
+POSTGRES_ERROR_TABLE=streaming_processing_errors
+
+# ==================== REDIS ====================
+REDIS_HOST=10.128.0.4
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_URL=redis://10.128.0.4:6379/0
+REDIS_TIMEOUT_MS=2000
+
+# ==================== KAFKA: Node2 ====================
+KAFKA_BOOTSTRAP_SERVERS=10.128.0.5:9092,10.128.0.5:9093,10.128.0.5:9094
+KAFKA_TOPIC_RAW=traffic.us.raw
+
+# ==================== GCS DATA PATHS ====================
+US_RAW_PATH=gs://big-data-group-4-bronze/raw/US.csv
+US_TRAIN_OFFLINE_PATH=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv
+US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv
+
+SPLIT_YEAR=2020
+
+PROCESSED_DATA_DIR=gs://big-data-group-4-silver/process
+SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features
+SILVER_FLUSH_EVERY_N=100
+
+GOLD_FEATURES_PATH=gs://big-data-group-4-gold/features
+GOLD_RETRAIN_PATH=gs://big-data-group-4-gold/features/retrain
+GOLD_RETRAIN_PARQUET_PATH=gs://big-data-group-4-gold/features/retrain/parquet
+GOLD_RETRAIN_CSV_PATH=gs://big-data-group-4-gold/features/retrain/csv
+SPARK_OUTPUT_PATH=gs://big-data-group-4-gold/features
+
+# ==================== SPARK: Node3 ====================
+SPARK_MASTER_URL=spark://10.128.0.6:7077
+SPARK_CHECKPOINT_DIR=gs://big-data-group-4-backups/checkpoints/spark
+SPARK_HISTORICAL_OUTPUT_PATH=gs://big-data-group-4-gold/features/historical
+SPARK_REPLAY_OUTPUT_PATH=gs://big-data-group-4-gold/features/replay
+SPARK_WRITE_PARTITIONS=4
+SPARK_READ_PARTITIONS=64
+SPARK_WORKER_COUNT=3
+SPARK_WORKER_CORES=1
+SPARK_WORKER_MEMORY=2g
+
+# ==================== FLINK: Node2 ====================
+FLINK_JOBMANAGER_HOST=10.128.0.5
+FLINK_CHECKPOINT_INTERVAL=30000
+FLINK_CHECKPOINT_DIR=gs://big-data-group-4-backups/checkpoints/flink
+FLINK_CONSUMER_GROUP=flink-us-streaming
+FLINK_INFERENCE_GROUP=flink-us-inference
+FLINK_PARALLELISM=1
+
+# ==================== MLFLOW / MODEL: Node1 ====================
+MLFLOW_TRACKING_URI=http://10.128.0.4:5000
+MLFLOW_ARTIFACT_ROOT=gs://big-data-group-4-ml-artifacts
+MLFLOW_EXPERIMENT_NAME=traffic-risk-assessment
+
+MLFLOW_SERVING_ENDPOINT=http://10.128.0.4:5001/invocations
+ML_MODEL_NAME=traffic-risk-model
+ML_MODEL_VERSION=
+ML_TIMEOUT_SECONDS=5
+ML_FALLBACK_RISK_SCORE=-1
+
+# ==================== H2O TRAINING: Node3 ====================
+H2O_MAX_RUNTIME=3600
+H2O_MAX_MEM=2G
+H2O_NTHREADS=2
+H2O_SEED=42
+H2O_USE_CLASS_SAMPLING_FACTORS=true
+H2O_MAX_CLASS_SAMPLING_FACTOR=100.0
+OFFLINE_TRAIN_INPUT=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv
+
+# ==================== STREAMING PRODUCER ====================
+SIMULATED_PRODUCER_ENABLED=true
+PRODUCER_THROUGHPUT=50
+SIMULATED_THROUGHPUT=50
+SIMULATED_SOURCE=us_replay
+SIMULATED_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv
+
+STREAM_SPLIT_YEAR=2020
+STREAM_MAX_RECORDS=0
+STREAM_THROTTLE_SECONDS=0.01
+PRODUCER_FLUSH_EVERY_N_RECORDS=5000
+
+TOTAL_PRODUCERS=3
+PRODUCER_MAX_BUFFER_MESSAGES=100000
+PRODUCER_LINGER_MS=50
+PRODUCER_BATCH_NUM_MESSAGES=10000
+PRODUCER_COMPRESSION_TYPE=lz4
+PRODUCER_QUEUE_BACKOFF_SECONDS=0.5
+
+# ==================== AIRFLOW: Node1 ====================
+AIRFLOW_FERNET_KEY=123
+AIRFLOW__CORE__EXECUTOR=LocalExecutor
+AIRFLOW_USER=admin
+AIRFLOW_PASSWORD=123
+
+# ==================== MONITORING: Node1 ====================
+PROMETHEUS_ENABLED=true
+PROMETHEUS_PORT=9090
+GRAFANA_PORT=3000
+PROMETHEUS_RETENTION_DAYS=30
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=123
+
+# ==================== LOGGING ====================
+STREAMING_LOG_LEVEL=INFO
+
+# ==================== DOCKER COMPOSE OVERRIDES ====================
+COMPOSE_PROJECT_NAME=traffic
+COMPOSE_FILE=docker-compose.yaml
+
+```
+
+### Tạo ssh key vào nhét vào các node VM. Nếu không thể ssh thì đưa key cho codex và bảo nó fix
+
+### Đăng nhập GCP
+
+```bash
+gcloud auth login
+gcloud config set project big-data-group-4
+gcloud config set compute/zone us-central1-a
+```
+
+### Không cần chạy docker-compose local
+
+---
+
+## 2. Khởi tạo GCP
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+Tạo service account, buckets, Artifact Registry, firewall rules, và 3 VM:
+
+```bash
+export GCP_PROJECT_ID=big-data-group-4
+export GCP_ZONE=us-central1-a
+export GCP_REGION=us-central1
+
+bash scripts/gcp/setup_gcp.sh
+```
+
+![Screenshot from 2026-05-14 12-47-52.png](attachment:cebe2323-2156-4a43-b4c0-e9bc23931d9f:Screenshot_from_2026-05-14_12-47-52.png)
+
+### Upload dữ liệu Bronze lên GCS (nếu bucket trống)
+
+Bao gồm dữ liệu trước và sau 2020
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+Nếu cần làm lại thì tải data từ [link drive](https://drive.google.com/drive/folders/1fscicx_lx1kRtwY3n8fxKMSyy5108a14?fbclid=IwY2xjawRyQiBleHRuA2FlbQIxMABicmlkETEyeUEwTGZJaE5UR0ZPUDdzc3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHvq5XpOeQlYKnymllaSMt8EwZZGSM5dR6-o61YWF6yJawGRsUs7UOokm_oyr_aem_aBWsbSFK02kWLrGQdnfPwA) rồi cho vào folder BTL/data/split/ và BTL/data/process/
+
+```bash
+bash scripts/gcp/upload_data_to_gcs.sh
+```
+
+### Kiểm tra tài nguyên đã tạo
+
+```bash
+gcloud compute instances list --project="$GCP_PROJECT_ID"
+gcloud storage buckets list --project="$GCP_PROJECT_ID"
+gcloud artifacts repositories list --location="$GCP_REGION" --project="$GCP_PROJECT_ID"
+```
+
+### Buckets bắt buộc phải có
+
+- `big-data-group-4-bronze` – Dữ liệu thô
+- `big-data-group-4-silver` – Feature sau Flink xử lý
+- `big-data-group-4-gold` – Dataset sạch cho training
+- `big-data-group-4-backups` – Checkpoint Spark/Flink
+- `big-data-group-4-ml-artifacts` – MLflow artifacts
+
+---
+
+## 3. File cấu hình Cloud (`.env.cloud`)
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+`.env.cloud` là file cấu hình runtime cho tất cả VM. **IP nội bộ của VM có thể thay đổi** khi VM bị recreate.
+
+### Kiểm tra IP hiện tại
+
+```bash
+gcloud compute instances list --filter='name~node[123]' --format='table(name,status,networkInterfaces[0].networkIP,networkInterfaces[0].accessConfigs[0].natIP)'
+```
+
+![Screenshot from 2026-05-14 13-01-00.png](attachment:8fed603b-13e0-458f-a633-b6a42dfd8e4e:Screenshot_from_2026-05-14_13-01-00.png)
+
+### Cập nhật IP vào `.env.cloud`
+
+internal-ip chính là network-ip
+
+```bash
+NODE1_INTERNAL_IP=<node1-internal-ip>
+NODE2_INTERNAL_IP=<node2-internal-ip>
+NODE3_INTERNAL_IP=<node3-internal-ip>
+POSTGRES_HOST=<node1-internal-ip>
+MLFLOW_TRACKING_URI=http://<node1-internal-ip>:5000
+MLFLOW_SERVING_ENDPOINT=http://<node1-internal-ip>:5001/invocations
+FASTAPI_IMAGE=us-central1-docker.pkg.dev/big-data-group-4/capstone/fastapi:latest
+POSTGRES_PREDICTION_TABLE=traffic_risk_predictions
+```
+
+### Upload file `.env.cloud` lên GCS
+
+```bash
+gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud
+```
+
+---
+
+## 4. Cấp quyền pull image cho service account VM
+
+(Chỉ dành cho owner, nếu owner làm rồi thì không cần làm lại)
+
+```bash
+gcloud projects add-iam-policy-binding big-data-group-4 --member="serviceAccount:team4-sa@big-data-group-4.iam.gserviceaccount.com" --role="roles/artifactregistry.reader" --condition=None
+```
+
+---
+
+## 5. Deploy thủ công lên Cloud (Không CI/CD)
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+Dùng khi GitHub Actions không khả dụng hoặc cần debug trực tiếp VM. 
+
+Nếu muốn Github Action thì bỏ bước này và xem tiếp bước 6.
+
+**Thứ tự deploy:** Node 1 → Node 2 → Node 3.
+
+**Để SSH vào từng node 1,2,3. Tại thư mục BTL/, tạo 3 tab terminal và chạy:**
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4
+```
+
+```bash
+gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4
+```
+
+```bash
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4
+```
+
+### Pattern đồng bộ code Git trên VM
+
+Mẫu này an toàn cho mọi trường hợp: clone lần đầu, thư mục cũ không có `.git`, hoặc working tree bẩn:
+
+```bash
+cd /opt
+if [ ! -d /opt/traffic/.git ]; then
+  sudo rm -rf /opt/traffic
+  sudo mkdir -p /opt/traffic
+  sudo chown -R "$(whoami):$(whoami)" /opt/traffic
+  git clone <https://github.com/HungPhamNoob/traffic-risk-assessment.git> /opt/traffic
+fi
+
+cd /opt/traffic
+git config --global --add safe.directory /opt/traffic 2>/dev/null || true
+git fetch --prune origin
+git checkout -B hung1 origin/hung1
+git reset --hard origin/hung1
+git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
+```
+
+![image.png](attachment:9d4fbca0-b09c-4d5c-971e-78cb4d3bec65:image.png)
+
+**Sau đó chạy script tương ứng cho từng node 2 và 3.**
+
+**Tại từng terminal ca từng VM:**
+
+### Node 1
+
+```bash
+bash scripts/gcp/run-node1.sh
+```
+
+### Node 2
+
+```bash
+bash scripts/gcp/run-node2.sh
+```
+
+Restart riêng Flink Python job
+
+```bash
+docker compose --env-file .env.cloud -f deployment/node2-streaming/docker-compose.yaml up -d --force-recreate flink-python-job
+```
+
+### Node 3
+
+```bash
+bash scripts/gcp/run-node3.sh
+```
+
+---
+
+## 6. GitHub Actions Deploy
+
+Workflow: `.github/workflows/ci-cd.yaml`
+
+### Các bước CI/CD (mỗi lần push lên `hung1`)
+
+1. **Lint & Test:** Black, Flake8, unit tests, compile checks, Docker Compose validation.
+2. **Build:** Đảm bảo Artifact Registry repo `capstone` tồn tại, build & push FastAPI image.
+3. **Deploy:** Đảm bảo GCP buckets, service account, firewall, 3 VM. Cài SSH key, upload `.env.cloud`, deploy Node 1 (và tùy chọn Node 2, Node 3), smoke test.
+
+### GitHub Secrets cần có
+
+| Secret | Giá trị |
+| --- | --- |
+| `GCP_PROJECT_ID` | `big-data-group-4` |
+| `GCP_SA_KEY` | JSON key của service account có quyền quản lý Compute Engine, Storage, Artifact Registry |
+| `ENV_CLOUD` | Nội dung đầy đủ của `.env.cloud` |
+| `HUNG_SSH_PRIVATE_KEY` | Private key khớp với public key `runner` trên VM |
+|  |  |
+
+Mọi người nên tự tạo {NAME}_SSH_PRIVAYE_KEY còn `HUNG_SSH_PRIVATE_KEY` là của tôi
+
+### GitHub Variables (tùy chọn)
+
+| Variable | Giá trị |
+| --- | --- |
+| `HUNG_SSH_USER` | `runner` |
+| `DEPLOY_STREAMING` | `true` |
+| `DEPLOY_BATCH` | `true` |
+
+---
+
+Ở những bước dưới, vì có nhiều bước tôi làm rồi nên mọi người chỉ cần quan tâm 7.5 và 8 nếu muốn run pipeline luôn
+
+## 7. Kiểm tra toàn bộ Pipeline trên Cloud
+
+### 7.1 Kiểm tra Node 1 (API + Database)
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='curl -fsS http://localhost:8000/health && echo && curl -fsS http://localhost:8000/api/v1/system/status | python3 -m json.tool && docker exec node1-postgres psql -U capstone -d capstone_db -c "SELECT count(*) AS predictions, max(event_time) AS latest_event_time FROM traffic_risk_predictions;"'
+```
+
+### 7.2 Train model trước 2020 (Offline)
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='sudo chown -R $(whoami):$(whoami) /opt/traffic'
+```
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic &&
+  docker compose --env-file .env.cloud -f deployment/node1-control/docker-compose.yaml ps mlflow &&
+  IS_TRAIN_OFFLINE=false H2O_MAX_RUNTIME=3600 bash scripts/gcp/run-node1.sh
+'
+```
+
+Nếu muốn train lại từ đầu thì IS_TRAIN_OFFLINE=true
+
+Xác nhận MLflow hoạt động:
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='curl -fsS http://localhost:5000/health && echo MLflow_OK'
+```
+
+### 7.3 Chạy Streaming Replay (Node 2)
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+Lệnh này chỉ cài thư viện
+
+```bash
+gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic &&
+  STREAM_MAX_RECORDS=0 STREAM_THROTTLE_SECONDS=0.1 bash scripts/gcp/run-node2.sh &&
+  docker compose --env-file .env.cloud -f deployment/node2-streaming/docker-compose.yaml logs --tail=120 flink-python-job
+'
+```
+
+STREAM_THROTTLE_SECONDS=0.1 thì mất hơn 1 ngày để chạy hết realtime
+
+Xác nhận Silver data đã được tạo:
+
+```bash
+gsutil ls -r gs://big-data-group-4-silver/process/flink_features/** 2>/dev/null | wc -l
+```
+
+### 7.4 Chạy Spark + H2O Retrain (Node 3)
+
+Bước này tôi đã làm rồi nên không cần làm lại.  
+
+```bash
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && SPARK_READ_PARTITIONS=64 NODE3_H2O_MAX_RUNTIME=3600 bash scripts/gcp/run-node3.sh'
+```
+
+Xác nhận Gold data đã được tạo:
+
+```bash
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic &&
+  find data/cloud/gold/features/retrain -maxdepth 4 -type f | head
+'
+```
+
+> **Lưu ý:** Nếu Node 2 vẫn đang ghi Silver, Node 3 có thể gặp lỗi `GcsNotFoundError` thoáng qua. Script vẫn tiếp tục với các file đã copy được.
+> 
+
+### 7.5 Thu thập JSON Output từ Backend
+
+Một sô API mang tính tổng quát.
+
+Nếu cần sự chi tiết có thể xem lại Backend/API 
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='curl -fsS http://localhost:8000/api/v1/overview/summary | python3 -m json.tool && curl -fsS "http://localhost:8000/api/v1/predictions/map?limit=5" | python3 -m json.tool && curl -fsS "http://localhost:8000/api/v1/hotspots?limit=5&min_events=1" | python3 -m json.tool && curl -fsS http://localhost:8000/api/v1/analytics/risk-by-hour | python3 -m json.tool && curl -fsS http://localhost:8000/api/v1/analytics/severity-distribution | python3 -m json.tool'
+```
+
+```bash
+Ví dụ minh họa:
+{
+    "total_events": 37353,
+    "high_risk_events": 0,
+    "avg_risk_score": 0.2336,
+    "latest_event_time": "2022-09-08T17:56:22",
+    "latest_model_version": "latest"
+}
+{
+    "points": [
+        {
+            "event_id": "A-512433",
+            "lat": 35.307751,
+            "lon": -80.863289,
+            "risk_score": 0.6666666666666666,
+            "predicted_severity": 3,
+            "true_severity": 1,
+            "event_time": "2022-09-08T17:56:22",
+            "model_status": "ok",
+            "risk_level": "medium"
+        },
+        {
+            "event_id": "A-512431",
+            "lat": 35.108269,
+            "lon": -80.765114,
+            "risk_score": 0.0,
+            "predicted_severity": 1,
+            "true_severity": 1,
+            "event_time": "2022-09-08T17:41:50",
+            "model_status": "ok",
+            "risk_level": "low"
+        },
+        {
+            "event_id": "A-512430",
+            "lat": 35.26099,
+            "lon": -80.819687,
+            "risk_score": 0.0,
+            "predicted_severity": 1,
+            "true_severity": 1,
+            "event_time": "2022-09-08T17:41:15",
+            "model_status": "ok",
+            "risk_level": "low"
+        },
+        {
+            "event_id": "A-512429",
+            "lat": 35.345188,
+            "lon": -80.790482,
+            "risk_score": 0.4658298959210003,
+            "predicted_severity": 2,
+            "true_severity": 1,
+            "event_time": "2022-09-08T17:36:39",
+            "model_status": "ok",
+            "risk_level": "medium"
+        },
+        {
+            "event_id": "A-512428",
+            "lat": 35.240639,
+            "lon": -80.897087,
+            "risk_score": 0.0,
+            "predicted_severity": 1,
+            "true_severity": 1,
+            "event_time": "2022-09-08T17:33:01",
+            "model_status": "ok",
+            "risk_level": "low"
+        }
+    ]
+}
+{
+    "hotspots": [
+        {
+            "rank": 1,
+            "center_lat": 41.574,
+            "center_lon": -87.463,
+            "avg_risk_score": 0.6666666666666667,
+            "accident_count": 11,
+            "severe_count": 11,
+            "peak_hour": 10
+        },
+        {
+            "rank": 2,
+            "center_lat": 27.997,
+            "center_lon": -82.454,
+            "avg_risk_score": 0.6666666666666667,
+            "accident_count": 10,
+            "severe_count": 10,
+            "peak_hour": 7
+        },
+        {
+            "rank": 3,
+            "center_lat": 39.696,
+            "center_lon": -86.187,
+            "avg_risk_score": 0.6666666666666666,
+            "accident_count": 12,
+            "severe_count": 12,
+            "peak_hour": 7
+        },
+        {
+            "rank": 4,
+            "center_lat": 41.565,
+            "center_lon": -87.744,
+            "avg_risk_score": 0.6666666666666666,
+            "accident_count": 12,
+            "severe_count": 12,
+            "peak_hour": 8
+        },
+        {
+            "rank": 5,
+            "center_lat": 32.908,
+            "center_lon": -96.73,
+            "avg_risk_score": 0.6666666666666666,
+            "accident_count": 8,
+            "severe_count": 8,
+            "peak_hour": 7
+        }
+    ]
+}
+{
+    "data": [
+        {
+            "hour": 0,
+            "avg_risk_score": 0.31533916410385626,
+            "accident_count": 139
+        },
+        {
+            "hour": 1,
+            "avg_risk_score": 0.40676888426314567,
+            "accident_count": 122
+        },
+        {
+            "hour": 2,
+            "avg_risk_score": 0.2606331716874713,
+            "accident_count": 235
+        },
+        {
+            "hour": 3,
+            "avg_risk_score": 0.33304330178899405,
+            "accident_count": 270
+        },
+        {
+            "hour": 4,
+            "avg_risk_score": 0.14388457811111274,
+            "accident_count": 1499
+        },
+        {
+            "hour": 5,
+            "avg_risk_score": 0.12029724703631609,
+            "accident_count": 1706
+        },
+        {
+            "hour": 6,
+            "avg_risk_score": 0.17503140075536885,
+            "accident_count": 3208
+        },
+        {
+            "hour": 7,
+            "avg_risk_score": 0.13977473070678054,
+            "accident_count": 5027
+        },
+        {
+            "hour": 8,
+            "avg_risk_score": 0.1591408068684487,
+            "accident_count": 5095
+        },
+        {
+            "hour": 9,
+            "avg_risk_score": 0.2533942973577448,
+            "accident_count": 1636
+        },
+        {
+            "hour": 10,
+            "avg_risk_score": 0.252783132815741,
+            "accident_count": 1561
+        },
+        {
+            "hour": 11,
+            "avg_risk_score": 0.2816444032243238,
+            "accident_count": 1368
+        },
+        {
+            "hour": 12,
+            "avg_risk_score": 0.3595857180571652,
+            "accident_count": 1134
+        },
+        {
+            "hour": 13,
+            "avg_risk_score": 0.35018845294346823,
+            "accident_count": 1185
+        },
+        {
+            "hour": 14,
+            "avg_risk_score": 0.3442197162688088,
+            "accident_count": 1465
+        },
+        {
+            "hour": 15,
+            "avg_risk_score": 0.3239330831694424,
+            "accident_count": 1903
+        },
+        {
+            "hour": 16,
+            "avg_risk_score": 0.2864467281369455,
+            "accident_count": 2592
+        },
+        {
+            "hour": 17,
+            "avg_risk_score": 0.2785196224561224,
+            "accident_count": 2566
+        },
+        {
+            "hour": 18,
+            "avg_risk_score": 0.26171029587161676,
+            "accident_count": 1896
+        },
+        {
+            "hour": 19,
+            "avg_risk_score": 0.29587794192767264,
+            "accident_count": 1071
+        },
+        {
+            "hour": 20,
+            "avg_risk_score": 0.328786518123436,
+            "accident_count": 585
+        },
+        {
+            "hour": 21,
+            "avg_risk_score": 0.35436933733933196,
+            "accident_count": 541
+        },
+        {
+            "hour": 22,
+            "avg_risk_score": 0.34693853796656143,
+            "accident_count": 380
+        },
+        {
+            "hour": 23,
+            "avg_risk_score": 0.36489151873767267,
+            "accident_count": 169
+        }
+    ]
+}
+{
+    "distribution": [
+        {
+            "severity": 1,
+            "count": 12837
+        },
+        {
+            "severity": 2,
+            "count": 11376
+        },
+        {
+            "severity": 3,
+            "count": 12916
+        },
+        {
+            "severity": 4,
+            "count": 224
+        }
+    ]
+}
+
+```
+
+---
+
+## 8. Reset và Chạy lại
+
+### Reset trạng thái replay/checkpoint
+
+Xóa checkpoint để bắt đầu từ đầu
+
+```bash
+gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic && bash scripts/gcp/reset-realtime.sh
+'
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic && bash scripts/gcp/reset-realtime.sh
+'
+```
+
+### Khởi động lại cặp Node 2 + Node 3 đồng bộ
+
+```bash
+gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic &&
+  STREAM_MAX_RECORDS=0 STREAM_THROTTLE_SECONDS=0.1 bash scripts/gcp/run-node2.sh &&
+  docker compose --env-file .env.cloud -f deployment/node2-streaming/docker-compose.yaml logs --tail=120 producer-1 producer-2 producer-3 flink-python-job
+'
+sleep 200
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='
+  cd /opt/traffic && bash scripts/gcp/run-node3.sh
+'
+```
+
+---
+
+---
+
+---
+
+## 9. Nguyên tắc vận hành
+
+1. **Deploy Node 1 trước**, sau đó mới đến Node 2 và Node 3.
+2. **Node 2 và Node 3 là một cặp** – sau lỗi replay/checkpoint, phải reset/restart cả hai cùng lúc.
+3. **FastAPI phải luôn trả JSON hợp lệ**, ngay cả khi bảng prediction trống.
+4. **Private key và service account JSON** chỉ để trong GitHub Secrets hoặc `~/.ssh` local.
+5. **Xoay key mới** nếu lỡ paste private key vào chat, log terminal, hoặc tài liệu.
+
+# Những gì cần làm tiếp theo?
+
+## Về data
+
+Có thể thử dùng UK hoặc (UK+US) hoặc (US+UK+TomTom). Nếu dùng TomTom thì có thể cân nhắc dùng Apache Sedona
+
+Với mỗi dataset, cần có EDA riêng, sau khi merge schema cần có EDA chung ⇒ Rút ra được Insights để feature engineering ⇒ Rút ra được schema chung. 
+
+Chọn lọc phương án khiến model H2O hiệu qủa hơn thì dùng. Code của  H2O và MLFlow rất ít, prompt là xong. Song hiện tại chỉ dùng US.csv thì metric không khả quan lắm (phần Train model H2O/Trước 2020), nếu nhét thêm dataset khác có khi còn tệ hơn 
+
+Ở project năm ngoái, họ cũng chỉ mô phỏng realtime từ dataset csv
+
+Nếu chỉ dùng US:
+
+Độc tài Policy: “Tại sao các cậu chỉ dùng 1 dataset tĩnh cho bài tập này? Lại còn là năm 2020, quá cũ.” 
+
+Duy: “Thưa chỉ huy, trước đó, chúng em đã cân nhắc nhiều phương án về dataset, có cả dạng bảng tĩnh và API. Chúng em đã thử phân tích dữ liệu kĩ lưỡng, đưa ra các phương án huần luyện mô hình khác nhau và rồi nhận ra nếu dùng nhiều loại dataset rồi mapping thành schema chung sẽ gây sai lệch về ý nghĩa dữ liệu. Song dataset US hiện tại cũng có thể coi là big data vì nó có hơn 7 triệu bản ghi, với dữ liệu từ khắp các bang nước mỹ chảy về, có hẳn một paper chuyên sâu riêng về dataset này. Về vấn đề data năm 2020, một số project năm ngoái cũng chỉ dùng data 2019-2020 hay 2022-2024 mà vẫn được chỉ huy cho điểm cao, nếu chỉ huy cho chúng em điểm thấp thì quá là bất công.”
+
+Độc tài Policy: “Ai là người chọn bộ dataset ngu ngốc này?”
+
+Duy: “Chính là em, chỉ huy cho em điểm thấp thôi chứ đừng liên lụy đồng đội em”
+
+## Về cải tiến pipeline + dashboard
+
+Hiện project đã “ỉa lên đầu” baseline 2. Mục tiêu tiếp theo là “ỉa lên đầu” baseline 1 và xấp xỉ baseline 3.
+
+Dưới đây là danh sách các việc cần làm để hoàn thiện hệ thống, dựa trên hiện trạng backend, database, pipeline và yêu cầu dashboard. Các mục được sắp xếp theo mức độ ưu tiên.
+
+---
+
+### 1. Luồng hoạt động hiện tại (chưa cải tiến)
+
+1. **Raw CSV** → Kafka producer (`us_producer.py`) đẩy từng dòng lên topic `traffic.us.raw`.
+2. **Flink** (`flink_streaming.py`) đọc Kafka → feature engineering → gọi MLflow serving → insert kết quả vào PostgreSQL (`traffic_risk_predictions`), đồng thời ghi Silver JSONL lên GCS.
+3. **Spark batch** (`spark_batch.py`) đọc Silver → làm sạch → ghi Gold Parquet/CSV.
+4. **H2O AutoML** (`h2o_after_2020.py`) đọc Gold → huấn luyện lại model → đăng ký version mới trong MLflow Registry.
+5. **FastAPI backend** đọc PostgreSQL trả JSON cho dashboard; scenario API gọi thẳng MLflow serving.
+6. **Airflow** điều phối Spark + H2O mỗi giờ, kiểm tra sức khoẻ cặp Node2/Node3.
+
+Hệ thống đã chạy được end‑to‑end, nhưng còn nhiều chỗ cần cải thiện để dashboard vận hành đầy đủ và cạnh tranh với các baseline.
+
+---
+
+### 2. Cần cải tiến gì? (cái này do AI đề xuất nên cần cân nhắc và điều chỉnh)
+
+### A. Frontend Dashboard (Next.js + [Deck.gl](http://deck.gl/))
+
+| STT | Hạng mục | Chi tiết |
+| --- | --- | --- |
+| 1 | **Xây dựng toàn bộ giao diện** | Hiện chưa có frontend. Cần tạo ngay 3 trang: **Dashboard** (map, KPI, biểu đồ), **Scenario** (what‑if), **Pipeline Health** (MLOps). |
+| 2 | **Map trực quan** | Dùng [Deck.gl](http://deck.gl/) `ScatterplotLayer`, màu theo risk level, cluster khi zoom xa. Gọi API `GET /predictions/map`, auto‑refresh 30s. |
+| 3 | **KPI cards** | Dùng `/overview/summary` hiển thị tổng sự kiện, high‑risk, avg risk, latest time, model version. |
+| 4 | **Hotspots panel** | Bảng xếp hạng từ `/hotspots`, click vào bay đến vị trí và gọi `/nearby`. |
+| 5 | **Biểu đồ analytics** | Timeseries, severity distribution, risk by hour, risk by weather – dùng Recharts/ECharts. |
+| 6 | **Scenario form** | Nhập 20 feature theo schema `ScenarioInput`, gọi `/scenarios/predict` và `/compare`. |
+| 7 | **System & model info** | Lấy dữ liệu từ `/system/status` và `/model/info` hiển thị thành card. |
+| 8 (khá hay) | **Tích hợp thêm API vận hành** (sau khi Backend bổ sung) | Throughput, latency, checkpoint health, retrain history – sẽ thêm các panel tương ứng. Cần có throughput hay latency để thể hiện non-func requirement của hệ thống. Nhưng nếu nó tệ quá thì không cần render đâu |
+| 9 | **Auto‑refresh** | Dùng React Query `refetchInterval` 30s cho map, latest; 5 phút cho analytics. |
+
+### B. Backend (FastAPI)
+
+| STT | Hạng mục | Chi tiết |
+| --- | --- | --- |
+| 1 (khá hay) | **Thêm các endpoint vận hành** | Hiện backend thiếu metric throughput, latency, checkpoint health, retrain history. Cần xây dựng: <br> • `GET /api/v1/pipeline/throughput?window=5m` <br> • `GET /api/v1/pipeline/latency?metric=p95` <br> • `GET /api/v1/pipeline/checkpoints` <br> • `GET /api/v1/pipeline/replay‑health` <br> • `GET /api/v1/model/retrain‑history` <br> • `GET /api/v1/model/performance‑trend` <br> (Nếu cần, có thể proxy Airflow REST API để lấy trạng thái DAG). |
+| 2 | **Loại bỏ endpoint trùng lặp** | Xóa `/api/v1/system/model/info`, chỉ giữ `/api/v1/model/info`. |
+| 3 | **Fix metadata trong `/system/status`** | `spark.last_gold_update` đang lấy `latest_event_time` từ prediction table (không chính xác). Nên đọc thực sự timestamp cập nhật Gold dataset (có thể từ GCS hoặc Spark log). |
+| 4 | **Mở rộng `analytics/timeseries`** | Hiện `metric` param chỉ echo lại. Nên hỗ trợ thật nhiều metric (throughput, avg risk, count) và thay đổi SQL tương ứng. |
+| 5 | **Tận dụng PostGIS** | Các API map/hotspot/nearby nên dùng `ST_DWithin`, `ST_MakeEnvelope` thay vì `BETWEEN` thô, và tạo spatial index trên cột `geom`. |
+| 6 (đéo cần) | **Thêm xác thực (nếu cần)** | Hiện không có auth. Nếu triển khai thật, có thể thêm basic auth hoặc API key. |
+| 7 (wtf?) | **Sửa lỗi `__pycache__` trong repo** | Xoá các file `.pyc` và thư mục `__pycache__`, thêm vào `.gitignore`. |
+
+### C. Database & Pipeline (Spark, Flink, PostgreSQL)
+
+| STT | Hạng mục | Chi tiết |
+| --- | --- | --- |
+| 1 | **Thêm đầy đủ feature vào production table** | `flink_streaming.py` hiện chỉ INSERT các cột giới hạn, thiếu `day_of_week`, `temperature_f`, `humidity`, `wind_speed_mph`, `visibility_mi`, và các cờ boolean (junction, crossing…). Cần sửa `CREATE_TABLE_SQL` và `INSERT_SQL` để lưu **toàn bộ** 20 feature (giống `ScenarioInput`). Như vậy `GET /api/v1/predictions/{event_id}` sẽ trả đầy đủ feature, giúp pre‑fill form scenario từ sự kiện thực tế. |
+| 2 | **Đồng bộ schema giữa local smoke và production** | Cập nhật smoke script để tạo bảng giống hệt production, tránh lệch cột. |
+| 3 | **Sử dụng PostGIS hiệu quả hơn** | Tạo spatial index trên cột `geom`, chuyển các query không gian (bbox, nearby) sang dùng `ST_Within`, `ST_DWithin`. |
+| 4  | **Thêm cột `ingestion_time`, `processed_time` vào production** | Để tính latency end‑to‑end chính xác hơn (hiện đã có `inference_latency_ms` nhưng chưa có ingestion time). |
+| 5 | **Đảm bảo extension PostGIS trên production** | Trước khi chạy Flink, cần chạy `CREATE EXTENSION IF NOT EXISTS postgis;` (có thể đưa vào script khởi động Node1). |
+
+### D. Dashboard Completeness (so sánh baseline)
+
+| Tiêu chí | Cần cải thiện |
+| --- | --- |
+| **Operational Monitoring** | Hiện chưa có throughput, latency, checkpoint age. Phải bổ sung backend rồi hiển thị lên dashboard (theo thiết kế). |
+| **Model Lifecycle** | Cần panel Retrain History, Model Performance Trend – sẽ có sau khi thêm API tương ứng. |
+| **Scenario UI** | Form nhập liệu trực quan, so sánh kết quả, biểu đồ radar (tùy chọn). |
+| **Reproducibility** | Cần nút export dashboard state hoặc link share. |
+
+---
+
+### 3. Tóm tắt những việc cần làm ngay (theo thứ tự ưu tiên)
+
+1. **Backend:** bổ sung các endpoint vận hành (throughput, latency, checkpoint, retrain history).
+2. **Flink:** sửa `flink_streaming.py` để INSERT đầy đủ 20 feature vào production table.
+3. **Frontend:** code dashboard theo Functional Requirements đã có (dùng Next.js + [Deck.gl](http://deck.gl/)), bám sát các API hiện hữu và API mới.
+4. **Database:** thêm extension PostGIS trên production, tạo spatial index.
+5. **CI:** sửa lỗi bỏ sót Node 3, đảm bảo SHA nhất quán.
+6. **Cleanup:** xoá file rác, gộp endpoint trùng lặp, cập nhật tài liệu.
+
+Sau khi hoàn tất các mục trên, dự án sẽ có **dashboard vận hành + risk intelligence hoàn chỉnh**, vượt trội Baseline 1 về monitoring, Baseline 2 về chiều sâu phân tích, và không thua kém Baseline 3 về khả năng MLOps hiển thị.
+
+## Tìm thêm baselines
+
+Hãy tìm các repo github của nhóm khác để mình có thể dựa vào đó, so sánh và cải tiến thêm
+
+## Slide
+
+[Link](https://www.canva.com/design/DAHC9OEn45M/6dD8EGhzUj6XXQYGn_yK5Q/edit?fbclid=IwY2xjawRycGdleHRuA2FlbQIxMABicmlkETEyeUEwTGZJaE5UR0ZPUDdzc3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHiq-I04sX3x-5TGlfcm1VzydE4gq0NBC8BKBnQstYGK9C2JSEdf6s9872GAl_aem_E6LzOsBP0AjijQcDV60G-w)
+
+Có thể tham khảo:
+
+[presentation.pdf](attachment:585aa888-bf47-43d4-8041-6bcb40fd817c:presentation.pdf)

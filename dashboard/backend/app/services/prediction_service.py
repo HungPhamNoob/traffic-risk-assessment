@@ -61,6 +61,7 @@ def map_points(
     """Return prediction points for map rendering with optional spatial and time filters."""
     where_clauses = ["risk_score >= %(min_risk)s"]
     params: dict[str, Any] = {"min_risk": min_risk, "limit": limit}
+    use_postgis_bbox = False
 
     if bbox:
         parts = [float(value) for value in bbox.split(",")]
@@ -76,8 +77,16 @@ def map_points(
                 "max_lat": parts[3],
             }
         )
-        where_clauses.append("lon BETWEEN %(min_lon)s AND %(max_lon)s")
-        where_clauses.append("lat BETWEEN %(min_lat)s AND %(max_lat)s")
+        use_postgis_bbox = True
+        where_clauses.append(
+            """
+            geom IS NOT NULL
+            AND ST_Intersects(
+                geom,
+                ST_MakeEnvelope(%(min_lon)s, %(min_lat)s, %(max_lon)s, %(max_lat)s, 4326)
+            )
+            """
+        )
     if start_time:
         params["start_time"] = start_time
         where_clauses.append("event_time >= %(start_time)s")
@@ -105,7 +114,41 @@ def map_points(
         table=table_identifier(),
         where_clause=sql.SQL(" AND ").join(sql.SQL(clause) for clause in where_clauses),
     )
-    rows = fetch_all(query, params)
+    try:
+        rows = fetch_all(query, params)
+    except Exception:
+        if not use_postgis_bbox:
+            raise
+        fallback_clauses = [
+            clause
+            for clause in where_clauses
+            if "ST_Intersects" not in clause and "geom IS NOT NULL" not in clause
+        ]
+        fallback_clauses.append("lon BETWEEN %(min_lon)s AND %(max_lon)s")
+        fallback_clauses.append("lat BETWEEN %(min_lat)s AND %(max_lat)s")
+        fallback_query = sql.SQL(
+            """
+            SELECT
+                event_id,
+                lat,
+                lon,
+                risk_score,
+                predicted_severity,
+                true_severity,
+                event_time,
+                model_status
+            FROM {table}
+            WHERE {where_clause}
+            ORDER BY event_time DESC NULLS LAST
+            LIMIT %(limit)s
+            """
+        ).format(
+            table=table_identifier(),
+            where_clause=sql.SQL(" AND ").join(
+                sql.SQL(clause) for clause in fallback_clauses
+            ),
+        )
+        rows = fetch_all(fallback_query, params)
     for row in rows:
         if row.get("event_time"):
             row["event_time"] = row["event_time"].isoformat()
