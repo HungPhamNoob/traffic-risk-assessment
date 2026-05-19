@@ -27,11 +27,11 @@ scrape_configs:
 
   - job_name: node_exporter_node2
     static_configs:
-      - targets: ["10.128.0.5:9100"]
+      - targets: ["__NODE2_INTERNAL_IP__:9100"]
 
   - job_name: node_exporter_node3
     static_configs:
-      - targets: ["10.128.0.8:9100"]
+      - targets: ["__NODE3_INTERNAL_IP__:9100"]
 
   - job_name: blackbox_http
     scrape_interval: 30s
@@ -43,8 +43,8 @@ scrape_configs:
           - http://fastapi:8000/health
           - http://mlflow:5000/health
           - http://airflow:8080/health
-          - http://10.128.0.5:8081/overview
-          - http://10.128.0.8:8080
+          - http://__NODE2_INTERNAL_IP__:8081/overview
+          - http://__NODE3_INTERNAL_IP__:8080
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -61,11 +61,11 @@ scrape_configs:
     static_configs:
       - targets:
           - postgres:5432
-          - 10.128.0.5:9092
-          - 10.128.0.5:9093
-          - 10.128.0.5:9094
-          - 10.128.0.5:2181
-          - 10.128.0.8:7077
+          - __NODE2_INTERNAL_IP__:9092
+          - __NODE2_INTERNAL_IP__:9093
+          - __NODE2_INTERNAL_IP__:9094
+          - __NODE2_INTERNAL_IP__:2181
+          - __NODE3_INTERNAL_IP__:7077
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
