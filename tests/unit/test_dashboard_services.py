@@ -6,7 +6,7 @@ BACKEND_PATH = Path(__file__).resolve().parents[2] / "dashboard" / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
-from app.services import analytics_service, pipeline_service
+from app.services import analytics_service, pipeline_service  # noqa: E402
 
 
 def test_timeseries_metric_count_is_returned(monkeypatch):
