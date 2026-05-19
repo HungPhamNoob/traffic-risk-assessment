@@ -131,18 +131,19 @@ services:
     restart: unless-stopped
 
   kafka-topic-init:
-    # Long-running topic guard. It creates and validates the single project
-    # topic, then stays alive so operators do not mistake a successful one-shot
-    # exit for a crash in Docker Compose dashboards.
+    # Long-running topic guard. It creates and validates the US replay and
+    # TomTom raw topics, then stays alive so operators do not mistake a
+    # successful one-shot exit for a crash in Docker Compose dashboards.
     image: confluentinc/cp-kafka:7.6.0
     container_name: node2-kafka-topic-init
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_TOMTOM_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
     command: |
       bash -ec '
         BOOTSTRAP_SERVERS="$${KAFKA_BOOTSTRAP_SERVERS}"
-        TOPIC_NAME="$${KAFKA_TOPIC_RAW}"
+        TOPICS="$${KAFKA_TOPIC_RAW} $${KAFKA_TOPIC_TOMTOM_RAW}"
 
         echo "Waiting for Kafka brokers at $${BOOTSTRAP_SERVERS}."
         for i in $(seq 1 30); do
@@ -158,11 +159,13 @@ services:
           exit 1
         fi
 
-        echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
-        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
+        for TOPIC_NAME in $${TOPICS}; do
+          echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
+          kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
 
-        echo "Validating Kafka topic $${TOPIC_NAME}."
-        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+          echo "Validating Kafka topic $${TOPIC_NAME}."
+          kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+        done
 
         echo "Kafka topic init complete. Holding container open."
         tail -f /dev/null
@@ -177,7 +180,7 @@ services:
       kafka-3:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_RAW}\" >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_RAW}\" >/dev/null 2>&1 && kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_TOMTOM_RAW}\" >/dev/null 2>&1"]
       interval: 20s
       timeout: 15s
       retries: 5
@@ -285,7 +288,7 @@ services:
       "
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
-      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
       TOMTOM_API: ${TOMTOM_API:-}
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
       TOMTOM_ENDPOINT: ${TOMTOM_ENDPOINT:-https://api.tomtom.com/traffic/services/5/incidentDetails}
@@ -431,6 +434,16 @@ services:
       flink-jobmanager:
         condition: service_started
     restart: on-failure
+
+  flink-tomtom-python-job:
+    extends:
+      service: flink-python-job
+    container_name: node2-flink-tomtom-python-job
+    environment:
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
+      FLINK_INFERENCE_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
+      FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_TOMTOM_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/tomtom-inference}
+      SILVER_FEATURES_PATH: ${TOMTOM_SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/tomtom_features}
 
 networks:
   capstone-net:
