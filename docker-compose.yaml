@@ -258,6 +258,42 @@ services:
     environment:
       PRODUCER_INDEX: "2"
 
+  tomtom-producer:
+    image: python:3.10-slim
+    container_name: local-tomtom-producer
+    working_dir: /app
+    command: >
+      bash -c "
+        pip install --no-cache-dir confluent-kafka python-dotenv requests &&
+        python tomtom_producer.py
+      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      TOMTOM_API: ${TOMTOM_API:-}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      TOMTOM_ENDPOINT: ${TOMTOM_ENDPOINT:-https://api.tomtom.com/traffic/services/5/incidentDetails}
+      TOMTOM_BBOX: ${TOMTOM_BBOX:--74.25909,40.477399,-73.700181,40.917577}
+      TOMTOM_BBOXES: ${TOMTOM_BBOXES:-US:New York:-74.25909,40.477399,-73.700181,40.917577}
+      TOMTOM_LANGUAGE: ${TOMTOM_LANGUAGE:-en-US}
+      TOMTOM_TIME_VALIDITY: ${TOMTOM_TIME_VALIDITY:-present}
+      TOMTOM_POLL_SECONDS: ${TOMTOM_POLL_SECONDS:-60}
+      TOMTOM_RUN_ONCE: ${TOMTOM_RUN_ONCE:-false}
+      STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
+      PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-500}
+      STREAMING_LOG_LEVEL: ${STREAMING_LOG_LEVEL:-INFO}
+    volumes:
+      - ./ingestion/kafka/tomtom_producer.py:/app/tomtom_producer.py:ro
+    depends_on:
+      kafka-topic-init:
+        condition: service_healthy
+    networks:
+      - traffic-local
+    profiles:
+      - tomtom
+    restart: unless-stopped
+    mem_limit: 256m
+
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.12.1
     container_name: local-mlflow

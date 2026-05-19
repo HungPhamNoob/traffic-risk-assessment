@@ -35,6 +35,7 @@ import requests
 
 # Feature engineering shared with offline training and batch jobs.
 from processing.feature_engineering import build_features
+from processing.streaming_enrichment import enrich_tomtom_event
 
 try:
     from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
@@ -500,20 +501,28 @@ def process_raw_message(raw_message: str) -> str:
         raw_row = json.loads(raw_message)
         ingestion_time = raw_row.get("_ingested_at_utc")
 
-        # 2. Feature engineering
-        features = build_features(raw_row)
+        # 2. TomTom incidents need projection into the shared feature contract.
+        if str(raw_row.get("source", "")).strip().lower() == "tomtom":
+            feature_input = enrich_tomtom_event(raw_row)
+            if feature_input is None:
+                raise ValueError("enrich_tomtom_event returned None (missing fields)")
+        else:
+            feature_input = raw_row
+
+        # 3. Feature engineering
+        features = build_features(feature_input)
         if features is None:
             raise ValueError("build_features returned None (missing fields)")
 
-        # 3. Write silver layer to GCS
+        # 4. Write silver layer to GCS
         write_to_gcs_silver(features)
 
-        # 4. ML prediction
+        # 5. ML prediction
         predicted_severity, risk_score = call_mlflow_model(features)
         if risk_score is None or risk_score < 0:
             risk_score = ML_FALLBACK_RISK_SCORE
 
-        # 5. Insert into PostgreSQL
+        # 6. Insert into PostgreSQL
         processed_time = datetime.now(timezone.utc).isoformat()
         latency = (time.time() - start) * 1000
         end_to_end_latency_ms = None

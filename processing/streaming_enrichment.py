@@ -1,0 +1,277 @@
+"""
+Realtime enrichment before shared feature engineering.
+
+US replay rows are already close to the model training shape. TomTom incident
+events need a small projection into that shape plus weather/default road context
+before `processing.feature_engineering.build_features` can consume them.
+"""
+
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import requests
+
+from processing.feature_engineering import _safe_float, _safe_int, _safe_string
+
+logger = logging.getLogger(__name__)
+
+OPEN_METEO_ENDPOINT = os.getenv(
+    "OPEN_METEO_ENDPOINT", "https://api.open-meteo.com/v1/forecast"
+)
+OPEN_METEO_ARCHIVE_ENDPOINT = os.getenv(
+    "OPEN_METEO_ARCHIVE_ENDPOINT", "https://archive-api.open-meteo.com/v1/archive"
+)
+OPEN_METEO_TIMEOUT_SECONDS = float(os.getenv("OPEN_METEO_TIMEOUT_SECONDS", "5"))
+WEATHER_ENRICHMENT_ENABLED = os.getenv(
+    "STREAMING_WEATHER_ENRICHMENT_ENABLED", "true"
+).lower() in {"1", "true", "yes"}
+
+
+def normalize_tomtom_severity(delay_magnitude: Any, icon_category: Any) -> int:
+    severity = 1
+    delay = _safe_int(delay_magnitude)
+    icon = _safe_int(icon_category)
+
+    if delay is not None:
+        if delay >= 4:
+            severity = 4
+        elif delay == 3:
+            severity = 3
+        elif delay == 2:
+            severity = 2
+
+    if icon == 8:
+        severity = max(severity, 4)
+    elif icon == 1:
+        severity = max(severity, 3)
+    elif icon == 9:
+        severity = max(severity, 2)
+
+    return severity
+
+
+def _weather_label_from_code(code: Any) -> str:
+    weather_code = _safe_int(code, default=0) or 0
+    if weather_code in {95, 96, 99}:
+        return "Thunderstorm"
+    if weather_code in {71, 73, 75, 77, 85, 86}:
+        return "Snow"
+    if weather_code in {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}:
+        return "Rain"
+    if weather_code in {45, 48}:
+        return "Fog"
+    if weather_code in {1, 2, 3}:
+        return "Cloudy"
+    return "Clear"
+
+
+def _parse_event_time(timestamp: Any) -> Optional[datetime]:
+    text = _safe_string(timestamp)
+    if not text:
+        return None
+    try:
+        event_time = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=timezone.utc)
+    return event_time.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+
+def _parse_open_meteo_time(value: Any) -> Optional[datetime]:
+    text = _safe_string(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _nearest_hour_index(times: List[Any], event_time: datetime) -> Optional[int]:
+    best_index: Optional[int] = None
+    best_delta: Optional[float] = None
+    for index, value in enumerate(times):
+        candidate = _parse_open_meteo_time(value)
+        if candidate is None:
+            continue
+        delta = abs((candidate - event_time).total_seconds())
+        if best_delta is None or delta < best_delta:
+            best_index = index
+            best_delta = delta
+    return best_index
+
+
+def _value_at(values: Any, index: Optional[int]) -> Any:
+    if index is None or not isinstance(values, list) or index >= len(values):
+        return None
+    return values[index]
+
+
+def _fetch_current_open_meteo_weather(lat: float, lon: float) -> Dict[str, Any]:
+    response = requests.get(
+        OPEN_METEO_ENDPOINT,
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "current": ",".join(
+                [
+                    "temperature_2m",
+                    "relative_humidity_2m",
+                    "weather_code",
+                    "wind_speed_10m",
+                ]
+            ),
+            "temperature_unit": "fahrenheit",
+            "wind_speed_unit": "mph",
+            "timezone": "UTC",
+        },
+        timeout=OPEN_METEO_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    current = response.json().get("current") or {}
+    return {
+        "Weather_Condition": _weather_label_from_code(current.get("weather_code")),
+        "Temperature(F)": current.get("temperature_2m"),
+        "Humidity(%)": current.get("relative_humidity_2m"),
+        "Wind_Speed(mph)": current.get("wind_speed_10m"),
+    }
+
+
+def fetch_open_meteo_weather(
+    lat: float,
+    lon: float,
+    timestamp: Any = None,
+) -> Dict[str, Any]:
+    if not WEATHER_ENRICHMENT_ENABLED:
+        return {}
+
+    try:
+        event_time = _parse_event_time(timestamp)
+        if event_time is None:
+            return _fetch_current_open_meteo_weather(lat, lon)
+
+        today = datetime.now(timezone.utc).date()
+        endpoint = (
+            OPEN_METEO_ARCHIVE_ENDPOINT
+            if event_time.date() < today
+            else OPEN_METEO_ENDPOINT
+        )
+        response = requests.get(
+            endpoint,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "hourly": ",".join(
+                    [
+                        "temperature_2m",
+                        "relative_humidity_2m",
+                        "weather_code",
+                        "wind_speed_10m",
+                    ]
+                ),
+                "temperature_unit": "fahrenheit",
+                "wind_speed_unit": "mph",
+                "timezone": "UTC",
+                "start_date": event_time.date().isoformat(),
+                "end_date": event_time.date().isoformat(),
+            },
+            timeout=OPEN_METEO_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        hourly = response.json().get("hourly") or {}
+        index = _nearest_hour_index(hourly.get("time") or [], event_time)
+        weather_code = _value_at(hourly.get("weather_code"), index)
+        return {
+            "Weather_Condition": _weather_label_from_code(weather_code),
+            "Temperature(F)": _value_at(hourly.get("temperature_2m"), index),
+            "Humidity(%)": _value_at(hourly.get("relative_humidity_2m"), index),
+            "Wind_Speed(mph)": _value_at(hourly.get("wind_speed_10m"), index),
+            "weather_observed_at": _value_at(hourly.get("time"), index),
+        }
+    except Exception:
+        logger.exception("Open-Meteo enrichment failed")
+        return {}
+
+
+def _first_non_empty(*values: Any, default: str = "") -> str:
+    for value in values:
+        text = _safe_string(value)
+        if text:
+            return text
+    return default
+
+
+def enrich_tomtom_event(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    lat = _safe_float(raw_row.get("latitude", raw_row.get("lat")))
+    lon = _safe_float(
+        raw_row.get("longitude", raw_row.get("lon", raw_row.get("lng")))
+    )
+    timestamp = _first_non_empty(
+        raw_row.get("timestamp"),
+        raw_row.get("event_timestamp"),
+        raw_row.get("last_report_time"),
+    )
+    event_id = _first_non_empty(raw_row.get("event_id"), raw_row.get("incident_id"))
+
+    if lat is None or lon is None or not timestamp or not event_id:
+        return None
+
+    weather = fetch_open_meteo_weather(lat, lon, timestamp)
+    severity = normalize_tomtom_severity(
+        raw_row.get("delay_magnitude"), raw_row.get("icon_category")
+    )
+    street = _first_non_empty(
+        raw_row.get("from_road"),
+        raw_row.get("to_road"),
+        ", ".join(raw_row.get("road_numbers") or []),
+        default="",
+    )
+
+    enriched = dict(raw_row)
+    enriched.update(
+        {
+            "ID": event_id,
+            "Severity": severity,
+            "Start_Time": timestamp,
+            "Start_Lat": lat,
+            "Start_Lng": lon,
+            "Weather_Condition": weather.get("Weather_Condition", "Clear"),
+            "Temperature(F)": weather.get("Temperature(F)", 50.0),
+            "Humidity(%)": weather.get("Humidity(%)", 50.0),
+            "Wind_Speed(mph)": weather.get("Wind_Speed(mph)", 0.0),
+            "weather_observed_at": weather.get("weather_observed_at"),
+            "Visibility(mi)": raw_row.get("visibility_mi", 10.0),
+            "Street": street,
+            "Junction": raw_row.get("is_junction", 0),
+            "Traffic_Signal": raw_row.get("has_traffic_signal", 0),
+            "Crossing": raw_row.get("is_crossing", 0),
+            "Roundabout": raw_row.get("is_roundabout", 0),
+            "Stop": raw_row.get("is_stop", 0),
+            "Station": raw_row.get("is_station", 0),
+            "Railway": raw_row.get("is_railway", 0),
+            "Sunrise_Sunset": _infer_light(timestamp),
+        }
+    )
+    return enriched
+
+
+def _infer_light(timestamp: Any) -> str:
+    text = _safe_string(timestamp)
+    try:
+        event_time = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return "Day"
+    return "Night" if event_time.hour >= 22 or event_time.hour < 6 else "Day"
+
+
+def enrich_stream_event(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    source = _safe_string(raw_row.get("source")).lower()
+    if source == "tomtom":
+        return enrich_tomtom_event(raw_row)
+    return raw_row
