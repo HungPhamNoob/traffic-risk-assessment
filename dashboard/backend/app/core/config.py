@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = Field(
         default="http://localhost:5000", alias="MLFLOW_TRACKING_URI"
     )
+    mlflow_experiment_name: str = Field(
+        default="traffic-risk-assessment", alias="MLFLOW_EXPERIMENT_NAME"
+    )
     mlflow_serving_endpoint: str = Field(
         default="http://localhost:5001/invocations",
         alias="MLFLOW_SERVING_ENDPOINT",
