@@ -13,6 +13,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
@@ -96,6 +97,24 @@ PRODUCER_BATCH_NUM_MESSAGES = get_int_env("PRODUCER_BATCH_NUM_MESSAGES", 10000)
 PRODUCER_COMPRESSION_TYPE = get_str_env("PRODUCER_COMPRESSION_TYPE", "lz4")
 PRODUCER_QUEUE_BACKOFF_SECONDS = get_float_env("PRODUCER_QUEUE_BACKOFF_SECONDS", 0.5)
 
+STATE_SIGNATURE_FIELDS = (
+    "timestamp",
+    "last_report_time",
+    "time_validity",
+    "probability_of_occurrence",
+    "icon_category",
+    "delay_magnitude",
+    "delay_seconds",
+    "length_meters",
+    "from_road",
+    "to_road",
+    "road_numbers",
+    "geometry_wkt",
+    "incident_code",
+    "incident_description",
+    "number_of_reports",
+)
+
 
 BboxRegion = Tuple[str, str, str]
 
@@ -142,7 +161,9 @@ def build_producer_config() -> Dict[str, Any]:
     }
 
 
-def first_coordinate(geometry: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+def first_coordinate(
+    geometry: Dict[str, Any]
+) -> Tuple[Optional[float], Optional[float]]:
     coordinates = geometry.get("coordinates")
     if not coordinates:
         return None, None
@@ -249,11 +270,25 @@ def fetch_incidents(region: BboxRegion) -> Iterable[Dict[str, Any]]:
     response.raise_for_status()
     payload = response.json()
     incidents = payload.get("incidents") or []
-    logger.info("Fetched %s TomTom incidents for %s/%s", len(incidents), state_or_region, city)
+    logger.info(
+        "Fetched %s TomTom incidents for %s/%s", len(incidents), state_or_region, city
+    )
     for incident in incidents:
         normalized = normalize_incident(incident, state_or_region, city)
         if normalized is not None:
             yield normalized
+
+
+def event_state_signature(event: Dict[str, Any]) -> str:
+    payload = {field: event.get(field) for field in STATE_SIGNATURE_FIELDS}
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 delivery_success_count = 0
@@ -272,7 +307,9 @@ def delivery_report(error: Any, message: Any) -> None:
 def produce_with_backpressure(producer, topic: str, key: str, value: str) -> None:
     while True:
         try:
-            producer.produce(topic=topic, key=key, value=value, callback=delivery_report)
+            producer.produce(
+                topic=topic, key=key, value=value, callback=delivery_report
+            )
             producer.poll(0)
             return
         except BufferError:
@@ -282,10 +319,32 @@ def produce_with_backpressure(producer, topic: str, key: str, value: str) -> Non
                 time.sleep(PRODUCER_QUEUE_BACKOFF_SECONDS)
 
 
+def publish_event_if_changed(
+    producer,
+    topic: str,
+    event: Dict[str, Any],
+    last_seen_signatures: Dict[str, str],
+) -> str:
+    event_id = str(event["event_id"])
+    signature = event_state_signature(event)
+    previous_signature = last_seen_signatures.get(event_id)
+
+    if previous_signature == signature:
+        return "unchanged"
+
+    value = json.dumps(event, ensure_ascii=False)
+    produce_with_backpressure(producer, topic, event_id, value)
+    last_seen_signatures[event_id] = signature
+    if previous_signature is None:
+        return "new"
+    return "update"
+
+
 def main() -> None:
     validate_config()
     regions = parse_bbox_regions()
     producer = Producer(build_producer_config())
+    last_seen_signatures: Dict[str, str] = {}
     sent_rows = 0
 
     logger.info("=" * 80)
@@ -297,15 +356,26 @@ def main() -> None:
 
     try:
         while True:
+            poll_fetched = 0
+            poll_published_new = 0
+            poll_published_updates = 0
+            poll_skipped_unchanged = 0
             for region in regions:
                 for event in fetch_incidents(region):
-                    value = json.dumps(event, ensure_ascii=False)
-                    produce_with_backpressure(
+                    poll_fetched += 1
+                    publish_status = publish_event_if_changed(
                         producer,
                         KAFKA_TOPIC,
-                        str(event["event_id"]),
-                        value,
+                        event,
+                        last_seen_signatures,
                     )
+                    if publish_status == "unchanged":
+                        poll_skipped_unchanged += 1
+                        continue
+                    if publish_status == "new":
+                        poll_published_new += 1
+                    else:
+                        poll_published_updates += 1
                     sent_rows += 1
                     if sent_rows % PRODUCER_FLUSH_EVERY_N_RECORDS == 0:
                         producer.flush()
@@ -314,6 +384,15 @@ def main() -> None:
                         return
 
             producer.flush()
+            logger.info(
+                "TomTom poll summary: fetched=%s, published_new=%s, "
+                "published_updates=%s, skipped_unchanged=%s, tracked_events=%s",
+                poll_fetched,
+                poll_published_new,
+                poll_published_updates,
+                poll_skipped_unchanged,
+                len(last_seen_signatures),
+            )
             if TOMTOM_RUN_ONCE:
                 return
             time.sleep(TOMTOM_POLL_SECONDS)
