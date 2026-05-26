@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -34,7 +33,9 @@ def test_cloud_env_matches_pipeline_table_and_topic_names():
 
     assert config["POSTGRES_PREDICTION_TABLE"] == "traffic_risk_predictions"
     assert config["KAFKA_TOPIC_RAW"] == "traffic.us.raw"
-    assert not any(
-        key.startswith("KAFKA_TOPIC_") and key != "KAFKA_TOPIC_RAW" for key in config
-    )
+    assert config["KAFKA_TOPIC_TOMTOM_RAW"] == "traffic.tomtom.raw"
+    assert {key for key in config if key.startswith("KAFKA_TOPIC_")} == {
+        "KAFKA_TOPIC_RAW",
+        "KAFKA_TOPIC_TOMTOM_RAW",
+    }
     assert config["TOTAL_PRODUCERS"] == "3"

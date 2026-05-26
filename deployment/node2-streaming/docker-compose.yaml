@@ -59,7 +59,7 @@ services:
       zookeeper:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -91,7 +91,7 @@ services:
       zookeeper:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -123,7 +123,7 @@ services:
       zookeeper:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -131,18 +131,19 @@ services:
     restart: unless-stopped
 
   kafka-topic-init:
-    # Long-running topic guard. It creates and validates the single project
-    # topic, then stays alive so operators do not mistake a successful one-shot
-    # exit for a crash in Docker Compose dashboards.
+    # Long-running topic guard. It creates and validates the US replay and
+    # TomTom raw topics, then stays alive so operators do not mistake a
+    # successful one-shot exit for a crash in Docker Compose dashboards.
     image: confluentinc/cp-kafka:7.6.0
     container_name: node2-kafka-topic-init
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_TOMTOM_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
     command: |
       bash -ec '
         BOOTSTRAP_SERVERS="$${KAFKA_BOOTSTRAP_SERVERS}"
-        TOPIC_NAME="$${KAFKA_TOPIC_RAW}"
+        TOPICS="$${KAFKA_TOPIC_RAW} $${KAFKA_TOPIC_TOMTOM_RAW}"
 
         echo "Waiting for Kafka brokers at $${BOOTSTRAP_SERVERS}."
         for i in $(seq 1 30); do
@@ -158,11 +159,13 @@ services:
           exit 1
         fi
 
-        echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
-        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
+        for TOPIC_NAME in $${TOPICS}; do
+          echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
+          kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
 
-        echo "Validating Kafka topic $${TOPIC_NAME}."
-        kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+          echo "Validating Kafka topic $${TOPIC_NAME}."
+          kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"
+        done
 
         echo "Kafka topic init complete. Holding container open."
         tail -f /dev/null
@@ -177,7 +180,7 @@ services:
       kafka-3:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_RAW}\" >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/kafka-1/29092 && echo > /dev/tcp/kafka-2/29092 && echo > /dev/tcp/kafka-3/29092'"]
       interval: 20s
       timeout: 15s
       retries: 5
@@ -274,18 +277,67 @@ services:
         condition: service_healthy
     restart: "no"
 
+  tomtom-producer:
+    image: python:3.10-slim
+    container_name: node2-tomtom-producer
+    working_dir: /app
+    command: >
+      bash -c "
+      pip install --no-cache-dir confluent-kafka python-dotenv requests &&
+      python tomtom_producer.py
+      "
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
+      TOMTOM_API: ${TOMTOM_API:-}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      TOMTOM_ENDPOINT: ${TOMTOM_ENDPOINT:-https://api.tomtom.com/traffic/services/5/incidentDetails}
+      TOMTOM_BBOX: ${TOMTOM_BBOX:--74.25909,40.477399,-73.700181,40.917577}
+      TOMTOM_BBOXES: ${TOMTOM_BBOXES:-US:New York:-74.25909,40.477399,-73.700181,40.917577}
+      TOMTOM_LANGUAGE: ${TOMTOM_LANGUAGE:-en-US}
+      TOMTOM_TIME_VALIDITY: ${TOMTOM_TIME_VALIDITY:-present}
+      TOMTOM_POLL_SECONDS: ${TOMTOM_POLL_SECONDS:-60}
+      TOMTOM_RUN_ONCE: ${TOMTOM_RUN_ONCE:-false}
+      STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
+      PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
+      STREAMING_LOG_LEVEL: ${STREAMING_LOG_LEVEL:-INFO}
+    volumes:
+      - ../../ingestion/kafka/tomtom_producer.py:/app/tomtom_producer.py:ro
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-topic-init:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ==========================================================
   # Flink JobManager
   # ==========================================================
   flink-jobmanager:
     image: flink:1.19-scala_2.12
     container_name: node2-flink-jm
-    command: jobmanager
+    user: root
+    entrypoint: []
+    command: >
+      bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
+        apt-get update &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv &&
+        rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /docker-entrypoint.sh jobmanager
+      "
     ports:
       - "8081:8081"
     environment:
-      - |
-        FLINK_PROPERTIES=
+      PYTHONPATH: /opt/traffic
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.bind-address: 0.0.0.0
         state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
@@ -308,10 +360,26 @@ services:
   flink-taskmanager:
     image: flink:1.19-scala_2.12
     container_name: node2-flink-tm
-    command: taskmanager
+    user: root
+    entrypoint: []
+    command: >
+      bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
+        apt-get update &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv &&
+        rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /docker-entrypoint.sh taskmanager
+      "
     environment:
-      - |
-        FLINK_PROPERTIES=
+      PYTHONPATH: /opt/traffic
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
         taskmanager.memory.process.size: 1536m
@@ -352,19 +420,29 @@ services:
     restart: unless-stopped
 
   flink-python-job:
-    image: python:3.10-slim
+    image: flink:1.19-scala_2.12
     container_name: node2-flink-python-job
+    user: root
+    entrypoint: []
     working_dir: /opt/traffic
     command: >
       bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
         apt-get update &&
-        apt-get install -y --no-install-recommends default-jre-headless curl ca-certificates &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv curl ca-certificates &&
         rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
         mkdir -p /opt/flink/connectors &&
         curl -fsSL -o /opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-kafka/3.2.0-1.19/flink-connector-kafka-3.2.0-1.19.jar &&
         curl -fsSL -o /opt/flink/connectors/kafka-clients-3.6.1.jar https://repo.maven.apache.org/maven2/org/apache/kafka/kafka-clients/3.6.1/kafka-clients-3.6.1.jar &&
-        pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
-        python processing/flink_streaming.py
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /opt/flink/bin/flink run -d -m flink-jobmanager:8081 -pyclientexec /opt/flink/pyenv/bin/python -pyexec /opt/flink/pyenv/bin/python -pyfs processing -py processing/flink_streaming.py &&
+        tail -f /dev/null
       "
     environment:
       PYTHONPATH: /opt/traffic
@@ -377,6 +455,7 @@ services:
       FLINK_KAFKA_CONNECTOR_JAR: ${FLINK_KAFKA_CONNECTOR_JAR:-file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,file:///opt/flink/connectors/kafka-clients-3.6.1.jar}
       SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
       MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
+      ML_TIMEOUT_SECONDS: ${ML_TIMEOUT_SECONDS:-30}
       POSTGRES_HOST: ${POSTGRES_HOST:-10.128.0.4}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-capstone_db}
@@ -396,6 +475,16 @@ services:
       flink-jobmanager:
         condition: service_started
     restart: on-failure
+
+  flink-tomtom-python-job:
+    extends:
+      service: flink-python-job
+    container_name: node2-flink-tomtom-python-job
+    environment:
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
+      FLINK_INFERENCE_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
+      FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_TOMTOM_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/tomtom-inference}
+      SILVER_FEATURES_PATH: ${TOMTOM_SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/tomtom_features}
 
 networks:
   capstone-net:
