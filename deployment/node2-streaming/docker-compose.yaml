@@ -59,7 +59,7 @@ services:
       zookeeper:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -91,7 +91,7 @@ services:
       zookeeper:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -123,7 +123,7 @@ services:
       zookeeper:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -180,7 +180,7 @@ services:
       kafka-3:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_RAW}\" >/dev/null 2>&1 && kafka-topics --bootstrap-server \"$${KAFKA_BOOTSTRAP_SERVERS}\" --describe --topic \"$${KAFKA_TOPIC_TOMTOM_RAW}\" >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/kafka-1/29092 && echo > /dev/tcp/kafka-2/29092 && echo > /dev/tcp/kafka-3/29092'"]
       interval: 20s
       timeout: 15s
       retries: 5
@@ -308,8 +308,6 @@ services:
     depends_on:
       kafka-topic-init:
         condition: service_healthy
-    profiles:
-      - tomtom
     restart: unless-stopped
 
   # ==========================================================
@@ -318,12 +316,28 @@ services:
   flink-jobmanager:
     image: flink:1.19-scala_2.12
     container_name: node2-flink-jm
-    command: jobmanager
+    user: root
+    entrypoint: []
+    command: >
+      bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
+        apt-get update &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv &&
+        rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /docker-entrypoint.sh jobmanager
+      "
     ports:
       - "8081:8081"
     environment:
-      - |
-        FLINK_PROPERTIES=
+      PYTHONPATH: /opt/traffic
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.bind-address: 0.0.0.0
         state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
@@ -346,10 +360,26 @@ services:
   flink-taskmanager:
     image: flink:1.19-scala_2.12
     container_name: node2-flink-tm
-    command: taskmanager
+    user: root
+    entrypoint: []
+    command: >
+      bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
+        apt-get update &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv &&
+        rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /docker-entrypoint.sh taskmanager
+      "
     environment:
-      - |
-        FLINK_PROPERTIES=
+      PYTHONPATH: /opt/traffic
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
         taskmanager.memory.process.size: 1536m
@@ -390,19 +420,29 @@ services:
     restart: unless-stopped
 
   flink-python-job:
-    image: python:3.10-slim
+    image: flink:1.19-scala_2.12
     container_name: node2-flink-python-job
+    user: root
+    entrypoint: []
     working_dir: /opt/traffic
     command: >
       bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
         apt-get update &&
-        apt-get install -y --no-install-recommends default-jre-headless curl ca-certificates &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv curl ca-certificates &&
         rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
         mkdir -p /opt/flink/connectors &&
         curl -fsSL -o /opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-kafka/3.2.0-1.19/flink-connector-kafka-3.2.0-1.19.jar &&
         curl -fsSL -o /opt/flink/connectors/kafka-clients-3.6.1.jar https://repo.maven.apache.org/maven2/org/apache/kafka/kafka-clients/3.6.1/kafka-clients-3.6.1.jar &&
-        pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
-        python processing/flink_streaming.py
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /opt/flink/bin/flink run -d -m flink-jobmanager:8081 -pyclientexec /opt/flink/pyenv/bin/python -pyexec /opt/flink/pyenv/bin/python -pyfs processing -py processing/flink_streaming.py &&
+        tail -f /dev/null
       "
     environment:
       PYTHONPATH: /opt/traffic
@@ -415,6 +455,7 @@ services:
       FLINK_KAFKA_CONNECTOR_JAR: ${FLINK_KAFKA_CONNECTOR_JAR:-file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,file:///opt/flink/connectors/kafka-clients-3.6.1.jar}
       SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
       MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
+      ML_TIMEOUT_SECONDS: ${ML_TIMEOUT_SECONDS:-30}
       POSTGRES_HOST: ${POSTGRES_HOST:-10.128.0.4}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-capstone_db}
