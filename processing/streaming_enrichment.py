@@ -77,7 +77,9 @@ def _parse_event_time(timestamp: Any) -> Optional[datetime]:
         return None
     if event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
-    return event_time.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    return event_time.astimezone(timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
 
 
 def _parse_open_meteo_time(value: Any) -> Optional[datetime]:
@@ -209,9 +211,7 @@ def _first_non_empty(*values: Any, default: str = "") -> str:
 
 def enrich_tomtom_event(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     lat = _safe_float(raw_row.get("latitude", raw_row.get("lat")))
-    lon = _safe_float(
-        raw_row.get("longitude", raw_row.get("lon", raw_row.get("lng")))
-    )
+    lon = _safe_float(raw_row.get("longitude", raw_row.get("lon", raw_row.get("lng"))))
     timestamp = _first_non_empty(
         raw_row.get("timestamp"),
         raw_row.get("event_timestamp"),
