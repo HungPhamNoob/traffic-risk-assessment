@@ -10,8 +10,10 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
+NODE3_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node3-batch/docker-compose.yaml"
 NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-600}"
 NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS="${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS:-15}"
+NODE3_MIN_SILVER_OBJECTS="${NODE3_MIN_SILVER_OBJECTS:-100}"
 
 echo "Node 3 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
@@ -51,9 +53,14 @@ wait_for_silver_data() {
   while [ "${waited_seconds}" -le "${NODE3_WAIT_FOR_SILVER_SECONDS}" ]; do
     if gcloud storage ls "${silver_glob}" >/tmp/node3-silver-ls.txt 2>/tmp/node3-silver-ls.err; then
       if [ -s /tmp/node3-silver-ls.txt ]; then
-        echo "Silver data is available. Sample objects:"
-        head -20 /tmp/node3-silver-ls.txt
-        return 0
+        local object_count
+        object_count="$(wc -l < /tmp/node3-silver-ls.txt | tr -d ' ')"
+        if [ "${object_count}" -ge "${NODE3_MIN_SILVER_OBJECTS}" ]; then
+          echo "Silver data is available with ${object_count} objects. Sample objects:"
+          head -20 /tmp/node3-silver-ls.txt
+          return 0
+        fi
+        echo "Silver data exists but only ${object_count} objects are visible. Waiting for at least ${NODE3_MIN_SILVER_OBJECTS} objects."
       fi
     fi
 
@@ -85,7 +92,19 @@ docker rm -f \
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
-docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml up -d
+docker compose \
+  --project-directory "${PROJECT_ROOT}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE3_COMPOSE_FILE}" \
+  up -d
+
+echo "Verifying that the Spark master container is mounted from ${PROJECT_ROOT}."
+SPARK_MOUNT_SOURCE="$(docker inspect node3-spark-master --format '{{range .Mounts}}{{if eq .Destination "/opt/traffic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+if [ "${SPARK_MOUNT_SOURCE}" != "${PROJECT_ROOT}" ]; then
+  echo "ERROR: node3-spark-master is mounted from '${SPARK_MOUNT_SOURCE}', expected '${PROJECT_ROOT}'."
+  echo "ERROR: Aborting so the operator does not accidentally run an outdated checkout."
+  exit 1
+fi
 
 echo "Waiting for Spark master to accept jobs..."
 sleep 20
@@ -124,10 +143,18 @@ sudo chown -R "$(id -u):$(id -g)" "${LOCAL_CLOUD_DATA_DIR}"
 sudo chmod -R a+rwX "${LOCAL_CLOUD_DATA_DIR}"
 
 echo "Running Spark silver-to-gold job once. Existing checkpoints/data are preserved."
-docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml exec -T --user root spark-master \
+docker compose \
+  --project-directory "${PROJECT_ROOT}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE3_COMPOSE_FILE}" \
+  exec -T --user root spark-master \
   sh -c 'mkdir -p /home/spark/.ivy2/cache /home/spark/.ivy2/jars && chown -R spark:spark /home/spark/.ivy2'
 
-docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml exec -T spark-master \
+docker compose \
+  --project-directory "${PROJECT_ROOT}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE3_COMPOSE_FILE}" \
+  exec -T spark-master \
   env \
   SILVER_FEATURES_PATH=/data/cloud/silver/flink_features \
   GOLD_RETRAIN_PATH=/data/cloud/gold/features/retrain \
@@ -171,6 +198,10 @@ H2O_MAX_RUNTIME="${NODE3_H2O_MAX_RUNTIME:-${H2O_MAX_RUNTIME:-600}}" \
   "${RETRAINING_PYTHON}" ml/training/h2o_after_2020.py
 
 echo "Node 3 services:"
-docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml ps
+docker compose \
+  --project-directory "${PROJECT_ROOT}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE3_COMPOSE_FILE}" \
+  ps
 
 echo "Node 3 run script completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -12,6 +12,8 @@ ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 RESET_LOCAL_COMPOSE="${RESET_LOCAL_COMPOSE:-true}"
 RESET_POSTGRES="${RESET_POSTGRES:-true}"
 RESET_GCS="${RESET_GCS:-true}"
+NODE2_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node2-streaming/docker-compose.yaml"
+NODE3_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node3-batch/docker-compose.yaml"
 
 cd "${PROJECT_ROOT}"
 
@@ -31,10 +33,18 @@ echo "Cloud SDK runtime config: ${CLOUDSDK_CONFIG}"
 
 if [ "${RESET_LOCAL_COMPOSE}" = "true" ]; then
   echo "Stopping Node 2 streaming services and clearing local Kafka/Flink volumes if this script is running on Node 2..."
-  docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml down --volumes --remove-orphans 2>/dev/null || true
+  docker compose \
+    --project-directory "${PROJECT_ROOT}" \
+    --env-file "${ENV_FILE}" \
+    -f "${NODE2_COMPOSE_FILE}" \
+    down --volumes --remove-orphans 2>/dev/null || true
 
   echo "Stopping Node 3 batch services and clearing local Spark volumes if this script is running on Node 3..."
-  docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml down --volumes --remove-orphans 2>/dev/null || true
+  docker compose \
+    --project-directory "${PROJECT_ROOT}" \
+    --env-file "${ENV_FILE}" \
+    -f "${NODE3_COMPOSE_FILE}" \
+    down --volumes --remove-orphans 2>/dev/null || true
 else
   echo "Local Docker Compose reset is disabled for this host."
 fi

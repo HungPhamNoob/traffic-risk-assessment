@@ -61,31 +61,22 @@ NODE3_IP="$(node_external_ip "${NODE3}")"
   ssh_cmd "${NODE1}" "curl -fsS http://localhost:8000/api/v1/pipeline/replay-health | python3 -m json.tool"
   echo
   echo "## PostgreSQL Table Metrics"
-  ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && . .env.cloud && docker exec node1-postgres psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -P pager=off -c \"
-WITH us AS (
-  SELECT
-    'traffic_risk_predictions' AS table_name,
-    COUNT(*)::bigint AS rows,
-    MIN(event_time) AS min_event_time,
-    MAX(event_time) AS max_event_time,
-    AVG(end_to_end_latency_ms)::numeric(12,2) AS avg_e2e_ms,
-    percentile_cont(0.95) WITHIN GROUP (ORDER BY end_to_end_latency_ms)::numeric(12,2) AS p95_e2e_ms
-  FROM traffic_risk_predictions
-),
-tomtom AS (
-  SELECT
-    'traffic_tomtom_incidents' AS table_name,
-    COUNT(*)::bigint AS rows,
-    MIN(event_time) AS min_event_time,
-    MAX(event_time) AS max_event_time,
-    AVG(end_to_end_latency_ms)::numeric(12,2) AS avg_e2e_ms,
-    percentile_cont(0.95) WITHIN GROUP (ORDER BY end_to_end_latency_ms)::numeric(12,2) AS p95_e2e_ms
-  FROM traffic_tomtom_incidents
-)
-SELECT * FROM us
-UNION ALL
-SELECT * FROM tomtom;
-\""
+  ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && . .env.cloud && for table_name in \"\${POSTGRES_US_PREDICTION_TABLE:-traffic_risk_predictions}\" \"\${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}\"; do
+    if docker exec node1-postgres psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -At -c \"select to_regclass('public.' || '$table_name');\" | grep -qv '^$'; then
+      docker exec node1-postgres psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -P pager=off -c \"
+SELECT
+  '$table_name' AS table_name,
+  COUNT(*)::bigint AS rows,
+  MIN(event_time) AS min_event_time,
+  MAX(event_time) AS max_event_time,
+  AVG(end_to_end_latency_ms)::numeric(12,2) AS avg_e2e_ms,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY end_to_end_latency_ms)::numeric(12,2) AS p95_e2e_ms
+FROM $table_name;
+\"
+    else
+      echo \"Table $table_name does not exist yet.\"
+    fi
+  done"
   echo
   echo "## Kafka Topic Offsets"
   ssh_cmd "${NODE2}" "docker exec node2-kafka-1 kafka-run-class kafka.tools.GetOffsetShell --broker-list kafka-1:29092,kafka-2:29092,kafka-3:29092 --topic traffic.us.raw --time -1 || true"
