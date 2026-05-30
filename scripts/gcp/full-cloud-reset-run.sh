@@ -82,15 +82,15 @@ for node in "${NODE1}" "${NODE2}" "${NODE3}"; do
 done
 
 echo "Resetting Node 1 PostgreSQL serving tables."
-ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && bash scripts/gcp/reset-realtime.sh" \
+ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && RESET_LOCAL_COMPOSE=false RESET_POSTGRES=true RESET_GCS=true bash scripts/gcp/reset-realtime.sh" \
   | tee "${LOG_DIR}/05-reset-node1.log"
 
 echo "Resetting Node 2 Kafka/Flink streaming state."
-ssh_cmd "${NODE2}" "cd ${PROJECT_ROOT} && bash scripts/gcp/reset-realtime.sh" \
+ssh_cmd "${NODE2}" "cd ${PROJECT_ROOT} && RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh" \
   | tee "${LOG_DIR}/06-reset-node2.log"
 
 echo "Resetting Node 3 Spark batch state."
-ssh_cmd "${NODE3}" "cd ${PROJECT_ROOT} && bash scripts/gcp/reset-realtime.sh" \
+ssh_cmd "${NODE3}" "cd ${PROJECT_ROOT} && RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh" \
   | tee "${LOG_DIR}/07-reset-node3.log"
 
 echo "Starting Node 1 and bootstrapping the pre-2020 H2O model."

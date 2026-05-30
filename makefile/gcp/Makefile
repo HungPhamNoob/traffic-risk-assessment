@@ -59,9 +59,9 @@ start-node23:
 	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/start-node23-synced.sh'
 
 reset-realtime:
-	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/reset-realtime.sh'
-	$(SSH_BASE) $(NODE2) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/reset-realtime.sh'
-	$(SSH_BASE) $(NODE3) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/reset-realtime.sh'
+	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && RESET_LOCAL_COMPOSE=false RESET_POSTGRES=true RESET_GCS=true bash scripts/gcp/reset-realtime.sh'
+	$(SSH_BASE) $(NODE2) --command='cd $(PROJECT_ROOT) && RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh'
+	$(SSH_BASE) $(NODE3) --command='cd $(PROJECT_ROOT) && RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh'
 
 status:
 	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT)/deployment/node1-control && docker compose --env-file $(PROJECT_ROOT)/.env.cloud ps'
