@@ -12,6 +12,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE2_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node2-streaming/docker-compose.yaml"
+NODE2_COMPOSE_DIR="$(dirname "${NODE2_COMPOSE_FILE}")"
 
 echo "Node 2 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
@@ -51,7 +52,7 @@ echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE2_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE2_COMPOSE_FILE}" \
   up -d
@@ -66,7 +67,7 @@ fi
 
 echo "Node 2 services:"
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE2_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE2_COMPOSE_FILE}" \
   ps

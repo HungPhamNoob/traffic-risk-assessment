@@ -13,6 +13,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE1_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node1-control/docker-compose.yaml"
+NODE1_COMPOSE_DIR="$(dirname "${NODE1_COMPOSE_FILE}")"
 
 # Capture incoming environment variables to prevent them from being overwritten by sourcing env files
 INCOMING_IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-}"
@@ -93,7 +94,7 @@ echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
   up -d --remove-orphans
@@ -154,14 +155,14 @@ echo "Restarting MLflow model serving after model bootstrap..."
 echo "Removing any transient Node 1 containers that could block the serving restart."
 remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
   up -d mlflow-serving fastapi
 
 echo "Node 1 services:"
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
   ps

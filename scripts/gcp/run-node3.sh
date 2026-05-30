@@ -11,6 +11,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE3_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node3-batch/docker-compose.yaml"
+NODE3_COMPOSE_DIR="$(dirname "${NODE3_COMPOSE_FILE}")"
 NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-600}"
 NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS="${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS:-15}"
 NODE3_MIN_SILVER_OBJECTS="${NODE3_MIN_SILVER_OBJECTS:-100}"
@@ -93,7 +94,7 @@ echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE3_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE3_COMPOSE_FILE}" \
   up -d
@@ -144,14 +145,14 @@ sudo chmod -R a+rwX "${LOCAL_CLOUD_DATA_DIR}"
 
 echo "Running Spark silver-to-gold job once. Existing checkpoints/data are preserved."
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE3_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE3_COMPOSE_FILE}" \
   exec -T --user root spark-master \
   sh -c 'mkdir -p /home/spark/.ivy2/cache /home/spark/.ivy2/jars && chown -R spark:spark /home/spark/.ivy2'
 
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE3_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE3_COMPOSE_FILE}" \
   exec -T spark-master \
@@ -199,7 +200,7 @@ H2O_MAX_RUNTIME="${NODE3_H2O_MAX_RUNTIME:-${H2O_MAX_RUNTIME:-600}}" \
 
 echo "Node 3 services:"
 docker compose \
-  --project-directory "${PROJECT_ROOT}" \
+  --project-directory "${NODE3_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE3_COMPOSE_FILE}" \
   ps
