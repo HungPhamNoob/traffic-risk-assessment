@@ -478,7 +478,6 @@ def insert_us_prediction(
     end_to_end_latency_ms: Optional[float],
 ) -> None:
     """Insert one US replay prediction into PostgreSQL/PostGIS."""
-    global SCHEMA_READY
     connection = pg_connect()
     try:
         with connection:
@@ -568,7 +567,6 @@ def insert_tomtom_incident(
     end_to_end_latency_ms: Optional[float],
 ) -> None:
     """Insert one TomTom incident into its live PostgreSQL/PostGIS table."""
-    global SCHEMA_READY
     severity = features.get("true_severity")
     risk_score = _severity_to_risk_score(severity)
 
