@@ -68,7 +68,7 @@ ignore = ["E501"]
 [tool.flake8]
 max-line-length = 88
 extend-ignore = "E203,W503"
-exclude = ".git,__pycache__,.venv,venv"
+exclude = ".git,__pycache__,.venv,.venv-cicd,venv,vendor,data,ml/notebooks,node_modules,dashboard/frontend/node_modules"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

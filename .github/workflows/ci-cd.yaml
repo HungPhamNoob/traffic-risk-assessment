@@ -59,7 +59,7 @@ jobs:
       # Step 3: Check code formatting with Black
       - name: Check code formatting (Black)
         run: |
-          black --check . --exclude='(\.git|\.venv|venv|vendor|data|ml/notebooks)' || {
+          black --check . --exclude='(\.git|\.venv|\.venv-cicd|venv|vendor|data|ml/notebooks|node_modules|dashboard/frontend/node_modules)' || {
             echo "Black found formatting issues. Run 'black .' locally to fix."
             exit 1
           }
@@ -67,7 +67,7 @@ jobs:
       # Step 4: Check code style with Flake8
       - name: Check code style (Flake8)
         run: |
-          flake8 . --exclude=venv,.venv,vendor,data,ml/notebooks --max-line-length=120 --extend-ignore=E203,W503,W605
+          flake8 . --exclude=venv,.venv,.venv-cicd,vendor,data,ml/notebooks,node_modules,dashboard/frontend/node_modules --max-line-length=120 --extend-ignore=E203,W503,W605
 
       # Step 5: Run unit tests
       - name: Run unit tests
