@@ -117,7 +117,7 @@ MODEL_FEATURE_COLUMNS = [
 SCHEMA_READY = {"us": False, "tomtom": False}
 
 
-def log_stream_result(value: str | None) -> None:
+def log_stream_result(value: str) -> None:
     """Log processed stream outcomes for lightweight observability."""
     if value is None:
         return
