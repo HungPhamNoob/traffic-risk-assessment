@@ -148,43 +148,41 @@ poll_github_actions() {
       return 2
     fi
 
-    run_id="$(
-      curl -fsSL \
+    # Avoid failing hard on API rate limits (403). If that happens, stop polling.
+    runs_json="$(
+      curl -sS \
         -H "Accept: application/vnd.github+json" \
         ${token_header:+-H "$token_header"} \
         "${api}/actions/runs?per_page=30&branch=${branch}&event=push" \
-      | jq -r --arg sha "$sha" '.workflow_runs[] | select(.head_sha==$sha) | .id' \
-      | head -n 1
+      || true
     )"
+    if echo "$runs_json" | jq -e '.message? // empty | test("API rate limit exceeded")' >/dev/null 2>&1; then
+      echo "[auto_cicd] GitHub API rate limit exceeded; set GITHUB_TOKEN to enable polling. Url: https://github.com/${repo}/actions"
+      return 0
+    fi
+
+    run_id="$(echo "$runs_json" | jq -r --arg sha "$sha" '.workflow_runs[] | select(.head_sha==$sha) | .id' 2>/dev/null | head -n 1 || true)"
 
     if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
       sleep "$POLL_SECONDS"
       continue
     fi
 
-    status="$(
-      curl -fsSL \
+    run_json="$(
+      curl -sS \
         -H "Accept: application/vnd.github+json" \
         ${token_header:+-H "$token_header"} \
         "${api}/actions/runs/${run_id}" \
-      | jq -r '.status'
+      || true
     )"
+    if echo "$run_json" | jq -e '.message? // empty | test("API rate limit exceeded")' >/dev/null 2>&1; then
+      echo "[auto_cicd] GitHub API rate limit exceeded; set GITHUB_TOKEN to enable polling. Url: https://github.com/${repo}/actions"
+      return 0
+    fi
 
-    conclusion="$(
-      curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        ${token_header:+-H "$token_header"} \
-        "${api}/actions/runs/${run_id}" \
-      | jq -r '.conclusion'
-    )"
-
-    html_url="$(
-      curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        ${token_header:+-H "$token_header"} \
-        "${api}/actions/runs/${run_id}" \
-      | jq -r '.html_url'
-    )"
+    status="$(echo "$run_json" | jq -r '.status' 2>/dev/null || true)"
+    conclusion="$(echo "$run_json" | jq -r '.conclusion' 2>/dev/null || true)"
+    html_url="$(echo "$run_json" | jq -r '.html_url' 2>/dev/null || true)"
 
     echo "[auto_cicd] run_id=$run_id status=$status conclusion=$conclusion url=$html_url"
     if [ "$status" = "completed" ]; then
