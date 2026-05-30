@@ -5,7 +5,7 @@ from typing import Any
 from psycopg2 import sql
 
 from app.core.database import fetch_all
-from app.services.prediction_service import table_identifier
+from app.services.prediction_service import _normalize_mode, mode_table_identifier, table_identifier
 
 
 def timeseries(
@@ -56,8 +56,9 @@ def timeseries(
     return {"series": rows, "metric": metric_key, "group_by": date_part}
 
 
-def severity_distribution() -> dict[str, Any]:
+def severity_distribution(mode: str | None = None) -> dict[str, Any]:
     """Return class imbalance counts using the ground-truth severity label."""
+    tbl = mode_table_identifier(mode) if mode else table_identifier()
     query = sql.SQL(
         """
         SELECT true_severity AS severity, COUNT(*)::BIGINT AS count
@@ -65,12 +66,13 @@ def severity_distribution() -> dict[str, Any]:
         GROUP BY true_severity
         ORDER BY true_severity
         """
-    ).format(table=table_identifier())
+    ).format(table=tbl)
     return {"distribution": fetch_all(query)}
 
 
-def risk_by_hour() -> dict[str, Any]:
+def risk_by_hour(mode: str | None = None) -> dict[str, Any]:
     """Return average risk and event count by hour of day."""
+    tbl = mode_table_identifier(mode) if mode else table_identifier()
     query = sql.SQL(
         """
         SELECT hour, AVG(risk_score)::DOUBLE PRECISION AS avg_risk_score, COUNT(*)::BIGINT AS accident_count
@@ -78,7 +80,7 @@ def risk_by_hour() -> dict[str, Any]:
         GROUP BY hour
         ORDER BY hour
         """
-    ).format(table=table_identifier())
+    ).format(table=tbl)
     return {"data": fetch_all(query)}
 
 
@@ -93,3 +95,43 @@ def risk_by_weather() -> dict[str, Any]:
         """
     ).format(table=table_identifier())
     return {"data": fetch_all(query)}
+
+
+def weather_histogram(mode: str | None = None) -> dict[str, Any]:
+    """Return temperature, humidity, and wind_speed histograms."""
+    tbl = mode_table_identifier(mode) if mode else table_identifier()
+
+    result: dict[str, Any] = {"histogram": {}}
+    for col, bins, label in [
+        ("temperature_f", 8, "temperature"),
+        ("humidity", 8, "humidity"),
+        ("wind_speed_mph", 8, "wind_speed"),
+    ]:
+        col_ident = sql.Identifier(col)
+        query = sql.SQL(
+            """
+            SELECT
+                WIDTH_BUCKET({col}, 0, {max_val}, {bins}) AS bin_idx,
+                MIN({col})::DOUBLE PRECISION AS bin_min,
+                MAX({col})::DOUBLE PRECISION AS bin_max,
+                COUNT(*)::BIGINT AS count
+            FROM {table}
+            WHERE {col} IS NOT NULL
+            GROUP BY bin_idx
+            ORDER BY bin_idx
+            """
+        ).format(
+            col=col_ident,
+            table=tbl,
+            bins=sql.Literal(bins),
+            max_val=sql.Literal(100 if col == "humidity" else 130 if col == "temperature_f" else 100),
+        )
+        rows = fetch_all(query)
+        result["histogram"][label] = [
+            {
+                "bin": f"{row['bin_min']:.0f}-{row['bin_max']:.0f}",
+                "count": row["count"],
+            }
+            for row in rows
+        ]
+    return result

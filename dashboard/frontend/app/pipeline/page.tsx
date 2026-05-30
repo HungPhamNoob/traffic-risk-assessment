@@ -18,6 +18,17 @@ import { KpiCard } from "@/components/DataState";
 
 type AnyRecord = Record<string, any>;
 
+const SERVICE_URLS: Record<string, string> = {
+  kafka: "",
+  flink: "http://35.225.231.57:8081",
+  spark: "http://34.63.78.147:4040",
+  postgres: "",
+  mlflow: "http://35.224.149.110:5000",
+  airflow: "http://35.224.149.110:8080",
+  fastapi: "http://35.224.149.110:8000/docs",
+  grafana: "http://35.224.149.110:3000"
+};
+
 function statusText(data: unknown) {
   if (!data || typeof data !== "object") return "unavailable";
   return String((data as AnyRecord).status || "configured");
@@ -79,6 +90,17 @@ export default function PipelinePage() {
     : [];
   const trendSeries = (trendData?.series as AnyRecord[] | undefined) || [];
 
+  const serviceRows = [
+    ["Kafka", "kafka", systemData?.kafka?.status, systemData?.kafka?.topic],
+    ["Flink", "flink", systemData?.flink?.status, systemData?.flink?.checkpoint_dir],
+    ["Spark", "spark", "configured", systemData?.spark?.gold_path],
+    ["Postgres", "postgres", "configured", systemData?.postgres?.prediction_table],
+    ["MLflow", "mlflow", "configured", systemData?.mlflow?.serving_endpoint],
+    ["Airflow", "airflow", "configured", "DAG scheduler & webserver"],
+    ["FastAPI", "fastapi", "configured", "REST API & docs"],
+    ["Grafana", "grafana", "configured", "Monitoring dashboards"]
+  ];
+
   return (
     <div className="page-stack">
       <div className="page-title">
@@ -131,21 +153,37 @@ export default function PipelinePage() {
             <ServerCog size={18} />
           </div>
           <div className="side-list">
-            {[
-              ["Kafka", systemData?.kafka?.status, systemData?.kafka?.topic],
-              ["Flink", systemData?.flink?.status, systemData?.flink?.checkpoint_dir],
-              ["Spark", "configured", systemData?.spark?.gold_path],
-              ["Postgres", "configured", systemData?.postgres?.prediction_table],
-              ["MLflow", "configured", systemData?.mlflow?.serving_endpoint]
-            ].map(([name, status, detail]) => (
-              <div className="row-item" key={String(name)}>
-                <div className="row-top">
-                  <strong>{name}</strong>
-                  <span className="status-pill">{status || "unavailable"}</span>
+            {serviceRows.map(([name, key, status, detail]) => {
+              const url = SERVICE_URLS[key];
+              const content = (
+                <>
+                  <div className="row-top">
+                    <strong>{name}</strong>
+                    <span className="status-pill">{status || "unavailable"}</span>
+                  </div>
+                  <span className="muted">{detail || "No metadata"}</span>
+                </>
+              );
+              if (url) {
+                return (
+                  <a
+                    className="row-item"
+                    href={url}
+                    key={String(name)}
+                    rel="noreferrer"
+                    target="_blank"
+                    style={{ textDecoration: "none", color: "inherit", display: "block" }}
+                  >
+                    {content}
+                  </a>
+                );
+              }
+              return (
+                <div className="row-item" key={String(name)}>
+                  {content}
                 </div>
-                <span className="muted">{detail || "No metadata"}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -203,8 +241,7 @@ export default function PipelinePage() {
                 <XAxis dataKey="run_name" stroke="#94a3b8" hide />
                 <YAxis stroke="#94a3b8" />
                 <Tooltip />
-                <Line dataKey="macro_f1" stroke="#a78bfa" strokeWidth={2} />
-                <Line dataKey="weighted_f1" stroke="#22c55e" strokeWidth={2} />
+                <Line dataKey="accuracy" stroke="#22c55e" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -220,8 +257,9 @@ export default function PipelinePage() {
               <th>Status</th>
               <th>Start</th>
               <th>Accuracy</th>
-              <th>Macro F1</th>
-              <th>Logloss</th>
+              <th>F1</th>
+              <th>Recall</th>
+              <th>Precision</th>
             </tr>
           </thead>
           <tbody>
@@ -231,8 +269,9 @@ export default function PipelinePage() {
                 <td>{run.status}</td>
                 <td>{run.start_time || "-"}</td>
                 <td>{run.metrics?.accuracy?.toFixed?.(4) || "-"}</td>
-                <td>{run.metrics?.macro_f1?.toFixed?.(4) || "-"}</td>
-                <td>{run.metrics?.logloss?.toFixed?.(4) || "-"}</td>
+                <td>{run.metrics?.weighted_f1?.toFixed?.(4) || run.metrics?.f1?.toFixed?.(4) || "-"}</td>
+                <td>{run.metrics?.weighted_recall?.toFixed?.(4) || run.metrics?.recall?.toFixed?.(4) || "-"}</td>
+                <td>{run.metrics?.weighted_precision?.toFixed?.(4) || run.metrics?.precision?.toFixed?.(4) || "-"}</td>
               </tr>
             ))}
           </tbody>

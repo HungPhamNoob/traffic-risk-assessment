@@ -18,7 +18,7 @@ import { Layers, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { fallbackHotspots, fallbackPoints, fallbackSummary } from "@/lib/fallback";
 import type { Hotspot, MapMode, OverviewSummary, PredictionPoint } from "@/lib/types";
-import { FallbackBanner, KpiCard, RiskBadge } from "@/components/DataState";
+import { FallbackBanner, KpiCard } from "@/components/DataState";
 
 const RiskMap = dynamic(
   () => import("@/components/RiskMap").then((module) => module.RiskMap),
@@ -52,13 +52,18 @@ export default function DashboardPage() {
     refetchInterval: 30_000
   });
   const riskByHourQuery = useQuery({
-    queryKey: ["risk-by-hour"],
-    queryFn: api.riskByHour,
+    queryKey: ["risk-by-hour", mode],
+    queryFn: () => api.riskByHour(mode),
     refetchInterval: 300_000
   });
   const severityQuery = useQuery({
-    queryKey: ["severity"],
-    queryFn: api.severityDistribution,
+    queryKey: ["severity", mode],
+    queryFn: () => api.severityDistribution(mode),
+    refetchInterval: 300_000
+  });
+  const weatherQuery = useQuery({
+    queryKey: ["weather-histogram", mode],
+    queryFn: () => api.weatherHistogram(mode),
     refetchInterval: 300_000
   });
 
@@ -91,9 +96,15 @@ export default function DashboardPage() {
   const severity =
     (severityQuery.data?.distribution as Array<Record<string, number>> | undefined) ||
     [];
+  const weatherHistogram =
+    (weatherQuery.data?.histogram as Record<string, Array<{ bin: string; count: number }>> | undefined) || {};
 
-  const selectedSeverity =
-    selected?.predicted_severity ?? selected?.true_severity ?? "N/A";
+  const statusText = (point: PredictionPoint) =>
+    point.model_status === "success" || point.model_status === "failed"
+      ? point.model_status
+      : point.model_status
+        ? "success"
+        : "failed";
 
   return (
     <div className="page-stack">
@@ -128,7 +139,11 @@ export default function DashboardPage() {
           value={summary.latest_event_time ? "Online" : "No data"}
           detail={summary.latest_event_time || "Waiting for replay"}
         />
-        <KpiCard label="Model" value={summary.latest_model_version || "latest"} />
+        <KpiCard
+          label="Model"
+          value={summary.latest_model_version || "latest"}
+          className="single-line-value"
+        />
       </section>
 
       <section className="grid dashboard-grid">
@@ -183,34 +198,6 @@ export default function DashboardPage() {
 
         <aside className="grid">
           <section className="card">
-            <div className="card-header">
-              <h2 className="card-title">Selected event</h2>
-              {selected ? <RiskBadge level={selected.risk_level} /> : null}
-            </div>
-            {selected ? (
-              <div className="side-list">
-                <div className="mono">{selected.event_id}</div>
-                <div className="muted">
-                  {selected.lat.toFixed(5)}, {selected.lon.toFixed(5)}
-                </div>
-                <div>
-                  {selected.data_source === "tomtom_live"
-                    ? `Severity ${selectedSeverity}`
-                    : `Risk ${selected.risk_score.toFixed(4)}`}
-                </div>
-                <div className="muted">
-                  {selected.data_source === "tomtom_live"
-                    ? `TomTom live, display risk ${selected.risk_score.toFixed(4)}`
-                    : "US replay, H2O risk score"}
-                </div>
-                <div className="muted">{selected.event_time}</div>
-              </div>
-            ) : (
-              <p className="muted">Click a risk point to inspect details.</p>
-            )}
-          </section>
-
-          <section className="card">
             <h2 className="card-title">Active hotspots</h2>
             <div className="side-list">
               {hotspots.map((hotspot) => (
@@ -255,7 +242,7 @@ export default function DashboardPage() {
 
       <section className="grid analytics-grid">
         <div className="card">
-          <h2 className="card-title">Risk by hour</h2>
+          <h2 className="card-title">Risk by hour ({mode})</h2>
           <div className="chart-box">
             <ResponsiveContainer>
               <LineChart data={riskByHour}>
@@ -269,7 +256,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="card">
-          <h2 className="card-title">Severity distribution</h2>
+          <h2 className="card-title">Severity distribution ({mode})</h2>
           <div className="chart-box">
             <ResponsiveContainer>
               <BarChart data={severity}>
@@ -282,6 +269,30 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
         </div>
+      </section>
+
+      <section className="grid analytics-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+        {["temperature", "humidity", "wind_speed"].map((metric) => {
+          const data = weatherHistogram[metric] || [];
+          return (
+            <div className="card" key={metric}>
+              <h2 className="card-title">
+                {metric.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())} ({mode})
+              </h2>
+              <div className="chart-box">
+                <ResponsiveContainer>
+                  <BarChart data={data}>
+                    <CartesianGrid stroke="rgba(148,163,184,0.14)" />
+                    <XAxis dataKey="bin" stroke="#94a3b8" fontSize={10} />
+                    <YAxis stroke="#94a3b8" fontSize={10} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          );
+        })}
       </section>
 
       <section className="card">
@@ -303,7 +314,7 @@ export default function DashboardPage() {
                 <td>{Number(point.risk_score).toFixed(4)}</td>
                 <td>{point.predicted_severity ?? "-"}</td>
                 <td>{point.event_time || "-"}</td>
-                <td>{point.model_status}</td>
+                <td>{statusText(point)}</td>
               </tr>
             ))}
           </tbody>
