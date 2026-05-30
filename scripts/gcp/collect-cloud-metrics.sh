@@ -62,19 +62,19 @@ NODE3_IP="$(node_external_ip "${NODE3}")"
   echo
   echo "## PostgreSQL Table Metrics"
   ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && . .env.cloud && for table_name in \"\${POSTGRES_US_PREDICTION_TABLE:-traffic_risk_predictions}\" \"\${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}\"; do
-    if docker exec node1-postgres psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -At -c \"select to_regclass('public.' || '$table_name');\" | grep -qv '^$'; then
+    if docker exec node1-postgres psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -At -c \"select to_regclass('public.' || '\$table_name');\" | grep -qv '^$'; then
       docker exec node1-postgres psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -P pager=off -c \"
 SELECT
-  '$table_name' AS table_name,
+  '\$table_name' AS table_name,
   COUNT(*)::bigint AS rows,
   MIN(event_time) AS min_event_time,
   MAX(event_time) AS max_event_time,
   AVG(end_to_end_latency_ms)::numeric(12,2) AS avg_e2e_ms,
   percentile_cont(0.95) WITHIN GROUP (ORDER BY end_to_end_latency_ms)::numeric(12,2) AS p95_e2e_ms
-FROM $table_name;
+FROM \$table_name;
 \"
     else
-      echo \"Table $table_name does not exist yet.\"
+      echo \"Table \$table_name does not exist yet.\"
     fi
   done"
   echo

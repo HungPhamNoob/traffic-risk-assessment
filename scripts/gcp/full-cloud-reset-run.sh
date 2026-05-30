@@ -22,6 +22,8 @@ RUN_OFFLINE_TRAINING="${RUN_OFFLINE_TRAINING:-true}"
 STREAM_MAX_RECORDS="${STREAM_MAX_RECORDS:-0}"
 STREAM_THROTTLE_SECONDS="${STREAM_THROTTLE_SECONDS:-0.0}"
 NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-900}"
+AIRFLOW_PAUSE_AUTOMATION_DURING_FULL_RUN="${AIRFLOW_PAUSE_AUTOMATION_DURING_FULL_RUN:-true}"
+AIRFLOW_RESUME_AUTOMATION_AFTER_FULL_RUN="${AIRFLOW_RESUME_AUTOMATION_AFTER_FULL_RUN:-false}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -112,6 +114,14 @@ ssh_cmd "${NODE1}" "
   IS_TRAIN_OFFLINE=${RUN_OFFLINE_TRAINING} bash scripts/gcp/run-node1.sh
 " | tee "${LOG_DIR}/08-run-node1.log"
 
+if [ "${AIRFLOW_PAUSE_AUTOMATION_DURING_FULL_RUN}" = "true" ]; then
+  echo "Pausing Airflow automation DAGs during the manual full-cloud run."
+  ssh_cmd "${NODE1}" "
+    docker exec node1-airflow airflow dags pause streaming_health_check || true
+    docker exec node1-airflow airflow dags pause model_retrain_hourly || true
+  " | tee "${LOG_DIR}/08b-pause-airflow-dags.log"
+fi
+
 echo "Starting Node 2 realtime streams."
 ssh_cmd "${NODE2}" "
   cd ${PROJECT_ROOT}
@@ -127,5 +137,13 @@ ssh_cmd "${NODE3}" "
 echo "Collecting measured cloud evidence."
 RUN_ID="${RUN_ID}" LOG_DIR="logs/cloud_runs" \
   bash scripts/gcp/collect-cloud-metrics.sh | tee "${LOG_DIR}/11-metrics.log"
+
+if [ "${AIRFLOW_PAUSE_AUTOMATION_DURING_FULL_RUN}" = "true" ] && [ "${AIRFLOW_RESUME_AUTOMATION_AFTER_FULL_RUN}" = "true" ]; then
+  echo "Resuming Airflow automation DAGs after the manual full-cloud run."
+  ssh_cmd "${NODE1}" "
+    docker exec node1-airflow airflow dags unpause streaming_health_check || true
+    docker exec node1-airflow airflow dags unpause model_retrain_hourly || true
+  " | tee "${LOG_DIR}/12-resume-airflow-dags.log"
+fi
 
 echo "Full cloud run completed. Evidence is under ${LOG_DIR}."
