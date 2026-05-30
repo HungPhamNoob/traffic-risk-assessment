@@ -22,13 +22,18 @@ Vai tro:
 - lam nguon doc cho dashboard backend,
 - luu toa do dia ly qua cot `geom`.
 
-Backend khong dung Redis, Kafka hay Gold parquet de tra JSON truc tiep. Gan nhu moi API dashboard deu doc tu **mot bang chinh**:
+Backend khong dung Redis, Kafka hay Gold parquet de tra JSON truc tiep. US replay/ML API hien doc tu **mot bang chinh**:
 
 - `traffic_risk_predictions`
+
+TomTom live da duoc tach khoi bang US de tranh tron rule-based incident voi H2O prediction:
+
+- `traffic_tomtom_incidents`
 
 Ten bang nay duoc lay tu env:
 
 - `POSTGRES_PREDICTION_TABLE`
+- `POSTGRES_TOMTOM_TABLE`
 
 ## 3. File nao tao va file nao doc database?
 
@@ -49,6 +54,22 @@ Nhiem vu:
 5. `INSERT ... ON CONFLICT (event_id) DO UPDATE`
 
 Day la writer chinh cua production.
+
+### TomTom live writer
+
+File:
+
+- `processing/flink_tomtom_streaming.py`
+
+Nhiem vu:
+
+1. doc TomTom raw event tu Kafka topic `traffic.tomtom.raw`,
+2. tinh `severity` bang rule `magnitudeOfDelay + iconCategory`,
+3. tinh `tomtom_rule_score = (severity - 1) / 3`,
+4. tao bang neu chua co,
+5. `INSERT ... ON CONFLICT (event_id) DO UPDATE` vao `traffic_tomtom_incidents`.
+
+Job nay khong goi MLflow, khong ghi Silver cho Spark, va khong tham gia H2O retraining.
 
 ### Local smoke writer
 
@@ -144,6 +165,26 @@ Nhiem vu:
 Output quan trong cho backend:
 
 - bang `traffic_risk_predictions`
+
+## Step 3b - TomTom live ghi PostgreSQL rieng
+
+Nguon:
+
+- TomTom Incident Details API
+- Kafka topic `traffic.tomtom.raw`
+
+File xu ly:
+
+- `processing/flink_tomtom_streaming.py`
+
+Output:
+
+- bang `traffic_tomtom_incidents`
+
+Luu y:
+
+- `severity` la nhan rule-based tu TomTom, khong phai H2O prediction.
+- `tomtom_rule_score` chi la score hien thi/ranking rieng cho TomTom, khong cung y nghia voi `risk_score` cua US.
 
 ## Step 4 - Backend doc PostgreSQL
 
@@ -397,9 +438,10 @@ Neu pipeline ghi `event_time` sai format, dashboard se hong nhieu man hinh cung 
 
 ## 12. Tom tat ngan gon
 
-Neu chi nho 4 y chinh, hay nho:
+Neu chi nho 5 y chinh, hay nho:
 
-1. Backend dashboard doc chu yeu tu bang `traffic_risk_predictions`.
-2. Bang nay duoc production Flink ghi trong `processing/flink_streaming.py`.
-3. Local smoke co schema rong hon production nen prediction detail co the khac field.
-4. Scenario API khong doc bang nay; no goi MLflow serving truc tiep.
+1. US replay/ML prediction doc chu yeu tu bang `traffic_risk_predictions`.
+2. Bang US nay duoc production Flink ghi trong `processing/flink_streaming.py`.
+3. TomTom live ghi rieng vao `traffic_tomtom_incidents` bang `processing/flink_tomtom_streaming.py`.
+4. Local smoke co schema rong hon production nen prediction detail co the khac field.
+5. Scenario API khong doc bang nay; no goi MLflow serving truc tiep.

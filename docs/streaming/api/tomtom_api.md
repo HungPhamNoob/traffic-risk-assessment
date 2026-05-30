@@ -108,18 +108,21 @@ Important `properties` fields:
 For invalid requests, TomTom returns JSON under `detailedError` with `code` and
 `message`.
 
-## Mapping to Batch/Training Fields
+## Mapping to Streaming Fields
 
-The implementation uses two contracts:
+The active implementation uses two contracts:
 
-1. **TomTom bronze parsed table**: keeps TomTom incident-specific fields.
-2. **Unified silver table**: projects TomTom to the same `SILVER_SCHEMA` as US/UK
-   batch data for training and risk aggregation.
+1. **TomTom raw Kafka event**: keeps TomTom incident-specific fields.
+2. **TomTom PostGIS table**: stores live rule-based incidents in
+   `traffic_tomtom_incidents`.
 
-### Bronze Parsed Table
+TomTom does not write US Silver features, does not feed Spark/H2O, and does not
+call MLflow serving.
+
+### Raw Kafka Event
 
 These are the fields that should be saved from the TomTom API response before
-standardizing to silver:
+Flink writes the dedicated PostgreSQL table:
 
 | TomTom response field | Bronze field | Type | Notes |
 | --- | --- | --- |
@@ -168,30 +171,26 @@ It is not used as the TomTom risk signal. The TomTom risk-relevant fields are
 `icon_category`, `delay_magnitude`, `delay_seconds`, `length_meters`, event
 description/code, timestamps, and geometry.
 
-### Silver Projection for Batch Training
+### PostgreSQL Projection
 
-TomTom records are cleaned by
-`processing/spark/bronze_to_silver/tomtom_cleaner.py` into the existing
-`SILVER_SCHEMA`:
+TomTom records are processed by `processing/flink_tomtom_streaming.py` into
+`traffic_tomtom_incidents`.
 
-| Silver field | TomTom source | Rule |
+| Table field | TomTom source | Rule |
 | --- | --- | --- |
-| `event_id` | bronze `event_id` | Already prefixed with `tomtom-` |
-| `source` | constant | `tomtom` |
-| `event_time` | `timestamp`, fallback `last_report_time` | Parsed to timestamp |
+| `event_id` | raw `event_id` | Already prefixed with `tomtom-` |
+| `incident_id` | raw `incident_id` | Stable TomTom id |
+| `event_time` | `timestamp`, fallback `last_report_time` | Parsed timestamp |
 | `lat` | `latitude` | Required |
 | `lon` | `longitude` | Required |
 | `severity` | `delay_magnitude`, `icon_category` | Normalized to 1-4 |
-| `weather_code` | none | `0` = unknown, weather is handled by enrichment later |
-| `road_type` | none | `unknown`; TomTom Incident Details does not return physical road type |
-| `state_or_region` | configured TomTom region | `US` or `UK` |
-| `city` | configured TomTom region | `New York` or `London` |
-| `description` | incident fields | Compact text with description, roads, delay, length |
-| `event_date` | `event_time` or run date | `YYYY-MM-DD` |
+| `tomtom_rule_score` | `severity` | `(severity - 1) / 3` |
+| `geom` | `lon`, `lat` | PostGIS point |
+| `raw_payload` | raw payload | Kept as JSONB for audit/debug |
 
 Severity normalization:
 
-| TomTom signal | Silver severity |
+| TomTom signal | severity |
 | --- | --- |
 | `magnitudeOfDelay >= 4` | `4` |
 | `magnitudeOfDelay == 3` | `3` |
@@ -201,9 +200,8 @@ Severity normalization:
 | `iconCategory == 1` accident | at least `3` |
 | `iconCategory == 9` roadworks | at least `2` |
 
-Do not map `iconCategory` into `road_type`: batch code treats `road_type` as
-physical road layout/type for US/UK data, while TomTom `iconCategory` is an
-incident category.
+Do not map `iconCategory` into US model features. TomTom `severity` and
+`tomtom_rule_score` are rule-based live incident signals, not H2O predictions.
 
 ## Direct Request Result
 

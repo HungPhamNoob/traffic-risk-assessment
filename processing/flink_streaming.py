@@ -12,6 +12,8 @@ Architecture:
 
 No extra Kafka topics are used - all communication beyond Kafka
 goes through GCS and PostgreSQL.
+
+TomTom incidents are handled by `processing/flink_tomtom_streaming.py`.
 """
 
 import json
@@ -33,9 +35,7 @@ from pyflink.datastream.connectors.kafka import (
 )
 import requests
 
-# Feature engineering shared with offline training and batch jobs.
 from processing.feature_engineering import build_features
-from processing.streaming_enrichment import enrich_tomtom_event
 
 try:
     from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
@@ -501,28 +501,23 @@ def process_raw_message(raw_message: str) -> str:
         raw_row = json.loads(raw_message)
         ingestion_time = raw_row.get("_ingested_at_utc")
 
-        # 2. TomTom incidents need projection into the shared feature contract.
         if str(raw_row.get("source", "")).strip().lower() == "tomtom":
-            feature_input = enrich_tomtom_event(raw_row)
-            if feature_input is None:
-                raise ValueError("enrich_tomtom_event returned None (missing fields)")
-        else:
-            feature_input = raw_row
+            raise ValueError("TomTom events must be handled by flink_tomtom_streaming")
 
-        # 3. Feature engineering
-        features = build_features(feature_input)
+        # 2. Feature engineering
+        features = build_features(raw_row)
         if features is None:
             raise ValueError("build_features returned None (missing fields)")
 
-        # 4. Write silver layer to GCS
+        # 3. Write silver layer to GCS
         write_to_gcs_silver(features)
 
-        # 5. ML prediction
+        # 4. ML prediction
         predicted_severity, risk_score = call_mlflow_model(features)
         if risk_score is None or risk_score < 0:
             risk_score = ML_FALLBACK_RISK_SCORE
 
-        # 6. Insert into PostgreSQL
+        # 5. Insert into PostgreSQL
         processed_time = datetime.now(timezone.utc).isoformat()
         latency = (time.time() - start) * 1000
         end_to_end_latency_ms = None

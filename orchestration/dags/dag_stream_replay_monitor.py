@@ -4,15 +4,19 @@ Airflow DAG 2 - Realtime Pair Health Check
 
 Purpose:
     Runs every hour to verify the synchronized realtime pair is healthy.
-    Checks Kafka, Flink, the active Flink job, and Spark.
+    Checks Kafka, both raw topics, both Flink jobs, and the TomTom producer.
 
-    If either branch is unhealthy, Airflow restarts Node 2 and Node 3 together
-    so replay offsets, checkpoints, and retraining inputs stay aligned.
+    TomTom live ingestion does not depend on Spark/Node 3, so this DAG only
+    recovers the Node 2 streaming stack.
 """
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
+import os
+
+KAFKA_TOPIC_RAW = os.getenv("KAFKA_TOPIC_RAW", "traffic.us.raw")
+KAFKA_TOPIC_TOMTOM_RAW = os.getenv("KAFKA_TOPIC_TOMTOM_RAW", "traffic.tomtom.raw")
 
 # ============================================================
 # Default args
@@ -32,7 +36,7 @@ default_args = {
 with DAG(
     "streaming_health_check",
     default_args=default_args,
-    description="Monitor Kafka + Flink + Producer health",
+    description="Monitor Node2 Kafka + Flink + TomTom producer health",
     schedule_interval="@hourly",
     start_date=datetime(2026, 5, 1),
     catchup=False,
@@ -56,7 +60,28 @@ with DAG(
     )
 
     # ----------------------------------------------------------
-    # Task 2: Check Flink JobManager is running on Node 2
+    # Task 2: Check both raw Kafka topics exist
+    # ----------------------------------------------------------
+    check_kafka_topics = BashOperator(
+        task_id="check_kafka_topics",
+        bash_command=f"""
+            echo "=== Checking Kafka topics ==="
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node2-streaming "
+                for TOPIC in {KAFKA_TOPIC_RAW} {KAFKA_TOPIC_TOMTOM_RAW}; do
+                    docker exec node2-kafka-1 kafka-topics \
+                        --bootstrap-server localhost:9092 \
+                        --describe \
+                        --topic \\$TOPIC > /dev/null 2>&1 || exit 1
+                done
+            " && echo "Kafka topics: OK" || {{
+                echo "WARNING: Required Kafka topic is missing or unreachable"
+                exit 1
+            }}
+        """,
+    )
+
+    # ----------------------------------------------------------
+    # Task 3: Check Flink JobManager is running on Node 2
     # ----------------------------------------------------------
     check_flink = BashOperator(
         task_id="check_flink",
@@ -72,24 +97,27 @@ with DAG(
     )
 
     # ----------------------------------------------------------
-    # Task 3: Check Flink job is actively running
+    # Task 4: Check both Flink jobs are actively running
     # ----------------------------------------------------------
-    check_flink_job = BashOperator(
-        task_id="check_flink_job",
+    check_flink_jobs = BashOperator(
+        task_id="check_flink_jobs",
         bash_command=r"""
             echo "=== Checking Flink job status ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node2-streaming "
-                RUNNING=\$(curl -s http://localhost:8081/jobs | python3 -c \\"
+                curl -s http://localhost:8081/jobs/overview | python3 -c \\"
 import sys, json
 jobs = json.load(sys.stdin).get('jobs', [])
-print(len([j for j in jobs if j.get('status') == 'RUNNING']))
+required = {
+    'Flink Traffic Risk Prediction - GCS + PostGIS',
+    'Flink TomTom Live Incidents - PostGIS',
+}
+running = {j.get('name') for j in jobs if j.get('state') == 'RUNNING'}
+missing = sorted(required - running)
+if missing:
+    print('WARNING: Missing running Flink jobs: ' + ', '.join(missing))
+    sys.exit(1)
+print('Flink jobs: OK')
 \\")
-                if [ \"\$RUNNING\" -gt 0 ]; then
-                    echo \"Flink job: RUNNING (\$RUNNING active)\"
-                else
-                    echo \"WARNING: No Flink job is running\"
-                    exit 1
-                fi
             " || {
                 echo "WARNING: Could not verify Flink job status"
                 exit 1
@@ -98,25 +126,30 @@ print(len([j for j in jobs if j.get('status') == 'RUNNING']))
         trigger_rule="all_done",  # Run even if check_flink fails
     )
 
-    check_batch_node = BashOperator(
-        task_id="check_batch_node",
+    # ----------------------------------------------------------
+    # Task 5: Check TomTom producer container
+    # ----------------------------------------------------------
+    check_tomtom_producer = BashOperator(
+        task_id="check_tomtom_producer",
         bash_command="""
-            echo "=== Checking Spark on Node 3 ==="
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
-                curl -sf http://localhost:8080 > /dev/null 2>&1
-            " && echo "Spark: OK" || {
-                echo "WARNING: Spark is DOWN or Node 3 is unreachable"
+            echo "=== Checking TomTom producer ==="
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node2-streaming "
+                test \"\$(docker inspect -f '{{.State.Running}}' node2-tomtom-producer 2>/dev/null)\" = \"true\"
+            " && echo "TomTom producer: OK" || {
+                echo "WARNING: TomTom producer is not running"
                 exit 1
             }
         """,
     )
 
-    recover_realtime_pair = BashOperator(
-        task_id="recover_realtime_pair",
+    recover_streaming_stack = BashOperator(
+        task_id="recover_streaming_stack",
         bash_command="""
-            echo "=== Restarting the synchronized realtime pair ==="
-            cd /opt/traffic
-            bash scripts/gcp/node23-lifecycle.sh restart
+            echo "=== Restarting Node 2 streaming stack ==="
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node2-streaming "
+                cd /opt/traffic &&
+                docker compose --env-file .env.cloud -f deployment/node2-streaming/docker-compose.yaml up -d
+            "
         """,
         trigger_rule="one_failed",
     )
@@ -138,8 +171,20 @@ print(len([j for j in jobs if j.get('status') == 'RUNNING']))
     # DAG structure: all checks run in parallel, then summary
     # ----------------------------------------------------------
     (
-        [check_kafka, check_flink, check_flink_job, check_batch_node]
-        >> recover_realtime_pair
+        [
+            check_kafka,
+            check_kafka_topics,
+            check_flink,
+            check_flink_jobs,
+            check_tomtom_producer,
+        ]
+        >> recover_streaming_stack
         >> summary
     )
-    [check_kafka, check_flink, check_flink_job, check_batch_node] >> summary
+    [
+        check_kafka,
+        check_kafka_topics,
+        check_flink,
+        check_flink_jobs,
+        check_tomtom_producer,
+    ] >> summary

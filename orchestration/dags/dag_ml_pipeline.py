@@ -3,8 +3,11 @@
 Airflow DAG 1 - Hourly Model Retraining
 
 Purpose:
-    Runs every hour to retrain the H2O model with fresh data.
-    Spark reads silver data -> cleans -> writes gold Parquet -> H2O retrains -> MLflow registers new version.
+    Runs every hour to retrain the US H2O model with fresh US replay data.
+    Spark reads US silver data -> cleans -> writes gold Parquet -> H2O retrains -> MLflow registers new version.
+
+    TomTom live incidents are rule-based and do not participate in Spark,
+    H2O, MLflow model training, or model serving.
 
     If the batch branch fails, Airflow recovers Node 2 and Node 3 together so
     the replay timeline stays synchronized across both branches.

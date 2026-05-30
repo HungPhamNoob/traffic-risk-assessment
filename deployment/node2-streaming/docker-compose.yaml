@@ -1,7 +1,7 @@
 # ============================================================
 # Node 2 - Streaming (Spot VM)
 # 3 Kafka Brokers + Flink + Redis
-# Topic: traffic.us.raw (1 partition, 3 replicas)
+# Topics: traffic.us.raw and traffic.tomtom.raw (1 partition, 3 replicas each)
 # ============================================================
 
 services:
@@ -480,11 +480,33 @@ services:
     extends:
       service: flink-python-job
     container_name: node2-flink-tomtom-python-job
+    command: >
+      bash -c "
+        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
+        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
+        apt-get update &&
+        apt-get install -y --no-install-recommends python3 python3-pip python3-venv curl ca-certificates &&
+        rm -rf /var/lib/apt/lists/* &&
+        python3 -m venv /opt/flink/pyenv &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
+        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary requests python-dotenv gcsfs google-auth &&
+        mkdir -p /opt/flink/connectors &&
+        curl -fsSL -o /opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-kafka/3.2.0-1.19/flink-connector-kafka-3.2.0-1.19.jar &&
+        curl -fsSL -o /opt/flink/connectors/kafka-clients-3.6.1.jar https://repo.maven.apache.org/maven2/org/apache/kafka/kafka-clients/3.6.1/kafka-clients-3.6.1.jar &&
+        mkdir -p /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/checkpoints &&
+        /opt/flink/bin/flink run -d -m flink-jobmanager:8081 -pyclientexec /opt/flink/pyenv/bin/python -pyexec /opt/flink/pyenv/bin/python -pyfs processing -py processing/flink_tomtom_streaming.py &&
+        tail -f /dev/null
+      "
     environment:
+      KAFKA_TOPIC_TOMTOM_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
       FLINK_INFERENCE_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
+      FLINK_TOMTOM_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
       FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_TOMTOM_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/tomtom-inference}
       SILVER_FEATURES_PATH: ${TOMTOM_SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/tomtom_features}
+      POSTGRES_TOMTOM_TABLE: ${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}
 
 networks:
   capstone-net:
