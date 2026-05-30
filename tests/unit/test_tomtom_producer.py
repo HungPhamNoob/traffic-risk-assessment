@@ -13,11 +13,13 @@ sys.modules["confluent_kafka"] = types.SimpleNamespace(Producer=DummyProducer)
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
 from ingestion.kafka.tomtom_producer import (  # noqa: E402
+    KAFKA_TOPIC,
     event_state_signature,
     first_coordinate,
     geometry_to_wkt,
     normalize_incident,
     publish_event_if_changed,
+    resolve_kafka_topic,
 )
 
 
@@ -31,6 +33,17 @@ class RecordingProducer:
 
     def poll(self, timeout):
         return None
+
+
+def test_tomtom_producer_defaults_to_tomtom_topic():
+    assert KAFKA_TOPIC == "traffic.tomtom.raw"
+
+
+def test_tomtom_producer_ignores_shared_us_topic(monkeypatch):
+    monkeypatch.delenv("KAFKA_TOPIC_TOMTOM_RAW", raising=False)
+    monkeypatch.setenv("KAFKA_TOPIC_RAW", "traffic.us.raw")
+
+    assert resolve_kafka_topic() == "traffic.tomtom.raw"
 
 
 def test_tomtom_incident_is_normalized_to_raw_event_contract():

@@ -4,7 +4,7 @@ TomTom Traffic Incident producer.
 
 Fetches TomTom Incident Details for configured US bbox regions, normalizes each
 incident into the project raw Kafka event shape, and publishes it to the single
-raw traffic topic consumed by the Flink inference job.
+TomTom raw traffic topic consumed by the dedicated Flink TomTom job.
 """
 
 import json
@@ -70,8 +70,12 @@ def get_float_env(name: str, default: float) -> float:
         return default
 
 
+def resolve_kafka_topic() -> str:
+    return get_str_env("KAFKA_TOPIC_TOMTOM_RAW", "traffic.tomtom.raw")
+
+
 KAFKA_BOOTSTRAP_SERVERS = get_str_env("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-KAFKA_TOPIC = get_str_env("KAFKA_TOPIC_RAW", "traffic.us.raw")
+KAFKA_TOPIC = resolve_kafka_topic()
 PRODUCER_CLIENT_ID = get_str_env("PRODUCER_CLIENT_ID", "tomtom-incident-producer")
 
 TOMTOM_ENDPOINT = get_str_env("TOMTOM_ENDPOINT", DEFAULT_ENDPOINT)
