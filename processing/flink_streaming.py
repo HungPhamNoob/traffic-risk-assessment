@@ -49,6 +49,7 @@ except Exception:  # pragma: no cover - depends on the PyFlink distribution.
     FileSystemCheckpointStorage = None
 
 
+# Load environment variables from .env file when running outside Docker.
 load_dotenv()
 
 logging.basicConfig(
@@ -58,6 +59,9 @@ logging.basicConfig(
 logger = logging.getLogger("flink-dual-stream")
 
 
+# ---------------------------------------------------------------------------
+# Configuration (resolved from environment variables set by Docker Compose)
+# ---------------------------------------------------------------------------
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_TOPIC_US_RAW = os.getenv(
     "KAFKA_TOPIC_US_RAW",
