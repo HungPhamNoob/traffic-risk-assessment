@@ -117,11 +117,13 @@ MODEL_FEATURE_COLUMNS = [
 SCHEMA_READY = {"us": False, "tomtom": False}
 
 
-def log_stream_result(value: str) -> None:
+class LoggingSink(SinkFunction):
     """Log processed stream outcomes for lightweight observability."""
-    if value is None:
-        return
-    logger.info("Stream result: %s", value)
+
+    def invoke(self, value, context) -> None:
+        if value is None:
+            return
+        logger.info("Stream result: %s", value)
 
 
 def table_name(value: str) -> str:
@@ -794,9 +796,7 @@ def main() -> None:
         source_name=tomtom_source_name,
     ).map(process_tomtom_message, output_type=Types.STRING())
 
-    us_stream.union(tomtom_stream).add_sink(
-        SinkFunction(log_stream_result)
-    ).name("stream-log-sink")
+    us_stream.union(tomtom_stream).add_sink(LoggingSink()).name("stream-log-sink")
     env.execute("Unified Traffic Streaming - US Replay + TomTom Live")
 
 

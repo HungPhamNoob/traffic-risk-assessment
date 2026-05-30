@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-US Accident Replay Producer - raw parallel Kafka producer.
+ingestion/kafka/us_producer.py
+US Accident Replay Producer – parallel raw Kafka publisher.
 
-Purpose:
-    - Read US Accidents CSV records from GCS or the local filesystem.
-    - Publish each raw CSV row as one JSON message to the single project topic.
-    - Avoid feature engineering in the producer so Flink owns realtime mapping.
-    - Support three parallel producers without sending duplicate rows.
+Reads the post-2020 US Accidents CSV from GCS (or the local filesystem) and
+publishes each row as a raw JSON message to the Kafka topic `traffic.us.raw`.
+Feature engineering is intentionally deferred to the Flink job so that the
+producer remains a thin, stateless reader.
 
-Row assignment:
-    TOTAL_PRODUCERS=3
+Parallel partitioning:
+    Three producer instances share the dataset without overlap using modulo
+    assignment on the 0-based row index:
 
-    Producer 0: row_index % 3 == 0
-    Producer 1: row_index % 3 == 1
-    Producer 2: row_index % 3 == 2
+        Producer 0 → row_index % TOTAL_PRODUCERS == 0
+        Producer 1 → row_index % TOTAL_PRODUCERS == 1
+        Producer 2 → row_index % TOTAL_PRODUCERS == 2
 
 Input:
     gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv
-    or a local CSV path.
+    (or a local CSV path set via US_PIPELINE_REPLAY_PATH)
 
 Output:
-    Kafka topic: traffic.us.raw (one partition, three replicas)
+    Kafka topic: traffic.us.raw (1 partition, 3 replicas)
 """
 
 import csv
@@ -35,14 +36,9 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from confluent_kafka import Producer
 
-# ============================================================
-# Load a local .env file when the producer is started outside Docker.
-# ============================================================
+# Load a local .env file when the producer runs outside Docker Compose.
 load_dotenv()
 
-# ============================================================
-# Logging
-# ============================================================
 logging.basicConfig(
     level=os.getenv("STREAMING_LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -50,9 +46,9 @@ logging.basicConfig(
 logger = logging.getLogger("us-replay-producer-raw")
 
 
-# ============================================================
-# Safe environment parsing helpers.
-# ============================================================
+# ---------------------------------------------------------------------------
+# Environment variable helpers
+# ---------------------------------------------------------------------------
 def get_int_env(name: str, default: int) -> int:
     value = os.getenv(name)
     if value is None or str(value).strip() == "":
@@ -84,9 +80,9 @@ def get_str_env(name: str, default: str) -> str:
     return str(value).strip()
 
 
-# ============================================================
-# Config
-# ============================================================
+# ---------------------------------------------------------------------------
+# Configuration (resolved from environment variables)
+# ---------------------------------------------------------------------------
 KAFKA_BOOTSTRAP_SERVERS = get_str_env(
     "KAFKA_BOOTSTRAP_SERVERS",
     "localhost:9092",
@@ -120,14 +116,17 @@ PRODUCER_COMPRESSION_TYPE = get_str_env("PRODUCER_COMPRESSION_TYPE", "lz4")
 PRODUCER_QUEUE_BACKOFF_SECONDS = get_float_env("PRODUCER_QUEUE_BACKOFF_SECONDS", 0.5)
 
 
-# ============================================================
-# File opener with both GCS and local filesystem support.
-# ============================================================
+# ---------------------------------------------------------------------------
+# File I/O – GCS and local filesystem support
+# ---------------------------------------------------------------------------
+
+
 def open_file(path: str, mode: str = "r"):
     """
     Open a source CSV from GCS or the local filesystem.
 
-    GCS paths use gcsfs. Local paths use the standard open() function.
+    GCS paths (prefixed with 'gs://') are accessed via gcsfs.
+    All other paths are opened with the standard Python open() function.
     """
     if path.startswith("gs://"):
         import gcsfs
@@ -142,9 +141,9 @@ def open_file(path: str, mode: str = "r"):
         return open(path, mode=mode, encoding="utf-8", newline="")
 
 
-# ============================================================
-# Validate config
-# ============================================================
+# ---------------------------------------------------------------------------
+# Configuration validation
+# ---------------------------------------------------------------------------
 def validate_config() -> None:
     if TOTAL_PRODUCERS <= 0:
         raise ValueError("TOTAL_PRODUCERS must be >= 1")
@@ -163,9 +162,9 @@ def validate_config() -> None:
         raise ValueError("PRODUCER_QUEUE_BACKOFF_SECONDS must be >= 0")
 
 
-# ============================================================
-# Kafka producer config
-# ============================================================
+# ---------------------------------------------------------------------------
+# Kafka producer configuration
+# ---------------------------------------------------------------------------
 def build_producer_config() -> Dict[str, Any]:
     return {
         "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
@@ -181,9 +180,9 @@ def build_producer_config() -> Dict[str, Any]:
     }
 
 
-# ============================================================
-# Delivery callback
-# ============================================================
+# ---------------------------------------------------------------------------
+# Kafka delivery callback
+# ---------------------------------------------------------------------------
 delivery_success_count = 0
 delivery_failed_count = 0
 
@@ -197,9 +196,9 @@ def delivery_report(error: Any, message: Any) -> None:
     delivery_success_count += 1
 
 
-# ============================================================
-# Core logic
-# ============================================================
+# ---------------------------------------------------------------------------
+# Core producer logic
+# ---------------------------------------------------------------------------
 def should_send_row(row_index: int) -> bool:
     return row_index % TOTAL_PRODUCERS == PRODUCER_INDEX
 

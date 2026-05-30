@@ -1,52 +1,66 @@
 #!/usr/bin/env python3
 """
-Airflow DAG 1 - Hourly Model Retraining
+orchestration/dags/dag_ml_pipeline.py
+Airflow DAG: model_retrain_hourly
 
-Purpose:
-    Runs every hour to retrain the H2O model with fresh data.
-    Spark reads silver data -> cleans -> writes gold Parquet -> H2O retrains -> MLflow registers new version.
+Triggers the US accident severity model retraining pipeline on a configurable
+schedule (default: every 15 minutes for fast demonstration; set
+AIRFLOW_MODEL_RETRAIN_SCHEDULE to '0 * * * *' for production hourly runs).
 
-    If the batch branch fails, Airflow recovers Node 2 and Node 3 together so
-    the replay timeline stays synchronized across both branches.
+Steps:
+    1. Spark Silver -> Gold: Reads Flink-generated feature JSONL files from
+       GCS Silver, validates schema, deduplicates, and writes ML-ready Parquet
+       to GCS Gold on Node 3.
+    2. H2O retrain: Trains a new H2O AutoML model on the Gold Parquet dataset
+       and registers the result in MLflow on Node 1.
+    3. Notify success: Logs the completion timestamp.
+
+Recovery strategy:
+    If the Spark or H2O step fails (e.g. Node 3 is temporarily unavailable),
+    Airflow retries up to 5 times with a 5-minute delay. The Node 2/3 lifecycle
+    script can be used as a manual recovery hook.
 """
+
+import os
+from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from datetime import datetime, timedelta
-import os
 
-# ============================================================
-# Default args - applied to all tasks
-# ============================================================
+# ---------------------------------------------------------------------------
+# Default task arguments
+# ---------------------------------------------------------------------------
+
 default_args = {
-    "owner": "hung",
+    "owner": "traffic-risk-platform",
     "depends_on_past": False,
     "email_on_failure": False,
     "email_on_retry": False,
-    "retries": 5,  # Retry 5 times if Node 3 is down
-    "retry_delay": timedelta(minutes=5),  # Wait 5 minutes between retries
+    "retries": 5,
+    "retry_delay": timedelta(minutes=5),
 }
 
-# ============================================================
+# ---------------------------------------------------------------------------
 # DAG definition
-# ============================================================
+# ---------------------------------------------------------------------------
+
 with DAG(
-    "model_retrain_hourly",
+    dag_id="model_retrain_hourly",
     default_args=default_args,
-    description="Hourly H2O retrain from latest silver data",
+    description="Periodic H2O AutoML retraining from the latest Flink-generated Silver features",
     schedule_interval=os.getenv("AIRFLOW_MODEL_RETRAIN_SCHEDULE", "*/15 * * * *"),
     start_date=datetime(2026, 5, 1),
     catchup=False,
-    tags=["ml", "retrain", "batch"],
+    tags=["ml", "retrain", "batch", "spark", "h2o"],
 ) as dag:
 
-    # ----------------------------------------------------------
-    # Task 1: Spark - Silver -> Gold Parquet (runs on Node 3)
-    # ----------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Task 1 – Spark: Silver → Gold Parquet (executes on Node 3)
+    # ------------------------------------------------------------------
     spark_silver_to_gold = BashOperator(
         task_id="spark_silver_to_gold",
         bash_command=r"""
-            echo "=== Spark: Silver -> Gold ==="
+            echo "=== [Airflow] Spark Silver -> Gold ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&
                 COMPOSE_FILE=deployment/node3-batch/docker-compose.yaml &&
@@ -56,42 +70,41 @@ with DAG(
                     --master spark://spark-master:7077 \
                     /opt/traffic/processing/spark_batch.py
             " || {
-                echo "WARNING: Batch flow failed. Restarting the synchronized Node 2/Node 3 pair before retry."
+                echo "ERROR: Spark Silver -> Gold failed. Attempting Node 2/3 recovery before retry."
                 bash /opt/traffic/scripts/gcp/node23-lifecycle.sh restart || true
                 exit 1
             }
         """,
     )
 
-    # ----------------------------------------------------------
-    # Task 2: H2O - Retrain model from gold Parquet (runs on Node 3)
-    # ----------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Task 2 – H2O AutoML: retrain on Gold Parquet (executes on Node 3)
+    # ------------------------------------------------------------------
     h2o_retrain = BashOperator(
         task_id="h2o_retrain",
         bash_command=r"""
-            echo "=== H2O: Retrain ==="
+            echo "=== [Airflow] H2O AutoML Retrain ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
                 cd /opt/traffic &&
                 export MLFLOW_TRACKING_URI=http://10.128.0.4:5000 &&
                 python ml/training/h2o_after_2020.py
             " || {
-                echo "WARNING: Node 3 retrain failed. Airflow will retry the synchronized pair later."
+                echo "ERROR: H2O retrain on Node 3 failed. Airflow will retry."
                 exit 1
             }
         """,
     )
 
-    # ----------------------------------------------------------
-    # Task 3: Notify success
-    # ----------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Task 3 – Notify success
+    # ------------------------------------------------------------------
     notify_success = BashOperator(
         task_id="notify_success",
         bash_command="""
-            echo "Model retrain completed successfully at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "=== [Airflow] Model retrain pipeline completed successfully ==="
+            echo "Completed at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         """,
     )
 
-    # ----------------------------------------------------------
     # DAG structure: Spark -> H2O -> Notify
-    # ----------------------------------------------------------
     spark_silver_to_gold >> h2o_retrain >> notify_success

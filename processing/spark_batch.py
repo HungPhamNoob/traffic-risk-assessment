@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Spark Batch Job - Silver to Gold Layer
+processing/spark_batch.py
+Spark Silver-to-Gold batch job.
 
-Purpose:
-    Read all Flink-generated feature JSONL files from GCS Silver,
-    clean / validate / deduplicate records,
-    and write ML-ready Parquet dataset to GCS Gold.
+Reads all Flink-generated feature JSONL files from GCS Silver, applies
+schema validation, deduplication, and null-filling, then writes the
+ML-ready dataset to GCS Gold as partitioned Parquet and flat CSV.
 
-Input:
-    gs://big-data-group-4-silver/process/flink_features/
+Data flow:
+    GCS Silver (flink_features JSONL)
+        -> schema enforcement + cleaning + deduplication
+        -> GCS Gold (partitioned Parquet + CSV)
+        -> H2O retraining input
 
-Output:
-    gs://big-data-group-4-gold/features/retrain/parquet/
-    gs://big-data-group-4-gold/features/retrain/csv/
+This job is triggered by the Airflow model_retrain_hourly DAG.
 """
 
 import logging
@@ -21,13 +22,17 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    IntegerType,
-    FloatType,
     DoubleType,
+    FloatType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
 )
+
+# ---------------------------------------------------------------------------
+# Path configuration (resolved from environment variables set by Airflow/Docker)
+# ---------------------------------------------------------------------------
 
 SILVER_PATH = os.getenv(
     "SILVER_FEATURES_PATH",
@@ -50,13 +55,19 @@ GOLD_RETRAIN_CSV_PATH = os.getenv(
 WRITE_PARTITIONS = int(os.getenv("SPARK_WRITE_PARTITIONS", "4"))
 READ_PARTITIONS = int(os.getenv("SPARK_READ_PARTITIONS", "64"))
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+logger = logging.getLogger("spark-silver-to-gold")
 
-logger = logging.getLogger("silver-to-gold")
-
+# ---------------------------------------------------------------------------
+# Schema – must match the output of processing.feature_engineering.build_features()
+# ---------------------------------------------------------------------------
 
 FEATURE_SCHEMA = StructType(
     [
@@ -87,6 +98,7 @@ FEATURE_SCHEMA = StructType(
     ]
 )
 
+# Rows missing any of these fields are discarded before writing Gold.
 REQUIRED_COLUMNS = [
     "event_id",
     "event_year",
@@ -95,6 +107,7 @@ REQUIRED_COLUMNS = [
     "lon",
 ]
 
+# Sensible defaults for optional numeric feature columns.
 FILL_DEFAULTS = {
     "hour": 0,
     "day_of_week": 0,
@@ -117,14 +130,19 @@ FILL_DEFAULTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Main job
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
     logger.info("=" * 80)
     logger.info("Spark Silver -> Gold Parquet Job")
-    logger.info("Silver path: %s", SILVER_PATH)
+    logger.info("Silver path:       %s", SILVER_PATH)
     logger.info("Gold Parquet path: %s", GOLD_RETRAIN_PARQUET_PATH)
     logger.info("Gold CSV path:     %s", GOLD_RETRAIN_CSV_PATH)
     logger.info("Read partitions:   %s", READ_PARTITIONS)
-    logger.info("Write partitions: %s", WRITE_PARTITIONS)
+    logger.info("Write partitions:  %s", WRITE_PARTITIONS)
     logger.info("=" * 80)
 
     spark = (
@@ -137,8 +155,7 @@ def main() -> None:
     )
 
     try:
-        logger.info("Reading Silver JSONL recursively...")
-
+        logger.info("Reading Silver JSONL files recursively from GCS ...")
         raw_df = (
             spark.read.option("recursiveFileLookup", "true")
             .schema(FEATURE_SCHEMA)
@@ -151,34 +168,33 @@ def main() -> None:
         logger.info("Raw records read: %s", f"{total_raw:,}")
 
         if total_raw == 0:
-            logger.warning("No Silver data found. Exiting.")
+            logger.warning("No Silver data found. Exiting without writing Gold output.")
             return
 
-        logger.info("Dropping rows with missing required fields...")
+        logger.info("Dropping rows with missing required fields ...")
         clean_df = raw_df.dropna(subset=REQUIRED_COLUMNS)
 
-        logger.info("Filtering valid severity, lat, lon...")
+        logger.info("Filtering to valid severity (1-4) and coordinate ranges ...")
         clean_df = (
             clean_df.filter(F.col("true_severity").between(1, 4))
             .filter(F.col("lat").between(-90, 90))
             .filter(F.col("lon").between(-180, 180))
         )
 
-        logger.info("Filling null feature values...")
+        logger.info("Filling null feature columns with sensible defaults ...")
         clean_df = clean_df.fillna(FILL_DEFAULTS)
 
-        logger.info("Deduplicating by event_id...")
+        logger.info("Deduplicating by event_id ...")
         clean_df = clean_df.dropDuplicates(["event_id"])
 
         final_count = clean_df.count()
-        logger.info("Final clean rows: %s", f"{final_count:,}")
+        logger.info("Clean rows after all filters: %s", f"{final_count:,}")
 
         if final_count == 0:
-            logger.warning("No valid rows after cleaning. Exiting.")
+            logger.warning("No valid rows remain after cleaning. Exiting.")
             return
 
-        logger.info("Writing Gold Parquet and CSV outputs...")
-
+        logger.info("Writing Gold Parquet and CSV outputs ...")
         partitioned_df = clean_df.repartition(WRITE_PARTITIONS, "event_year")
 
         partitioned_df.write.mode("overwrite").partitionBy("event_year").parquet(
@@ -188,10 +204,8 @@ def main() -> None:
             GOLD_RETRAIN_CSV_PATH
         )
 
-        logger.info(
-            "Gold Parquet written successfully to %s", GOLD_RETRAIN_PARQUET_PATH
-        )
-        logger.info("Gold CSV written successfully to %s", GOLD_RETRAIN_CSV_PATH)
+        logger.info("Gold Parquet written to: %s", GOLD_RETRAIN_PARQUET_PATH)
+        logger.info("Gold CSV written to:     %s", GOLD_RETRAIN_CSV_PATH)
 
     finally:
         spark.stop()
