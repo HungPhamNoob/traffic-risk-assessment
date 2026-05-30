@@ -5,7 +5,11 @@ from typing import Any
 from psycopg2 import sql
 
 from app.core.database import fetch_all
-from app.services.prediction_service import _normalize_mode, mode_table_identifier, table_identifier
+from app.services.prediction_service import (
+    _normalize_mode,
+    mode_table_identifier,
+    table_identifier,
+)
 
 
 def timeseries(
@@ -124,7 +128,9 @@ def weather_histogram(mode: str | None = None) -> dict[str, Any]:
             col=col_ident,
             table=tbl,
             bins=sql.Literal(bins),
-            max_val=sql.Literal(100 if col == "humidity" else 130 if col == "temperature_f" else 100),
+            max_val=sql.Literal(
+                100 if col == "humidity" else 130 if col == "temperature_f" else 100
+            ),
         )
         rows = fetch_all(query)
         result["histogram"][label] = [
