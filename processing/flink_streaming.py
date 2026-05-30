@@ -131,6 +131,7 @@ SCHEMA_READY = {"us": False, "tomtom": False}
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def table_name(value: str) -> str:
     """Return a simple public-schema table name."""
     selected = value.split(".")[-1]
@@ -803,7 +804,6 @@ def main() -> None:
 
     us_stream.union(tomtom_stream).print()
     env.execute("Unified Traffic Streaming - US Replay + TomTom Live")
-
 
 
 if __name__ == "__main__":

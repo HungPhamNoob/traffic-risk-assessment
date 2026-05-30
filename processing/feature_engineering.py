@@ -188,7 +188,9 @@ def encode_road_type(street_name: Any) -> int:
     if not street:
         return 0
 
-    if any(t in street for t in ["interstate", "i-", "freeway", "fwy", "highway", "hwy"]):
+    if any(
+        t in street for t in ["interstate", "i-", "freeway", "fwy", "highway", "hwy"]
+    ):
         return 1
     if any(t in street for t in ["route", "state route", "us-", "sr-"]):
         return 2
@@ -263,10 +265,18 @@ def build_features(raw_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     # Weather features (clipped to physically defensible ranges).
     weather_code = encode_weather_condition(raw_row.get("Weather_Condition"))
-    temperature_f = _clip_float(raw_row.get("Temperature(F)"), default=50.0, minimum=-40.0, maximum=130.0)
-    humidity = _clip_float(raw_row.get("Humidity(%)"), default=50.0, minimum=0.0, maximum=100.0)
-    wind_speed_mph = _clip_float(raw_row.get("Wind_Speed(mph)"), default=0.0, minimum=0.0, maximum=100.0)
-    visibility_mi = _clip_float(raw_row.get("Visibility(mi)"), default=10.0, minimum=0.0, maximum=10.0)
+    temperature_f = _clip_float(
+        raw_row.get("Temperature(F)"), default=50.0, minimum=-40.0, maximum=130.0
+    )
+    humidity = _clip_float(
+        raw_row.get("Humidity(%)"), default=50.0, minimum=0.0, maximum=100.0
+    )
+    wind_speed_mph = _clip_float(
+        raw_row.get("Wind_Speed(mph)"), default=0.0, minimum=0.0, maximum=100.0
+    )
+    visibility_mi = _clip_float(
+        raw_row.get("Visibility(mi)"), default=10.0, minimum=0.0, maximum=10.0
+    )
 
     # Road type inferred from street name.
     road_type_code = encode_road_type(raw_row.get("Street"))

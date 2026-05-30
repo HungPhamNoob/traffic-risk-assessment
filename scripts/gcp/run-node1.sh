@@ -13,6 +13,9 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 
+# Capture incoming environment variables to prevent them from being overwritten by sourcing env files
+INCOMING_IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-}"
+
 echo "Node 1 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
 echo "Environment file: ${ENV_FILE}"
@@ -26,6 +29,10 @@ if [ -f "${ENV_FILE}" ]; then
 else
   echo "ERROR: ${ENV_FILE} does not exist."
   exit 1
+fi
+
+if [ -n "${INCOMING_IS_TRAIN_OFFLINE}" ]; then
+  IS_TRAIN_OFFLINE="${INCOMING_IS_TRAIN_OFFLINE}"
 fi
 
 export MLFLOW_TRACKING_URI="${NODE1_MLFLOW_TRACKING_URI:-http://localhost:5000}"

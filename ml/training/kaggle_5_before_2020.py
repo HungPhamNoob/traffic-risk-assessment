@@ -64,7 +64,9 @@ logger = logging.getLogger("kaggle-5-before-2020")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data/process/us_train_offline_before_2020.csv"
-DEFAULT_H2O_LOG_PATH = PROJECT_ROOT / "data/simulation/h2o_before_2020_classsampling.log"
+DEFAULT_H2O_LOG_PATH = (
+    PROJECT_ROOT / "data/simulation/h2o_before_2020_classsampling.log"
+)
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data/simulation/kaggle_5_before_2020"
 
 LABEL_COLUMN = "true_severity"
@@ -195,12 +197,16 @@ def load_dataset(path: Path) -> tuple[pd.DataFrame, pd.Series]:
         if "Severity" in df.columns:
             label_column = "Severity"
         else:
-            raise ValueError("Label column not found: expected true_severity or Severity")
+            raise ValueError(
+                "Label column not found: expected true_severity or Severity"
+            )
     else:
         label_column = LABEL_COLUMN
 
     df = df.dropna(subset=[label_column]).copy()
-    feature_columns = [c for c in df.columns if c not in EXCLUDED_COLUMNS and c != label_column]
+    feature_columns = [
+        c for c in df.columns if c not in EXCLUDED_COLUMNS and c != label_column
+    ]
     if not feature_columns:
         raise ValueError("No feature columns found after exclusions.")
 
@@ -209,7 +215,9 @@ def load_dataset(path: Path) -> tuple[pd.DataFrame, pd.Series]:
 
     non_numeric = x.select_dtypes(exclude=[np.number]).columns.tolist()
     if non_numeric:
-        logger.info("One-hot encoding %d non-numeric columns: %s", len(non_numeric), non_numeric)
+        logger.info(
+            "One-hot encoding %d non-numeric columns: %s", len(non_numeric), non_numeric
+        )
         x = pd.get_dummies(x, columns=non_numeric, drop_first=False)
 
     logger.info("Loaded %s rows with %s usable feature columns.", len(df), x.shape[1])
@@ -262,7 +270,9 @@ def cap_split_for_local_resources(
             "here stays on sklearn classical models. Keeping that model family "
             "is more faithful than swapping in a GPU-only library."
         )
-        if gpu_total_mib is not None and gpu_total_mib > int(GPU_MEMORY_BUDGET_GB * 1024):
+        if gpu_total_mib is not None and gpu_total_mib > int(
+            GPU_MEMORY_BUDGET_GB * 1024
+        ):
             notes.append(
                 f"Soft GPU budget set to {GPU_MEMORY_BUDGET_GB:.1f} GiB while card has "
                 f"{gpu_total_mib / 1024:.1f} GiB total."
@@ -450,7 +460,9 @@ def evaluate_predictions(
     return metrics, report_df, confusion_df
 
 
-def align_probabilities(model: Any, x_eval: pd.DataFrame, labels: list[str]) -> np.ndarray | None:
+def align_probabilities(
+    model: Any, x_eval: pd.DataFrame, labels: list[str]
+) -> np.ndarray | None:
     if not hasattr(model, "predict_proba"):
         return None
     try:
@@ -459,7 +471,9 @@ def align_probabilities(model: Any, x_eval: pd.DataFrame, labels: list[str]) -> 
         index_map = [class_order.index(label) for label in labels]
         return proba[:, index_map]
     except Exception:
-        logger.exception("Probability extraction failed for %s", model.__class__.__name__)
+        logger.exception(
+            "Probability extraction failed for %s", model.__class__.__name__
+        )
         return None
 
 
@@ -557,7 +571,9 @@ def maybe_run_logistic_regression(
         solver="lbfgs",
         n_jobs=None,
     )
-    return fit_and_evaluate_model("Logistic Regression", lr, x_train, x_test, y_train, y_test)
+    return fit_and_evaluate_model(
+        "Logistic Regression", lr, x_train, x_test, y_train, y_test
+    )
 
 
 def run_random_forest_selected_features(
@@ -589,7 +605,9 @@ def run_random_forest_selected_features(
             n_jobs=MAX_CPU_JOBS,
         )
         selector_model.fit(x_train, y_train)
-        selector = SelectFromModel(selector_model, threshold=RF_IMPORTANCE_THRESHOLD, prefit=True)
+        selector = SelectFromModel(
+            selector_model, threshold=RF_IMPORTANCE_THRESHOLD, prefit=True
+        )
         support_idx = selector.get_support(indices=True)
         if len(support_idx) == 0:
             reason = (
@@ -667,7 +685,9 @@ def parse_h2o_reference(log_path: Path) -> tuple[dict[str, Any], pd.DataFrame | 
             break
 
     if start_idx is None:
-        logger.warning("Could not find evaluation block for best H2O model %s", best_model_id)
+        logger.warning(
+            "Could not find evaluation block for best H2O model %s", best_model_id
+        )
         return {}, None
 
     end_idx = len(lines)
@@ -801,7 +821,10 @@ def save_results(
         ].head(1)
         if not best_kaggle.empty:
             compare_rows = [
-                {"model": best_kaggle.iloc[0]["model"], **best_kaggle.iloc[0].to_dict()},
+                {
+                    "model": best_kaggle.iloc[0]["model"],
+                    **best_kaggle.iloc[0].to_dict(),
+                },
                 {"model": "H2O best reference", **h2o_metrics},
             ]
             comparison_df = pd.DataFrame(compare_rows)
@@ -903,11 +926,15 @@ def main() -> None:
         random_state=SEED,
         n_jobs=MAX_CPU_JOBS,
     )
-    results.append(fit_and_evaluate_model("Random Forest", rf, x_train, x_test, y_train, y_test))
+    results.append(
+        fit_and_evaluate_model("Random Forest", rf, x_train, x_test, y_train, y_test)
+    )
 
     results.append(maybe_run_logistic_regression(x_train, x_test, y_train, y_test))
     results.append(maybe_run_knn(x_train, x_test, y_train, y_test))
-    results.append(run_random_forest_selected_features(x_train, x_test, y_train, y_test))
+    results.append(
+        run_random_forest_selected_features(x_train, x_test, y_train, y_test)
+    )
 
     summary_df = build_summary_dataframe(results)
     h2o_metrics, h2o_report_df = parse_h2o_reference(h2o_log_path)

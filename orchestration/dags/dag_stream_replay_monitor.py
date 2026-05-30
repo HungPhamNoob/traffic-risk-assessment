@@ -156,5 +156,9 @@ sys.stdout.write(str(running))
     )
 
     # DAG structure: all checks run in parallel, then recovery (if needed), then summary.
-    [check_kafka, check_flink, check_flink_job, check_batch_node] >> recover_realtime_pair >> summary
+    (
+        [check_kafka, check_flink, check_flink_job, check_batch_node]
+        >> recover_realtime_pair
+        >> summary
+    )
     [check_kafka, check_flink, check_flink_job, check_batch_node] >> summary

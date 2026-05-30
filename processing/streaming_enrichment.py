@@ -117,7 +117,9 @@ def _parse_event_time(timestamp: Any) -> Optional[datetime]:
         return None
     if event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
-    return event_time.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    return event_time.astimezone(timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
 
 
 def _parse_open_meteo_time(value: Any) -> Optional[datetime]:
@@ -168,12 +170,14 @@ def _fetch_current_open_meteo_weather(lat: float, lon: float) -> Dict[str, Any]:
         params={
             "latitude": lat,
             "longitude": lon,
-            "current": ",".join([
-                "temperature_2m",
-                "relative_humidity_2m",
-                "weather_code",
-                "wind_speed_10m",
-            ]),
+            "current": ",".join(
+                [
+                    "temperature_2m",
+                    "relative_humidity_2m",
+                    "weather_code",
+                    "wind_speed_10m",
+                ]
+            ),
             "temperature_unit": "fahrenheit",
             "wind_speed_unit": "mph",
             "timezone": "UTC",
@@ -221,12 +225,14 @@ def fetch_open_meteo_weather(
             params={
                 "latitude": lat,
                 "longitude": lon,
-                "hourly": ",".join([
-                    "temperature_2m",
-                    "relative_humidity_2m",
-                    "weather_code",
-                    "wind_speed_10m",
-                ]),
+                "hourly": ",".join(
+                    [
+                        "temperature_2m",
+                        "relative_humidity_2m",
+                        "weather_code",
+                        "wind_speed_10m",
+                    ]
+                ),
                 "temperature_unit": "fahrenheit",
                 "wind_speed_unit": "mph",
                 "timezone": "UTC",
