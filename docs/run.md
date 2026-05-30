@@ -273,7 +273,8 @@ make -f makefile/gcp/Makefile full-reset-run
 
 This command:
 
-- Resets PostgreSQL serving tables, Kafka/Flink/Spark local volumes, checkpoints, Silver, and Gold outputs.
+- Creates run-specific GCS prefixes for Flink checkpoints, Spark checkpoints, Silver features, and Gold retrain outputs.
+- Resets PostgreSQL serving tables and Kafka/Flink/Spark local Docker volumes.
 - Starts Node 1 and runs or verifies pre-2020 H2O model bootstrap.
 - Starts Node 2 with full US replay and TomTom live ingestion.
 - Starts Node 3 Spark Silver-to-Gold and H2O retraining.

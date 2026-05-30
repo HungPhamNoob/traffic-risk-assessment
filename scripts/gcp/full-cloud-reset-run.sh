@@ -17,6 +17,7 @@ BRANCH="${BRANCH:-main}"
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 LOG_DIR="${LOG_DIR:-logs/cloud_runs/${RUN_ID}}"
+RUNTIME_ENV_FILE="${LOG_DIR}/.env.cloud.${RUN_ID}"
 RUN_OFFLINE_TRAINING="${RUN_OFFLINE_TRAINING:-true}"
 STREAM_MAX_RECORDS="${STREAM_MAX_RECORDS:-0}"
 STREAM_THROTTLE_SECONDS="${STREAM_THROTTLE_SECONDS:-0.0}"
@@ -61,8 +62,20 @@ echo "Run ID: ${RUN_ID}"
 echo "Project: ${PROJECT_ID}, zone: ${ZONE}, branch: ${BRANCH}"
 echo "Logs: ${LOG_DIR}"
 
-echo "Uploading .env.cloud to GCS."
-gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud \
+echo "Preparing run-specific cloud environment."
+cp .env.cloud "${RUNTIME_ENV_FILE}"
+{
+  printf '\n# Run-specific clean prefixes for %s\n' "${RUN_ID}"
+  printf 'FLINK_CHECKPOINT_DIR=gs://big-data-group-4-backups/checkpoints/flink/runs/%s\n' "${RUN_ID}"
+  printf 'SPARK_CHECKPOINT_DIR=gs://big-data-group-4-backups/checkpoints/spark/runs/%s\n' "${RUN_ID}"
+  printf 'SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features/runs/%s\n' "${RUN_ID}"
+  printf 'GOLD_RETRAIN_PATH=gs://big-data-group-4-gold/features/retrain/runs/%s\n' "${RUN_ID}"
+  printf 'GOLD_RETRAIN_PARQUET_PATH=gs://big-data-group-4-gold/features/retrain/runs/%s/parquet\n' "${RUN_ID}"
+  printf 'GOLD_RETRAIN_CSV_PATH=gs://big-data-group-4-gold/features/retrain/runs/%s/csv\n' "${RUN_ID}"
+} >> "${RUNTIME_ENV_FILE}"
+
+echo "Uploading run-specific .env.cloud to GCS."
+gcloud storage cp "${RUNTIME_ENV_FILE}" gs://big-data-group-4-bronze/env/.env.cloud \
   | tee "${LOG_DIR}/00-sync-env.log"
 
 sync_repo_on_node "${NODE1}" | tee "${LOG_DIR}/01-sync-node1.log"
@@ -82,7 +95,7 @@ for node in "${NODE1}" "${NODE2}" "${NODE3}"; do
 done
 
 echo "Resetting Node 1 PostgreSQL serving tables."
-ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && RESET_LOCAL_COMPOSE=false RESET_POSTGRES=true RESET_GCS=true bash scripts/gcp/reset-realtime.sh" \
+ssh_cmd "${NODE1}" "cd ${PROJECT_ROOT} && RESET_LOCAL_COMPOSE=false RESET_POSTGRES=true RESET_GCS=false bash scripts/gcp/reset-realtime.sh" \
   | tee "${LOG_DIR}/05-reset-node1.log"
 
 echo "Resetting Node 2 Kafka/Flink streaming state."
