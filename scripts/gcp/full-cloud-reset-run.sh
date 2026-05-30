@@ -48,6 +48,8 @@ sync_repo_on_node() {
       git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git ${PROJECT_ROOT}
     fi
     cd ${PROJECT_ROOT}
+    git reset --hard || true
+    git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/ -e dashboard/frontend/node_modules/ -e dashboard/frontend/.next/ || true
     git fetch --prune origin
     git checkout -B ${BRANCH} origin/${BRANCH}
     git reset --hard origin/${BRANCH}
