@@ -314,20 +314,15 @@ services:
   # Flink JobManager
   # ==========================================================
   flink-jobmanager:
-    image: flink:1.19-scala_2.12
+    build:
+      context: ../..
+      dockerfile: deployment/node2-streaming/Dockerfile.flink
+    image: capstone/flink-streaming:1.19-node2
     container_name: node2-flink-jm
     user: root
     entrypoint: []
     command: >
       bash -c "
-        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
-        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
-        apt-get update &&
-        apt-get install -y --no-install-recommends python3 python3-pip python3-venv &&
-        rm -rf /var/lib/apt/lists/* &&
-        python3 -m venv /opt/flink/pyenv &&
-        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
-        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary==2.9.9 requests==2.31.0 python-dotenv==1.0.1 gcsfs==2024.3.1 google-auth==2.23.4 google-cloud-storage==2.14.0 &&
         mkdir -p /opt/flink/checkpoints &&
         chown -R flink:flink /opt/flink/checkpoints &&
         chmod -R 775 /opt/flink/checkpoints &&
@@ -358,20 +353,15 @@ services:
     restart: on-failure
 
   flink-taskmanager:
-    image: flink:1.19-scala_2.12
+    build:
+      context: ../..
+      dockerfile: deployment/node2-streaming/Dockerfile.flink
+    image: capstone/flink-streaming:1.19-node2
     container_name: node2-flink-tm
     user: root
     entrypoint: []
     command: >
       bash -c "
-        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
-        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
-        apt-get update &&
-        apt-get install -y --no-install-recommends python3 python3-pip python3-venv &&
-        rm -rf /var/lib/apt/lists/* &&
-        python3 -m venv /opt/flink/pyenv &&
-        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
-        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary==2.9.9 requests==2.31.0 python-dotenv==1.0.1 gcsfs==2024.3.1 google-auth==2.23.4 google-cloud-storage==2.14.0 &&
         mkdir -p /opt/flink/checkpoints &&
         chown -R flink:flink /opt/flink/checkpoints &&
         chmod -R 775 /opt/flink/checkpoints &&
@@ -420,24 +410,16 @@ services:
     restart: unless-stopped
 
   flink-python-job:
-    image: flink:1.19-scala_2.12
+    build:
+      context: ../..
+      dockerfile: deployment/node2-streaming/Dockerfile.flink
+    image: capstone/flink-streaming:1.19-node2
     container_name: node2-flink-python-job
     user: root
     entrypoint: []
     working_dir: /opt/traffic
     command: >
       bash -c "
-        mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial &&
-        chmod -R 777 /var/lib/apt/lists /var/cache/apt/archives &&
-        apt-get update &&
-        apt-get install -y --no-install-recommends python3 python3-pip python3-venv curl ca-certificates &&
-        rm -rf /var/lib/apt/lists/* &&
-        python3 -m venv /opt/flink/pyenv &&
-        /opt/flink/pyenv/bin/pip install --no-cache-dir --upgrade pip &&
-        /opt/flink/pyenv/bin/pip install --no-cache-dir apache-flink==1.19.0 psycopg2-binary==2.9.9 requests==2.31.0 python-dotenv==1.0.1 gcsfs==2024.3.1 google-auth==2.23.4 google-cloud-storage==2.14.0 &&
-        mkdir -p /opt/flink/connectors &&
-        curl -fsSL -o /opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-kafka/3.2.0-1.19/flink-connector-kafka-3.2.0-1.19.jar &&
-        curl -fsSL -o /opt/flink/connectors/kafka-clients-3.6.1.jar https://repo.maven.apache.org/maven2/org/apache/kafka/kafka-clients/3.6.1/kafka-clients-3.6.1.jar &&
         mkdir -p /opt/flink/checkpoints &&
         chown -R flink:flink /opt/flink/checkpoints &&
         chmod -R 775 /opt/flink/checkpoints &&

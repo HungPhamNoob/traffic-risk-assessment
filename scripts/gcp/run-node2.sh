@@ -55,7 +55,7 @@ docker compose \
   --project-directory "${NODE2_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE2_COMPOSE_FILE}" \
-  up -d
+  up -d --build
 
 echo "Verifying that the Flink job container is mounted from ${PROJECT_ROOT}."
 FLINK_MOUNT_SOURCE="$(docker inspect node2-flink-python-job --format '{{range .Mounts}}{{if eq .Destination "/opt/traffic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
