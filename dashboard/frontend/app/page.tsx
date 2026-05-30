@@ -142,7 +142,6 @@ export default function DashboardPage() {
         <KpiCard
           label="Model"
           value={summary.latest_model_version || "latest"}
-          className="single-line-value"
         />
       </section>
 
