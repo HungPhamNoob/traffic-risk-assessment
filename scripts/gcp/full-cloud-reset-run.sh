@@ -73,6 +73,9 @@ echo "Copying .env.cloud from GCS to each VM."
 for node in "${NODE1}" "${NODE2}" "${NODE3}"; do
   ssh_cmd "${node}" "
     cd ${PROJECT_ROOT}
+    export CLOUDSDK_CONFIG=/tmp/gcloud-config-\$(id -u)
+    mkdir -p \"\${CLOUDSDK_CONFIG}\"
+    chmod 700 \"\${CLOUDSDK_CONFIG}\"
     gcloud storage cp gs://big-data-group-4-bronze/env/.env.cloud .env.cloud
     cp .env.cloud .env
   " | tee "${LOG_DIR}/04-env-${node}.log"

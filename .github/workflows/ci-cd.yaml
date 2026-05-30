@@ -237,6 +237,7 @@ jobs:
             printf 'MLFLOW_SERVING_ENDPOINT=http://%s:5001/invocations\n' "$NODE1_INTERNAL_IP"
             printf 'MLFLOW_GUNICORN_TIMEOUT_SECONDS=300\n'
             printf 'MLFLOW_GUNICORN_WORKERS=2\n'
+            printf 'TOMTOM_BBOXES=US:New_York:-74.25909,40.477399,-73.700181,40.917577\n'
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
           NODE1_EXTERNAL_IP="$(gcloud compute instances describe node1-control --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
