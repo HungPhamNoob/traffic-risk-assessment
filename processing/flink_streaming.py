@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 """
-Unified Flink streaming job for US replay and TomTom live incidents.
+processing/flink_streaming.py
+Unified Flink streaming job – US replay and TomTom live incident processing.
 
-US replay flow:
-    Kafka traffic.us.raw -> feature engineering -> Silver GCS -> MLflow/H2O
-    inference -> PostgreSQL table traffic_risk_predictions.
+Data flows:
 
-TomTom live flow:
-    Kafka traffic.tomtom.raw -> TomTom enrichment -> rule-based severity and
-    display risk score -> PostgreSQL table traffic_tomtom_incidents.
+    US replay flow (before-2020 model, post-2020 data):
+        Kafka traffic.us.raw
+        -> feature engineering  (processing.feature_engineering.build_features)
+        -> Silver GCS write     (one JSONL file per event)
+        -> MLflow / H2O inference
+        -> PostgreSQL table:    traffic_risk_predictions
 
-TomTom is intentionally not sent to Spark, MLflow, or H2O because its label is
-created from TomTom's own delay and icon signals, not from the US-trained H2O
-model contract.
+    TomTom live flow (rule-based, no H2O):
+        Kafka traffic.tomtom.raw
+        -> enrichment           (processing.streaming_enrichment.enrich_tomtom_event)
+        -> feature engineering  (shared with US)
+        -> rule-based severity  (magnitudeOfDelay + iconCategory)
+        -> PostgreSQL table:    traffic_tomtom_incidents
+
+    TomTom events are intentionally excluded from Spark, MLflow, and H2O.
+    The severity label is derived from TomTom delay and icon signals, which
+    are not compatible with the US Accidents H2O model contract.
 """
 
 import json
@@ -31,8 +40,6 @@ from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
-from pyflink.datastream.functions import SinkFunction
-
 from processing.feature_engineering import build_features
 from processing.streaming_enrichment import enrich_tomtom_event
 
@@ -116,15 +123,9 @@ MODEL_FEATURE_COLUMNS = [
 
 SCHEMA_READY = {"us": False, "tomtom": False}
 
-
-class LoggingSink(SinkFunction):
-    """Log processed stream outcomes for lightweight observability."""
-
-    def invoke(self, value, context) -> None:
-        if value is None:
-            return
-        logger.info("Stream result: %s", value)
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def table_name(value: str) -> str:
     """Return a simple public-schema table name."""
@@ -796,8 +797,9 @@ def main() -> None:
         source_name=tomtom_source_name,
     ).map(process_tomtom_message, output_type=Types.STRING())
 
-    us_stream.union(tomtom_stream).add_sink(LoggingSink()).name("stream-log-sink")
+    us_stream.union(tomtom_stream).print()
     env.execute("Unified Traffic Streaming - US Replay + TomTom Live")
+
 
 
 if __name__ == "__main__":
