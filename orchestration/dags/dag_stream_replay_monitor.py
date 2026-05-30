@@ -80,10 +80,11 @@ with DAG(
         bash_command=r"""
             echo "=== Checking Flink job status ==="
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node2-streaming "
-                RUNNING=\$(curl -s http://localhost:8081/jobs | python3 -c \\"
+                RUNNING=\$(curl -s http://localhost:8081/jobs | python3 -c \\" 
 import sys, json
 jobs = json.load(sys.stdin).get('jobs', [])
-print(len([j for j in jobs if j.get('status') == 'RUNNING']))
+running = sum(1 for j in jobs if j.get('status') == 'RUNNING')
+sys.stdout.write(str(running))
 \\")
                 if [ \"\$RUNNING\" -gt 0 ]; then
                     echo \"Flink job: RUNNING (\$RUNNING active)\"

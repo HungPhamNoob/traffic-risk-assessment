@@ -92,6 +92,9 @@ export default function DashboardPage() {
     (severityQuery.data?.distribution as Array<Record<string, number>> | undefined) ||
     [];
 
+  const selectedSeverity =
+    selected?.predicted_severity ?? selected?.true_severity ?? "N/A";
+
   return (
     <div className="page-stack">
       <div className="page-title">
@@ -190,10 +193,14 @@ export default function DashboardPage() {
                 <div className="muted">
                   {selected.lat.toFixed(5)}, {selected.lon.toFixed(5)}
                 </div>
-                <div>Risk {selected.risk_score.toFixed(4)}</div>
+                <div>
+                  {selected.data_source === "tomtom_live"
+                    ? `Severity ${selectedSeverity}`
+                    : `Risk ${selected.risk_score.toFixed(4)}`}
+                </div>
                 <div className="muted">
                   {selected.data_source === "tomtom_live"
-                    ? "TomTom live, rule-based severity"
+                    ? `TomTom live, display risk ${selected.risk_score.toFixed(4)}`
                     : "US replay, H2O risk score"}
                 </div>
                 <div className="muted">{selected.event_time}</div>

@@ -31,6 +31,7 @@ from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
+from pyflink.datastream.functions import SinkFunction
 
 from processing.feature_engineering import build_features
 from processing.streaming_enrichment import enrich_tomtom_event
@@ -114,6 +115,15 @@ MODEL_FEATURE_COLUMNS = [
 ]
 
 SCHEMA_READY = {"us": False, "tomtom": False}
+
+
+class LoggingSink(SinkFunction):
+    """Log processed stream outcomes for lightweight observability."""
+
+    def invoke(self, value, context) -> None:
+        if value is None:
+            return
+        logger.info("Stream result: %s", value)
 
 
 def table_name(value: str) -> str:
@@ -786,7 +796,7 @@ def main() -> None:
         source_name=tomtom_source_name,
     ).map(process_tomtom_message, output_type=Types.STRING())
 
-    us_stream.union(tomtom_stream).print()
+    us_stream.union(tomtom_stream).add_sink(LoggingSink()).name("stream-log-sink")
     env.execute("Unified Traffic Streaming - US Replay + TomTom Live")
 
 

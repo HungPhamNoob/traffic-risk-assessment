@@ -114,11 +114,20 @@ export function RiskMap({
       controller
       initialViewState={viewState}
       layers={layers}
-      getTooltip={({ object }) =>
-        object?.event_id
-          ? `${object.event_id}\nRisk ${Number(object.risk_score).toFixed(3)}`
-          : null
-      }
+      getTooltip={({ object }) => {
+        const point = object as PredictionPoint | undefined;
+        if (!point?.event_id) return null;
+        const riskValue = Number(point.risk_score);
+        const riskText = Number.isFinite(riskValue)
+          ? riskValue.toFixed(3)
+          : "N/A";
+        if (point.data_source === "tomtom_live") {
+          const severity =
+            point.predicted_severity ?? point.true_severity ?? "N/A";
+          return `${point.event_id}\nSeverity ${severity}\nDisplay risk ${riskText}`;
+        }
+        return `${point.event_id}\nRisk ${riskText}`;
+      }}
     >
       <Map reuseMaps mapStyle={MAP_STYLE} />
     </DeckGL>

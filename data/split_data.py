@@ -20,7 +20,15 @@ Important:
 """
 
 from pathlib import Path
+import logging
+import os
+
 import pandas as pd
+
+
+LOG_LEVEL = os.getenv("SPLIT_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -47,7 +55,7 @@ US_PIPELINE_OUTPUT_PATH = PROCESS_DIR / f"us_pipeline_from_{SPLIT_YEAR}.csv"
 def ensure_output_folder_exists() -> None:
     """Create the output folder if it does not already exist."""
     PROCESS_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[INFO] Output folder is ready: {PROCESS_DIR}")
+    logger.info("Output folder ready: %s", PROCESS_DIR)
 
 
 def remove_old_output_files() -> None:
@@ -64,7 +72,7 @@ def remove_old_output_files() -> None:
     for output_path in output_paths:
         if output_path.exists():
             output_path.unlink()
-            print(f"[INFO] Removed old output file: {output_path}")
+            logger.info("Removed old output file: %s", output_path)
 
 
 def validate_input_file_exists(input_path: Path) -> None:
@@ -116,9 +124,9 @@ def split_us_dataset() -> None:
         Start_Time year < 2020  -> offline training data
         Start_Time year >= 2020 -> pipeline replay data
     """
-    print("\n" + "=" * 80)
-    print("[INFO] Starting US dataset split")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Starting US dataset split")
+    logger.info("=" * 80)
 
     validate_input_file_exists(US_INPUT_PATH)
 
@@ -134,7 +142,11 @@ def split_us_dataset() -> None:
         pd.read_csv(US_INPUT_PATH, chunksize=CHUNK_SIZE, low_memory=False),
         start=1,
     ):
-        print(f"[INFO] Processing US chunk {chunk_index} with {len(chunk):,} rows")
+        logger.info(
+            "Processing US chunk %s with %s rows",
+            chunk_index,
+            f"{len(chunk):,}",
+        )
 
         # Convert Start_Time to datetime.
         # Invalid values become NaT, so they can be safely detected and removed.
@@ -150,9 +162,10 @@ def split_us_dataset() -> None:
 
         if invalid_count > 0:
             invalid_time_rows += invalid_count
-            print(
-                f"[WARNING] US chunk {chunk_index}: "
-                f"{invalid_count:,} rows have invalid Start_Time and will be skipped"
+            logger.warning(
+                "US chunk %s: %s rows have invalid Start_Time and will be skipped",
+                chunk_index,
+                f"{invalid_count:,}",
             )
 
         valid_chunk = chunk.loc[valid_time_mask].copy()
@@ -181,20 +194,23 @@ def split_us_dataset() -> None:
         train_rows += len(train_chunk)
         pipeline_rows += len(pipeline_chunk)
 
-        print(
-            f"[INFO] US progress: total={total_rows:,}, "
-            f"train_before_{SPLIT_YEAR}={train_rows:,}, "
-            f"pipeline_from_{SPLIT_YEAR}={pipeline_rows:,}, "
-            f"invalid_time={invalid_time_rows:,}"
+        logger.info(
+            "US progress: total=%s, train_before_%s=%s, pipeline_from_%s=%s, invalid_time=%s",
+            f"{total_rows:,}",
+            SPLIT_YEAR,
+            f"{train_rows:,}",
+            SPLIT_YEAR,
+            f"{pipeline_rows:,}",
+            f"{invalid_time_rows:,}",
         )
 
-    print("\n[INFO] US split completed")
-    print(f"[INFO] US total rows read: {total_rows:,}")
-    print(f"[INFO] US offline training rows: {train_rows:,}")
-    print(f"[INFO] US pipeline replay rows: {pipeline_rows:,}")
-    print(f"[INFO] US invalid Start_Time rows skipped: {invalid_time_rows:,}")
-    print(f"[INFO] US training output: {US_TRAIN_OUTPUT_PATH}")
-    print(f"[INFO] US pipeline output: {US_PIPELINE_OUTPUT_PATH}")
+    logger.info("US split completed")
+    logger.info("US total rows read: %s", f"{total_rows:,}")
+    logger.info("US offline training rows: %s", f"{train_rows:,}")
+    logger.info("US pipeline replay rows: %s", f"{pipeline_rows:,}")
+    logger.info("US invalid Start_Time rows skipped: %s", f"{invalid_time_rows:,}")
+    logger.info("US training output: %s", US_TRAIN_OUTPUT_PATH)
+    logger.info("US pipeline output: %s", US_PIPELINE_OUTPUT_PATH)
 
 
 # ============================================================
@@ -203,22 +219,22 @@ def split_us_dataset() -> None:
 
 
 def main() -> None:
-    print("=" * 80)
-    print("[INFO] Accident dataset split job started")
-    print(f"[INFO] Split year: {SPLIT_YEAR}")
-    print(f"[INFO] Rows before {SPLIT_YEAR} will be used for offline training")
-    print(f"[INFO] Rows from {SPLIT_YEAR} onward will be used for pipeline replay")
-    print("[INFO] Input files do not need to be sorted by year")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Accident dataset split job started")
+    logger.info("Split year: %s", SPLIT_YEAR)
+    logger.info("Rows before %s will be used for offline training", SPLIT_YEAR)
+    logger.info("Rows from %s onward will be used for pipeline replay", SPLIT_YEAR)
+    logger.info("Input files do not need to be sorted by year")
+    logger.info("=" * 80)
 
     ensure_output_folder_exists()
     remove_old_output_files()
 
     split_us_dataset()
 
-    print("\n" + "=" * 80)
-    print("[INFO] Dataset split job completed successfully")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Dataset split job completed successfully")
+    logger.info("=" * 80)
 
 
 if __name__ == "__main__":

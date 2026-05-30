@@ -80,7 +80,7 @@ US Replay  ──▶ Kafka (traffic.us.raw)    ──▶ Flink ──▶ MLflow/
 | Table | Source | Dashboard Mode |
 |---|---|---|
 | `traffic_risk_predictions` | US replay → Flink → H2O inference | **Replay ●** |
-| `traffic_tomtom_incidents` | TomTom API → Flink → rule-based | **Live ▲** |
+| `traffic_tomtom_incidents` | TomTom API → Flink → rule-based (display risk derived) | **Live ▲** |
 
 ---
 
