@@ -62,6 +62,16 @@ def _normalize_mode(mode: str | None) -> MapMode:
     return "full"
 
 
+def mode_table_identifier(mode: str | None) -> sql.Identifier:
+    """Return the appropriate table identifier based on mode."""
+    normalized = _normalize_mode(mode)
+    if normalized == "replay":
+        return us_table_identifier()
+    if normalized == "live":
+        return tomtom_table_identifier()
+    return table_identifier()
+
+
 def overview_summary(mode: str | None = None) -> dict[str, Any]:
     """Aggregate high-level metrics for the selected dashboard mode."""
     normalized_mode = _normalize_mode(mode)
