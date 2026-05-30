@@ -2,9 +2,13 @@
 """
 Flink Streaming Job - US Traffic Risk Prediction
 
-US replay flow:
-    Kafka traffic.us.raw -> feature engineering -> Silver GCS -> MLflow/H2O
-    inference -> PostgreSQL table traffic_risk_predictions.
+Data flows:
+
+    Kafka traffic.us.raw
+    -> feature engineering (processing.feature_engineering.build_features)
+    -> Silver GCS write
+    -> MLflow / H2O inference
+    -> PostgreSQL table: traffic_risk_predictions
 
 TomTom incidents are handled by `processing/flink_tomtom_streaming.py`.
 """
@@ -25,7 +29,6 @@ from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
-
 from processing.feature_engineering import build_features
 
 try:
@@ -34,6 +37,7 @@ except Exception:  # pragma: no cover - depends on the PyFlink distribution.
     FileSystemCheckpointStorage = None
 
 
+# Load environment variables from .env file when running outside Docker.
 load_dotenv()
 
 logging.basicConfig(
@@ -43,6 +47,9 @@ logging.basicConfig(
 logger = logging.getLogger("flink-us-stream")
 
 
+# ---------------------------------------------------------------------------
+# Configuration (resolved from environment variables set by Docker Compose)
+# ---------------------------------------------------------------------------
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_TOPIC_US_RAW = os.getenv(
     "KAFKA_TOPIC_US_RAW",
@@ -102,6 +109,10 @@ MODEL_FEATURE_COLUMNS = [
 ]
 
 SCHEMA_READY = {"us": False}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def table_name(value: str) -> str:

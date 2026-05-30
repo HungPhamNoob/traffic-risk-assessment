@@ -16,7 +16,7 @@ Silver features for Spark, and do not participate in H2O retraining.
 
 ## Mapping Contract
 
-| Column | Source | Transform rule | Default/null policy | Owner stage |
+| Column | Source | Transform rule | Default | Owner stage |
 | --- | --- | --- | --- | --- |
 | `event_id` | TomTom `properties.id` | Prefix as `tomtom-{id}` | Required | Producer |
 | `incident_id` | TomTom `properties.id` | Stable TomTom id | Fallback to `event_id` | Producer/Flink |

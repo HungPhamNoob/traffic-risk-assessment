@@ -1,17 +1,29 @@
+# Prometheus scrape configuration for the Traffic Risk Platform (cloud deployment).
+#
+# Node topology:
+#   node1-control  (10.128.0.4 / 35.224.149.110): PostgreSQL, Airflow, MLflow, FastAPI, Prometheus, Grafana
+#   node2-streaming (10.128.0.5 / 35.225.231.57): Kafka x3, Flink, Redis, producers
+#   node3-batch    (10.128.0.8 / 34.63.78.147):   Spark master + 3 workers
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
 scrape_configs:
+
+  # Prometheus self-monitoring.
   - job_name: prometheus
     static_configs:
       - targets: ["prometheus:9090"]
 
+  # FastAPI backend – exposes /metrics via prometheus_client.
   - job_name: node1_fastapi
     metrics_path: /metrics
     static_configs:
       - targets: ["fastapi:8000"]
 
+  # HTTP health probe via Blackbox Exporter.
+  # Probes the main service health endpoints and the Flink/Spark UIs.
   - job_name: cloud_http_health
     metrics_path: /probe
     params:
@@ -20,8 +32,9 @@ scrape_configs:
       - targets:
           - http://fastapi:8000/health
           - http://mlflow:5000/health
-          - http://10.128.0.5:8081
-          - http://10.128.0.8:8080
+          - http://10.128.0.5:8081        # Flink JobManager UI
+          - http://10.128.0.5:8087        # Kafka UI
+          - http://10.128.0.8:8080        # Spark master UI
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -30,18 +43,19 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox-exporter:9115
 
+  # TCP connectivity probe – checks that critical ports are open.
   - job_name: cloud_tcp_health
     metrics_path: /probe
     params:
       module: [tcp_connect]
     static_configs:
       - targets:
-          - postgres:5432
-          - 10.128.0.5:9092
-          - 10.128.0.5:9093
-          - 10.128.0.5:9094
-          - 10.128.0.5:2181
-          - 10.128.0.8:7077
+          - postgres:5432               # PostgreSQL on node1
+          - 10.128.0.5:9092             # Kafka broker 1
+          - 10.128.0.5:9093             # Kafka broker 2
+          - 10.128.0.5:9094             # Kafka broker 3
+          - 10.128.0.5:2181             # ZooKeeper on node2
+          - 10.128.0.8:7077             # Spark master RPC
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

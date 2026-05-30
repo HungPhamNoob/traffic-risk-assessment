@@ -73,6 +73,10 @@ TomTom Incident API
   -> Flink TomTom enrichment + rule-based severity
   -> PostgreSQL traffic_tomtom_incidents
 
+TomTom severity is derived from `magnitudeOfDelay` and `iconCategory`, then
+mapped to a display risk score for the dashboard. It is intentionally excluded
+from Spark, MLflow, and H2O.
+
 PostgreSQL + MLflow + Prometheus
   -> FastAPI analytics and prediction APIs
   -> Dashboard / Grafana
@@ -184,6 +188,8 @@ Prepare the workspace:
 cp .env.example .env
 uv sync --group dev
 ```
+
+This project is cloud-first. For full end-to-end runs, use the cloud pipeline and the runbook in [docs/run.md](docs/run.md). Keep local execution limited to validation or smoke checks on low-spec laptops.
 
 Run validation:
 

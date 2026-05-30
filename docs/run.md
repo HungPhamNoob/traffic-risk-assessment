@@ -70,6 +70,8 @@ docker compose --env-file .env.cloud -f deployment/node2-streaming/docker-compos
 docker compose --env-file .env.cloud -f deployment/node3-batch/docker-compose.yaml config --quiet
 ```
 
+If you need a full, real run, always use the cloud pipeline instead of local smoke tests.
+
 If local Docker containers were started accidentally, stop them immediately:
 
 ```bash
@@ -142,6 +144,15 @@ MLFLOW_SERVING_ENDPOINT=http://<node1-internal-ip>:5001/invocations
 FASTAPI_IMAGE=us-central1-docker.pkg.dev/big-data-group-4/capstone/fastapi:latest
 POSTGRES_PREDICTION_TABLE=traffic_risk_predictions
 ```
+
+To speed up the end-to-end loop during demonstrations, reduce Airflow schedules in `.env.cloud`:
+
+```bash
+AIRFLOW_MODEL_RETRAIN_SCHEDULE=*/5 * * * *
+AIRFLOW_STREAM_HEALTH_SCHEDULE=*/2 * * * *
+```
+
+These defaults are safe to override later for production.
 
 Upload the environment file for deploy scripts:
 

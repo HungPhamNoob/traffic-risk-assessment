@@ -1,51 +1,39 @@
 # TomTom Traffic API for Streaming
 
-## Endpoint Chosen
+## Endpoint
 
-Use TomTom Traffic API **Incident Details** for the TomTom streaming producer:
+The streaming producer uses TomTom Traffic **Incident Details**:
 
 ```text
 GET https://api.tomtom.com/traffic/services/5/incidentDetails
 ```
 
-Reason: the batch-side TomTom schema in this repo is incident-oriented
-(`schemas/tomtom_incident.avsc`) and stores fields such as `icon_category`,
-`delay_seconds`, `length_meters`, and `geometry_wkt`. This project is about
-traffic risk, so the streaming source should ingest incident/risk signals rather
-than traffic flow speed segments.
+Incident Details provides incident-centric signals (`iconCategory`,
+`magnitudeOfDelay`, geometry) which are required for rule-based severity.
 
-Official docs used:
+Official docs:
 
 - https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/traffic-incidents/incident-details
 
 ## Request Parameters
 
-Configured through environment variables in the producer:
+Configured through environment variables in `ingestion/kafka/tomtom_producer.py`:
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
 | `TOMTOM_ENDPOINT` | `https://api.tomtom.com/traffic/services/5/incidentDetails` | API endpoint |
-| `TOMTOM_API_KEY` | empty | TomTom API key |
-| `TOMTOM_BBOX` | empty | Optional single bbox override: `minLon,minLat,maxLon,maxLat` |
-| `TOMTOM_BBOXES` | `US:New York:-74.25909,40.477399,-73.700181,40.917577;UK:London:-0.510375,51.28676,0.334015,51.691874` | Multi-region bboxes |
+| `TOMTOM_API_KEY` | empty | API key |
+| `TOMTOM_BBOX` | empty | Single bbox override `minLon,minLat,maxLon,maxLat` |
+| `TOMTOM_BBOXES` | `US:New York:...` | Multi-region bboxes |
 | `TOMTOM_LANGUAGE` | `en-US` | Incident text language |
 | `TOMTOM_TIME_VALIDITY` | `present` | Only currently valid incidents |
-| `TOMTOM_FIELDS` | all fields used by this pipeline | Controls response shape |
+| `TOMTOM_FIELDS` | configured | Select response fields |
 
-Default fields:
-
-```text
-{incidents{type,geometry{type,coordinates},properties{id,iconCategory,
-magnitudeOfDelay,events{description,code,iconCategory},startTime,endTime,
-from,to,length,delay,roadNumbers,timeValidity,probabilityOfOccurrence,
-numberOfReports,lastReportTime}}}
-```
+Default fields are tuned for incidents and delay signals.
 
 ## Response Shape
 
-Incident Details returns JSON. The exact fields depend on the `fields` request
-parameter. The root response contains `incidents`, an array of traffic incidents
-inside or intersecting the requested bbox. Each incident is GeoJSON-like:
+Incident Details returns GeoJSON-like features:
 
 ```json
 {
@@ -57,22 +45,13 @@ inside or intersecting the requested bbox. Each incident is GeoJSON-like:
         "iconCategory": 6,
         "magnitudeOfDelay": 2,
         "startTime": "2026-05-12T06:00:00Z",
-        "endTime": null,
         "from": "Road A",
         "to": "Road B",
         "length": 850.0,
         "delay": 180,
-        "roadNumbers": [],
-        "timeValidity": "present",
-        "probabilityOfOccurrence": "certain",
-        "numberOfReports": 1,
         "lastReportTime": "2026-05-12T06:05:00Z",
         "events": [
-          {
-            "code": 101,
-            "description": "Slow traffic",
-            "iconCategory": 6
-          }
+          { "code": 101, "description": "Slow traffic", "iconCategory": 6 }
         ]
       },
       "geometry": {
@@ -84,48 +63,37 @@ inside or intersecting the requested bbox. Each incident is GeoJSON-like:
 }
 ```
 
-GeoJSON coordinates are ordered as `[longitude, latitude]`.
+Coordinates are `[lon, lat]`.
 
-Important `properties` fields:
+## Pipeline Usage
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Traffic incident ID |
-| `iconCategory` | Main incident category |
-| `magnitudeOfDelay` | Delay magnitude bucket |
-| `events[].description` | Localized incident description |
-| `events[].code` | Predefined warning code |
-| `startTime`, `endTime` | Incident validity timestamps |
-| `from`, `to` | Start/end affected road names |
-| `length` | Affected length in meters |
-| `delay` | Delay in seconds |
-| `roadNumbers` | Affected road numbers |
-| `timeValidity` | `present` or `future` |
-| `probabilityOfOccurrence` | Probability label |
-| `numberOfReports` | Number of end-user reports |
-| `lastReportTime` | Most recent report timestamp |
+The TomTom stream is **live-only** and does not enter Spark, MLflow, or H2O.
 
-For invalid requests, TomTom returns JSON under `detailedError` with `code` and
-`message`.
+```text
+TomTom API
+-> Kafka topic traffic.tomtom.raw
+-> processing/flink_tomtom_streaming.py
+-> PostgreSQL table traffic_tomtom_incidents
+-> Dashboard Live mode
+```
 
-## Mapping to Streaming Fields
+The US stream remains separate:
 
-The active implementation uses two contracts:
+```text
+US replay
+-> Kafka topic traffic.us.raw
+-> processing/flink_streaming.py
+-> Silver GCS + MLflow serving
+-> PostgreSQL table traffic_risk_predictions
+```
 
-1. **TomTom raw Kafka event**: keeps TomTom incident-specific fields.
-2. **TomTom PostGIS table**: stores live rule-based incidents in
-   `traffic_tomtom_incidents`.
+## Raw Kafka Event
 
-TomTom does not write US Silver features, does not feed Spark/H2O, and does not
-call MLflow serving.
-
-### Raw Kafka Event
-
-These are the fields that should be saved from the TomTom API response before
-Flink writes the dedicated PostgreSQL table:
+These are the fields saved from the TomTom API response before Flink writes the
+dedicated PostgreSQL table:
 
 | TomTom response field | Bronze field | Type | Notes |
-| --- | --- | --- |
+| --- | --- | --- | --- |
 | `properties.id` | `incident_id` | string | Stable TomTom incident identifier |
 | `properties.id` | `flow_segment_id` | string | Reused as streaming key because Incident Details has no flow segment id |
 | generated | `event_id` | string | `tomtom-{incident_id}` |
@@ -148,7 +116,7 @@ Flink writes the dedicated PostgreSQL table:
 | `properties.probabilityOfOccurrence` | `probability_of_occurrence` | string | Probability label |
 | `properties.numberOfReports` | `number_of_reports` | int | End-user report count |
 | `properties.lastReportTime` | `last_report_time` | string | Latest report timestamp |
-| whole incident feature | `raw_payload` | object | Kept in streaming raw event for audit/debug |
+| whole incident feature | `raw_payload` | object | Kept for audit/debug |
 
 The raw Kafka event still keeps the fields required by
 `docs/streaming/streaming_details.md`:
@@ -166,12 +134,7 @@ The raw Kafka event still keeps the fields required by
 }
 ```
 
-`speed` is set to `0.0` only to satisfy the existing raw streaming event shape.
-It is not used as the TomTom risk signal. The TomTom risk-relevant fields are
-`icon_category`, `delay_magnitude`, `delay_seconds`, `length_meters`, event
-description/code, timestamps, and geometry.
-
-### PostgreSQL Projection
+## PostgreSQL Projection
 
 TomTom records are processed by `processing/flink_tomtom_streaming.py` into
 `traffic_tomtom_incidents`.
@@ -186,59 +149,19 @@ TomTom records are processed by `processing/flink_tomtom_streaming.py` into
 | `severity` | `delay_magnitude`, `icon_category` | Normalized to 1-4 |
 | `tomtom_rule_score` | `severity` | `(severity - 1) / 3` |
 | `geom` | `lon`, `lat` | PostGIS point |
-| `raw_payload` | raw payload | Kept as JSONB for audit/debug |
+| `raw_payload` | raw payload | JSONB audit/debug payload |
 
-Severity normalization:
+## Severity Rule
 
-| TomTom signal | severity |
+| TomTom signal | Severity |
 | --- | --- |
 | `magnitudeOfDelay >= 4` | `4` |
 | `magnitudeOfDelay == 3` | `3` |
 | `magnitudeOfDelay == 2` | `2` |
-| `magnitudeOfDelay == 0/1/null` | `1` |
-| `iconCategory == 8` road closure | at least `4` |
-| `iconCategory == 1` accident | at least `3` |
-| `iconCategory == 9` roadworks | at least `2` |
+| `magnitudeOfDelay <= 1` | `1` |
+| `iconCategory == 8` | at least `4` |
+| `iconCategory == 1` | at least `3` |
+| `iconCategory == 9` | at least `2` |
 
 Do not map `iconCategory` into US model features. TomTom `severity` and
 `tomtom_rule_score` are rule-based live incident signals, not H2O predictions.
-
-## Direct Request Result
-
-On 2026-05-12, a live request was tested with the workspace `.env`
-`TOMTOM_API_KEY`.
-
-```text
-GET https://api.tomtom.com/traffic/services/5/incidentDetails
-  bbox=-74.25909,40.477399,-73.700181,40.917577
-  language=en-US
-  timeValidityFilter=present
-  fields={incidents{type,geometry{type,coordinates},properties{id,...}}}
-  key=<TOMTOM_API_KEY>
-```
-
-Result:
-
-```text
-HTTP 200
-content-type: application/json; charset=utf-8
-us_new_york incident count: 359
-uk_london incident count: 912
-```
-
-Sample parsed fields:
-
-```json
-{
-  "event_id": "tomtom-TTI-...",
-  "state_or_region": "US",
-  "city": "New York",
-  "latitude": 40.8850863629,
-  "longitude": -74.2590125497,
-  "icon_category": 6,
-  "delay_magnitude": 3
-}
-```
-
-Current defaults use New York and London bboxes so TomTom streaming aligns with
-the US/UK batch datasets. These are urban demo bboxes, not full country extents.

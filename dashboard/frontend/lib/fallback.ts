@@ -5,7 +5,7 @@ export const fallbackSummary: OverviewSummary = {
   high_risk_events: 3140,
   avg_risk_score: 0.4685,
   latest_event_time: "2022-09-08T17:36:39",
-  latest_model_version: "latest"
+  latest_model_version: "US H2O + TomTom rule-based"
 };
 
 export const fallbackPoints: PredictionPoint[] = [
@@ -52,6 +52,19 @@ export const fallbackPoints: PredictionPoint[] = [
     event_time: "2022-09-08T13:25:00",
     model_status: "ok",
     risk_level: "low"
+  },
+  {
+    event_id: "tomtom-demo-1",
+    lat: 40.73061,
+    lon: -73.935242,
+    risk_score: 0.5,
+    predicted_severity: 3,
+    true_severity: 3,
+    event_time: "2026-05-26T10:31:06",
+    model_status: "rule_based",
+    risk_level: "medium",
+    data_source: "tomtom_live",
+    marker_shape: "triangle"
   }
 ];
 

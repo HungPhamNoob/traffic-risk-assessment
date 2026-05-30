@@ -1,368 +1,126 @@
 # Database Guide
 
-## 1. Muc tieu tai lieu
+This project uses PostgreSQL + PostGIS as the serving store for the API and
+dashboard.
 
-File nay giai thich:
+## Core Tables
 
-- backend dang doc du lieu tu dau,
-- bang PostgreSQL nao la quan trong nhat,
-- cot nao duoc tao boi file nao,
-- cot nao duoc endpoint nao su dung,
-- khac nhau giua schema production va local smoke.
+Two independent Flink jobs maintain two serving tables:
 
-Neu ban can code backend hoac dashboard, day la file giup ban hieu du lieu truoc khi nhin UI.
+| Table | Source | Writer | Purpose |
+| --- | --- | --- | --- |
+| `traffic_risk_predictions` | US replay + MLflow/H2O inference | `processing/flink_streaming.py` | US replay ML prediction table |
+| `traffic_tomtom_incidents` | TomTom live + rule-based severity | `processing/flink_tomtom_streaming.py` | TomTom live incident table |
 
-## 2. Database trong project nay la gi?
+The backend reads both tables and merges them based on the requested dashboard
+mode. Backend JSON responses are served from PostgreSQL, not directly from
+Redis, Kafka, Gold parquet, Spark, or MLflow.
 
-Project su dung PostgreSQL + PostGIS.
+## Writers
 
-Vai tro:
+### US replay writer
 
-- luu prediction da duoc Flink suy dien,
-- lam nguon doc cho dashboard backend,
-- luu toa do dia ly qua cot `geom`.
+File: `processing/flink_streaming.py`
 
-Backend khong dung Redis, Kafka hay Gold parquet de tra JSON truc tiep. US replay/ML API hien doc tu **mot bang chinh**:
+Tasks:
 
-- `traffic_risk_predictions`
+1. Read raw US replay events from Kafka topic `traffic.us.raw`.
+2. Build features with `processing.feature_engineering.build_features`.
+3. Write US feature JSONL records to the Silver path for Spark/H2O retraining.
+4. Call MLflow serving for H2O prediction.
+5. Upsert into `traffic_risk_predictions`.
 
-TomTom live da duoc tach khoi bang US de tranh tron rule-based incident voi H2O prediction:
-
-- `traffic_tomtom_incidents`
-
-Ten bang nay duoc lay tu env:
-
-- `POSTGRES_PREDICTION_TABLE`
-- `POSTGRES_TOMTOM_TABLE`
-
-## 3. File nao tao va file nao doc database?
-
-## 3.1 File ghi vao bang prediction
-
-### Production streaming writer
-
-File:
-
-- `processing/flink_streaming.py`
-
-Nhiem vu:
-
-1. doc raw event tu Kafka,
-2. feature engineering,
-3. goi MLflow serving,
-4. tao bang neu chua co,
-5. `INSERT ... ON CONFLICT (event_id) DO UPDATE`
-
-Day la writer chinh cua production.
+This is the production writer for US replay predictions.
 
 ### TomTom live writer
 
-File:
+File: `processing/flink_tomtom_streaming.py`
 
-- `processing/flink_tomtom_streaming.py`
+Tasks:
 
-Nhiem vu:
+1. Read TomTom raw events from Kafka topic `traffic.tomtom.raw`.
+2. Compute `severity` with the rule based on `magnitudeOfDelay + iconCategory`.
+3. Compute `tomtom_rule_score = (severity - 1) / 3`.
+4. Upsert into `traffic_tomtom_incidents`.
 
-1. doc TomTom raw event tu Kafka topic `traffic.tomtom.raw`,
-2. tinh `severity` bang rule `magnitudeOfDelay + iconCategory`,
-3. tinh `tomtom_rule_score = (severity - 1) / 3`,
-4. tao bang neu chua co,
-5. `INSERT ... ON CONFLICT (event_id) DO UPDATE` vao `traffic_tomtom_incidents`.
+This job does not call MLflow, does not write Silver data for Spark, and does
+not participate in H2O retraining.
 
-Job nay khong goi MLflow, khong ghi Silver cho Spark, va khong tham gia H2O retraining.
+## US Replay Table
 
-### Local smoke writer
+Table: `traffic_risk_predictions`
 
-File:
+Key columns:
 
-- `scripts/local/run_pipeline.sh`
+- `event_id` (primary key)
+- `event_year`, `event_time`
+- `lat`, `lon`, `geom`
+- `true_severity`, `predicted_severity`, `risk_score`
+- `weather_code`, `temperature_f`, `humidity`, `wind_speed_mph`, `visibility_mi`
+- `road_type_code`, `hour`, `day_of_week`
+- `is_weekend`, `is_rush_hour`, road/POI flags
+- `model_status`, `inference_latency_ms`
+- `ingestion_time`, `processed_time`, `end_to_end_latency_ms`
+- `created_at`
 
-Nhiem vu:
+`predicted_severity` and `risk_score` are H2O/MLflow prediction outputs. This
+semantic must not be reused for TomTom.
 
-- tao du lieu simulation local,
-- seed prediction table bang script Python embedded,
-- tao bang voi schema mo rong hon de de inspect.
+## TomTom Live Table
 
-Day la writer chinh khi ban test local bang smoke pipeline.
+Table: `traffic_tomtom_incidents`
 
-## 3.2 File doc tu bang prediction
+Key columns:
 
-### Backend read layer
+- `event_id` (primary key)
+- `incident_id`
+- `event_time`
+- `lat`, `lon`, `geom`
+- `severity`
+- `tomtom_rule_score`
+- `icon_category`, `delay_magnitude`, `delay_seconds`, `length_meters`
+- `incident_code`, `incident_description`
+- `from_road`, `to_road`, `road_numbers`
+- `time_validity`, `probability_of_occurrence`, `number_of_reports`
+- `last_report_time`
+- `ingestion_time`, `processed_time`, `processing_latency_ms`
+- `raw_payload`
+- `created_at`
 
-File:
+TomTom `severity` is deterministic rule output. `tomtom_rule_score` is only a
+TomTom display/ranking score and is not the same semantic as US `risk_score`.
+
+## Data Lineage
+
+### US replay
+
+1. `ingestion/kafka/us_producer.py` reads the post-2020 US replay split.
+2. Producer publishes raw rows to Kafka topic `traffic.us.raw`.
+3. `processing/flink_streaming.py` builds features, writes Silver JSONL,
+   calls MLflow serving, and upserts `traffic_risk_predictions`.
+4. Spark reads only the US Silver path and writes Gold data for retraining.
+5. H2O retraining consumes Gold data and registers new models in MLflow.
+
+### TomTom live
+
+1. `ingestion/kafka/tomtom_producer.py` calls TomTom Incident Details API.
+2. Producer publishes raw incident events to Kafka topic `traffic.tomtom.raw`.
+3. `processing/flink_tomtom_streaming.py` computes rule-based severity and
+   upserts `traffic_tomtom_incidents`.
+
+TomTom data does not enter Spark, Gold retraining, H2O, or MLflow serving.
+
+## Backend Read Layer
+
+Core files:
 
 - `dashboard/backend/app/core/database.py`
-
-Nhiem vu:
-
-- tao ket noi `psycopg2`,
-- execute query,
-- tra ket qua dang `dict`
-
-### Backend services doc du lieu
-
-File:
-
 - `dashboard/backend/app/services/prediction_service.py`
 - `dashboard/backend/app/services/hotspot_service.py`
 - `dashboard/backend/app/services/analytics_service.py`
-- mot phan cua `dashboard/backend/app/routes/system.py`
+- `dashboard/backend/app/routes/system.py`
 
-## 4. Data lineage: du lieu vao bang prediction di the nao?
-
-## Step 1 - Raw CSV
-
-Nguon:
-
-- file replay sau 2020
-- vi du trong cloud: `US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv`
-
-File xu ly:
-
-- `ingestion/kafka/us_producer.py`
-
-Output:
-
-- Kafka topic `traffic.us.raw`
-
-## Step 2 - Shared feature engineering
-
-File xu ly:
-
-- `processing/feature_engineering.py`
-
-Nhiem vu:
-
-- parse `Start_Time`
-- tao:
-  - `event_year`
-  - `hour`
-  - `day_of_week`
-  - `is_weekend`
-  - `is_rush_hour`
-  - `weather_code`
-  - `road_type_code`
-  - cac flag nhu `is_junction`, `is_crossing`, `is_night`, ...
-
-Output:
-
-- 1 feature dict chuan ma ca Flink, Spark va training deu dung
-
-## Step 3 - Flink ghi Silver va PostgreSQL
-
-File xu ly:
-
-- `processing/flink_streaming.py`
-
-Nhiem vu:
-
-1. nhan raw JSON tu Kafka
-2. goi `build_features()`
-3. ghi feature ra Silver JSONL
-4. goi MLflow serving
-5. insert prediction vao PostgreSQL
-
-Output quan trong cho backend:
-
-- bang `traffic_risk_predictions`
-
-## Step 3b - TomTom live ghi PostgreSQL rieng
-
-Nguon:
-
-- TomTom Incident Details API
-- Kafka topic `traffic.tomtom.raw`
-
-File xu ly:
-
-- `processing/flink_tomtom_streaming.py`
-
-Output:
-
-- bang `traffic_tomtom_incidents`
-
-Luu y:
-
-- `severity` la nhan rule-based tu TomTom, khong phai H2O prediction.
-- `tomtom_rule_score` chi la score hien thi/ranking rieng cho TomTom, khong cung y nghia voi `risk_score` cua US.
-
-## Step 4 - Backend doc PostgreSQL
-
-File xu ly:
-
-- `dashboard/backend/app/services/*.py`
-
-Nhiem vu:
-
-- query bang prediction
-- aggregate/format thanh response JSON
-
-## 5. Production schema thuc te do Flink tao
-
-Schema nay nam trong `processing/flink_streaming.py` qua `CREATE_TABLE_SQL`.
-
-```sql
-CREATE TABLE IF NOT EXISTS traffic_risk_predictions (
-    event_id VARCHAR PRIMARY KEY,
-    event_year INT,
-    event_time TIMESTAMP,
-    lat DOUBLE PRECISION,
-    lon DOUBLE PRECISION,
-    true_severity INT,
-    predicted_severity INT,
-    risk_score DOUBLE PRECISION,
-    weather_code INT,
-    road_type_code INT,
-    hour INT,
-    is_weekend INT,
-    is_rush_hour INT,
-    model_status VARCHAR(20),
-    inference_latency_ms DOUBLE PRECISION,
-    geom GEOMETRY(Point, 4326),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-## 5.1 Y nghia tung cot
-
-| Cot | Kieu | Do file nao tao | Y nghia |
-| --- | --- | --- | --- |
-| `event_id` | `VARCHAR` | `processing/feature_engineering.py` | ID su kien, khoa chinh |
-| `event_year` | `INT` | `processing/feature_engineering.py` | nam cua event |
-| `event_time` | `TIMESTAMP` | `processing/feature_engineering.py` | thoi diem xay ra su kien |
-| `lat` | `DOUBLE PRECISION` | `processing/feature_engineering.py` | vi do |
-| `lon` | `DOUBLE PRECISION` | `processing/feature_engineering.py` | kinh do |
-| `true_severity` | `INT` | raw data -> feature engineering | severity goc trong dataset |
-| `predicted_severity` | `INT` | MLflow serving qua `processing/flink_streaming.py` | severity model du doan |
-| `risk_score` | `DOUBLE PRECISION` | MLflow serving qua `processing/flink_streaming.py` | diem rui ro model |
-| `weather_code` | `INT` | `processing/feature_engineering.py` | ma hoa thoi tiet |
-| `road_type_code` | `INT` | `processing/feature_engineering.py` | ma hoa loai duong |
-| `hour` | `INT` | `processing/feature_engineering.py` | gio xay ra event |
-| `is_weekend` | `INT` | `processing/feature_engineering.py` | co phai cuoi tuan khong |
-| `is_rush_hour` | `INT` | `processing/feature_engineering.py` | co phai gio cao diem khong |
-| `model_status` | `VARCHAR(20)` | `processing/flink_streaming.py` | `ok` neu co prediction, `failed` neu khong |
-| `inference_latency_ms` | `DOUBLE PRECISION` | `processing/flink_streaming.py` | do tre suy dien + insert path |
-| `geom` | `GEOMETRY(Point, 4326)` | `processing/flink_streaming.py` | point tao tu `lon`, `lat` |
-| `created_at` | `TIMESTAMP` | PostgreSQL default | thoi diem row duoc ghi/cap nhat |
-
-## 5.2 Luu y schema production
-
-Production schema **khong** luu day du toan bo feature vector.
-
-Cac cot sau co trong `ScenarioInput` va trong Gold training data, nhung **khong co** trong production table do Flink tao:
-
-- `day_of_week`
-- `temperature_f`
-- `humidity`
-- `wind_speed_mph`
-- `visibility_mi`
-- `is_junction`
-- `has_traffic_signal`
-- `is_crossing`
-- `is_roundabout`
-- `is_stop`
-- `is_station`
-- `is_railway`
-- `is_night`
-
-Dieu nay rat quan trong cho nguoi lam dashboard:
-
-- ban khong nen gia dinh prediction detail API luc nao cung co du cac feature nay trong production
-- scenario API dung feature day du, nhung no goi MLflow truc tiep, khong lay tu bang nay
-
-## 6. Local smoke schema mo rong
-
-Trong `scripts/local/run_pipeline.sh`, local script tao bang voi nhieu cot hon:
-
-- `temperature_f`
-- `humidity`
-- `wind_speed_mph`
-- `visibility_mi`
-- `day_of_week`
-- `is_junction`
-- `has_traffic_signal`
-- `is_crossing`
-- `is_roundabout`
-- `is_stop`
-- `is_station`
-- `is_railway`
-- `is_night`
-- `ingestion_time`
-- `processed_time`
-- `end_to_end_latency_ms`
-
-Y nghia:
-
-- local smoke duoc thiet ke de de debug va review pipeline,
-- production Flink writer hien tai ghi schema gon hon.
-- local smoke khong nhat thiet dai dien cho prediction model that, vi script seed dang gan `predicted_severity` bang `true_severity` roi suy ra `risk_score`.
-
-Vi vay `GET /api/v1/predictions/{event_id}`:
-
-- o local co the tra nhieu field,
-- o production co the tra it field hon.
-
-## 7. Ai doc cot nao?
-
-Bang sau giup ban thay endpoint nao dung cot nao trong DB.
-
-| Endpoint/service | Cot duoc dung |
-| --- | --- |
-| `overview_summary()` | `risk_score`, `event_time` |
-| `map_points()` | `event_id`, `lat`, `lon`, `risk_score`, `predicted_severity`, `true_severity`, `event_time`, `model_status` |
-| `latest_predictions()` | `event_id`, `event_time`, `lat`, `lon`, `risk_score`, `predicted_severity`, `true_severity`, `model_status` |
-| `prediction_detail()` | `SELECT *` tru `geom` |
-| `top_hotspots()` | `lat`, `lon`, `risk_score`, `true_severity`, `predicted_severity`, `hour`, `event_time` |
-| `nearby_events()` | `event_id`, `lat`, `lon`, `risk_score` |
-| `timeseries()` | `event_time`, `risk_score` |
-| `severity_distribution()` | `true_severity` |
-| `risk_by_hour()` | `hour`, `risk_score` |
-| `risk_by_weather()` | `weather_code`, `risk_score` |
-| `system/status` | `event_time`, `risk_score`, row count metadata |
-
-## 8. Luong ghi/update trong bang
-
-Writer chinh la `processing/flink_streaming.py`.
-
-No dung:
-
-```sql
-ON CONFLICT (event_id) DO UPDATE
-```
-
-Y nghia:
-
-- neu cung `event_id` den lai, row se duoc update
-- `created_at` cung bi set lai `NOW()` trong branch update
-
-Tac dong:
-
-- bang nay co the xem la latest state theo `event_id`
-- no khong luu history version cua cung mot `event_id`
-
-## 9. PostGIS dang duoc dung den muc nao?
-
-Bang co cot:
-
-- `geom GEOMETRY(Point, 4326)`
-
-Nhung backend hien tai:
-
-- khong query bang `geom`
-- khong dung `ST_DWithin`, `ST_Intersects`, `ST_Within`
-- bbox map filter bang `lat/lon`
-- nearby events tinh khoang cach xap xi thu cong
-
-Nghia la:
-
-- PostGIS hien tai chu yeu dung de luu hinh hoc
-- chua khai thac het kha nang spatial database
-
-Neu can toi uu map spatial sau nay, service SQL la noi can nang cap.
-
-## 10. Ket noi database cua backend
-
-Backend doc config trong `dashboard/backend/app/core/config.py`:
+Configuration is read from environment variables:
 
 - `POSTGRES_HOST`
 - `POSTGRES_PORT`
@@ -370,78 +128,39 @@ Backend doc config trong `dashboard/backend/app/core/config.py`:
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 - `POSTGRES_PREDICTION_TABLE`
+- `POSTGRES_US_PREDICTION_TABLE`
+- `POSTGRES_TOMTOM_TABLE`
 
-Ket noi thuc te duoc mo trong:
+`fetch_one()` and `fetch_all()` handle undefined tables by returning empty
+responses. That keeps demos from failing before a writer has created its table,
+but an empty API response does not prove the pipeline is healthy.
 
-- `dashboard/backend/app/core/database.py::get_connection`
+## Operational Notes
 
-Moi query se:
+- PostgreSQL must have PostGIS installed and `CREATE EXTENSION IF NOT EXISTS
+  postgis` must be allowed for the writer role.
+- The project does not currently use Alembic or versioned SQL migrations.
+  Runtime writers create/evolve schemas.
+- Both writers use `INSERT ... ON CONFLICT (event_id) DO UPDATE`, so each table
+  stores the latest state per event id, not a full history of versions.
+- Map and analytics endpoints rely heavily on `event_time`; invalid timestamps
+  will break latest, timeseries, and filter behavior.
 
-1. mo mot connection
-2. tao `RealDictCursor`
-3. execute SQL
-4. dong connection
+## Quick Checks
 
-Khi moi onboard backend, day la cho can doc neu co loi ket noi Postgres.
+TomTom row count:
 
-## 11. Nhung diem can canh bao cho nguoi moi
+```sql
+SELECT count(*) AS tomtom_incidents, max(event_time) AS latest_tomtom_time
+FROM traffic_tomtom_incidents;
+```
 
-### 11.1 Backend khong tu tao extension PostGIS
+Check TomTom did not enter the US table:
 
-Local smoke script co:
+```sql
+SELECT count(*)
+FROM traffic_risk_predictions
+WHERE event_id LIKE 'tomtom-%';
+```
 
-- `CREATE EXTENSION IF NOT EXISTS postgis;`
-
-Nhung `processing/flink_streaming.py` chi tao bang co cot `GEOMETRY(...)`, khong tao extension.
-
-Vi vay production database phai:
-
-- da cai PostGIS san
-- va extension da san sang
-
-Neu khong, Flink insert se loi.
-
-### 11.2 Khong co migration framework
-
-Project hien tai khong thay:
-
-- Alembic
-- migration SQL versioned
-
-Schema duoc tao boi code runtime:
-
-- Flink job
-- local smoke script
-
-Nghia la khi doi schema, ban phai rat can than vi local va production co the bi lech.
-
-### 11.3 Undefined table khong lam crash moi endpoint
-
-`fetch_one()` / `fetch_all()` bat `psycopg2.errors.UndefinedTable`, nen:
-
-- overview co the tra 0
-- list API co the tra mang rong
-
-Dieu nay tot cho demo, nhung khong co nghia pipeline da chay dung.
-
-### 11.4 `event_time` la cot quan trong nhat cho dashboard
-
-Rat nhieu endpoint dua vao `event_time`:
-
-- latest
-- overview
-- timeseries
-- map filter
-- hotspots filter
-
-Neu pipeline ghi `event_time` sai format, dashboard se hong nhieu man hinh cung luc.
-
-## 12. Tom tat ngan gon
-
-Neu chi nho 5 y chinh, hay nho:
-
-1. US replay/ML prediction doc chu yeu tu bang `traffic_risk_predictions`.
-2. Bang US nay duoc production Flink ghi trong `processing/flink_streaming.py`.
-3. TomTom live ghi rieng vao `traffic_tomtom_incidents` bang `processing/flink_tomtom_streaming.py`.
-4. Local smoke co schema rong hon production nen prediction detail co the khac field.
-5. Scenario API khong doc bang nay; no goi MLflow serving truc tiep.
+Expected result for the second query is `0`.
