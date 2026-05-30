@@ -6,7 +6,10 @@ export type OverviewSummary = {
   avg_risk_score: number;
   latest_event_time: string | null;
   latest_model_version: string;
+  mode?: MapMode;
 };
+
+export type MapMode = "replay" | "live" | "full";
 
 export type PredictionPoint = {
   event_id: string;
@@ -18,6 +21,8 @@ export type PredictionPoint = {
   event_time: string | null;
   model_status: string;
   risk_level: RiskLevel;
+  data_source?: "us_replay" | "tomtom_live";
+  marker_shape?: "circle" | "triangle";
 };
 
 export type Hotspot = {

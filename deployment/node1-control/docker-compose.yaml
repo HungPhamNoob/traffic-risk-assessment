@@ -240,6 +240,8 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_PREDICTION_TABLE=${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      - POSTGRES_US_PREDICTION_TABLE=${POSTGRES_US_PREDICTION_TABLE:-traffic_risk_predictions}
+      - POSTGRES_TOMTOM_TABLE=${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - MLFLOW_SERVING_ENDPOINT=http://mlflow-serving:5001/invocations
       - ML_MODEL_NAME=${ML_MODEL_NAME:-traffic-risk-model}
@@ -263,6 +265,38 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+
+  dashboard-frontend:
+    image: node:20-alpine
+    container_name: node1-dashboard-frontend
+    working_dir: /app
+    command: >
+      sh -c "
+        npm ci &&
+        npm run build &&
+        npm run start
+      "
+    ports:
+      - "${DASHBOARD_PORT:-3001}:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://35.224.149.110:8000}
+    volumes:
+      - ../../dashboard/frontend:/app
+      - dashboard_next_cache:/tmp/next-cache
+    depends_on:
+      fastapi:
+        condition: service_healthy
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     
 networks:
   capstone-net:
@@ -274,3 +308,4 @@ volumes:
   airflow_pg_data:
   prometheus_data:
   grafana_data:
+  dashboard_next_cache:

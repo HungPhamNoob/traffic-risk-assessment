@@ -1,57 +1,74 @@
-# Pipeline tong quan
+# Pipeline Overview
 
-## Muc tieu
-Tai lieu nay mo ta toan bo workflow cua he thong tu input den output, gom ca streaming, batch, va ML.
+This project runs two coordinated traffic streams with separate data contracts.
 
-## Mermaid workflow
+## Data Flows
+
 ```mermaid
 flowchart LR
-    A[Raw CSV US Accidents] --> B[Kafka replay producer]
-    B --> C[(Kafka topic traffic.us.raw)]
+    A[US Accidents before 2020] --> B[H2O offline training]
+    B --> C[MLflow Model Registry]
+    C --> D[MLflow Serving]
 
-    C --> D[Flink streaming inference]
-    D --> E[Silver features JSONL]
-    D --> F[PostGIS predictions table]
-    D --> G[MLflow serving]
+    E[US Accidents from 2020 onward] --> F[Kafka topic traffic.us.raw]
+    F --> G[Unified Flink job]
+    G --> H[Silver GCS features]
+    G --> I[PostgreSQL traffic_risk_predictions]
+    G --> D
+    H --> J[Spark Silver to Gold]
+    J --> K[Gold retrain dataset]
+    K --> L[H2O retraining]
+    L --> C
 
-    E --> H[Spark batch: silver to gold]
-    H --> I[Gold retrain dataset (Parquet/CSV)]
-    I --> J[H2O AutoML training]
-    J --> K[MLflow tracking + model registry]
-    K --> G
+    M[TomTom Incident API] --> N[Kafka topic traffic.tomtom.raw]
+    N --> G
+    G --> O[PostgreSQL traffic_tomtom_incidents]
 
-    F --> L[FastAPI backend]
-    G --> L
-    L --> M[Dashboard / clients]
-
-    N[Airflow orchestration] -.-> D
-    N -.-> H
-    N -.-> J
+    I --> P[FastAPI]
+    O --> P
+    P --> Q[Dashboard]
+    P --> R[Prometheus and Grafana]
 ```
 
-## Mo ta tung lop du lieu
-- Bronze (raw): CSV US Accidents. Ban replay tu file split sau 2020 cho streaming.
-- Silver: JSONL feature records do Flink ghi ra. Dung lam nguon cho Spark batch.
-- Gold: Parquet/CSV cho retrain (Spark lam sach, dedupe, partition theo nam).
+## US Replay Stream
 
-## Streaming path (real time)
-1. Kafka replay producer doc CSV va day raw rows vao topic `traffic.us.raw`.
-2. Flink doc tu Kafka, feature engineering, goi MLflow serving de suy dien.
-3. Flink ghi:
-   - Silver JSONL (feature),
-   - PostGIS table chua prediction + metadata.
+The US stream keeps the existing ML workflow:
 
-## Batch path (retrain)
-1. Spark doc Silver, lam sach va dedupe.
-2. Spark ghi Gold Parquet/CSV.
-3. H2O AutoML train/retrain tren Gold, log MLflow va dang ky model.
+- The initial H2O model is trained only on pre-2020 US accident data.
+- Post-2020 US records are replayed through Kafka as realtime events.
+- Flink builds the same feature contract used by offline training.
+- Flink writes feature records to Silver GCS for Spark/H2O retraining.
+- Flink calls MLflow Serving and writes H2O predictions to `traffic_risk_predictions`.
 
-## Orchestration va monitoring
-- Airflow DAG `model_retrain_hourly`: Spark silver->gold, sau do retrain H2O.
-- Airflow DAG `streaming_health_check`: kiem tra Kafka/Flink/Spark, co the restart cap node 2-3.
-- FastAPI co `/metrics` cho Prometheus/Grafana.
+## TomTom Live Stream
 
-## Output
-- PostGIS table: prediction + thong tin su kien (dung cho dashboard va API).
-- MLflow: metrics, artifacts, model registry.
-- API JSON: overview, hotspots, analytics, scenarios, system status.
+The TomTom stream is intentionally separate from Spark, MLflow, and H2O:
+
+- TomTom incidents are fetched from the live Incident Details API.
+- The producer publishes normalized raw events to `traffic.tomtom.raw`.
+- The same unified Flink job reads TomTom and US topics in parallel.
+- TomTom enrichment maps `magnitudeOfDelay` and `iconCategory` to severity `1-4`.
+- The dashboard risk score is derived from that severity only for display coloring.
+- Flink writes live records to `traffic_tomtom_incidents`.
+
+TomTom is not passed through the US-trained H2O model because its label is rule-based and its timestamp distribution is current live traffic, not the historical US replay timeline.
+
+## Dashboard Modes
+
+The map exposes three modes:
+
+- `Replay`: US replay only, circular markers, color by H2O `risk_score`.
+- `Live`: TomTom only, triangular markers, color by TomTom rule-based display risk.
+- `Full`: US replay and TomTom live layers together with separate marker shapes.
+
+## Monitoring
+
+FastAPI exposes `/metrics` for Prometheus. Grafana is provisioned with a `Traffic Risk Platform` dashboard that tracks FastAPI throughput, request latency, and blackbox health probes.
+
+After a full run, use:
+
+```bash
+make -f makefile/gcp/Makefile collect-metrics
+```
+
+The command writes measured evidence to `logs/cloud_runs/<run-id>/cloud-metrics.md`, including producer log rates, PostgreSQL row counts, end-to-end latency, Kafka offsets, Prometheus samples, and Docker service status.

@@ -1,4 +1,4 @@
-import type { ScenarioInput } from "./types";
+import type { MapMode, ScenarioInput } from "./types";
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
@@ -36,12 +36,13 @@ async function request<T>(
 
 export const api = {
   health: () => request<{ status: string }>("/health"),
-  overview: () => request("/api/v1/overview/summary"),
+  overview: (mode: MapMode = "full") =>
+    request("/api/v1/overview/summary", { params: { mode } }),
   mapPoints: (params: Record<string, QueryValue>) =>
     request<{ points: unknown[] }>("/api/v1/predictions/map", { params }),
-  latest: (limit = 100) =>
+  latest: (limit = 100, mode: MapMode = "full") =>
     request<{ predictions: unknown[] }>("/api/v1/predictions/latest", {
-      params: { limit }
+      params: { limit, mode }
     }),
   predictionDetail: (eventId: string) =>
     request(`/api/v1/predictions/${encodeURIComponent(eventId)}`),

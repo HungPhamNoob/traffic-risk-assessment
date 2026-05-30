@@ -331,6 +331,8 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_PREDICTION_TABLE: ${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      POSTGRES_US_PREDICTION_TABLE: ${POSTGRES_US_PREDICTION_TABLE:-traffic_risk_predictions}
+      POSTGRES_TOMTOM_TABLE: ${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       FLINK_CHECKPOINT_DIR: ${FLINK_CHECKPOINT_DIR:-file://data/simulation/checkpoints/flink}
       FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}

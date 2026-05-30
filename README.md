@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/GCP-3%20Node%20Deployment-4285F4?logo=googlecloud&logoColor=white" alt="GCP">
 </p>
 
-Production-oriented Big Data platform for analyzing and predicting traffic accident severity in the United States. The system replays historical accidents as a realtime stream, performs online inference, retrains the model from accumulated features, and exposes operational and analytical APIs for a dashboard layer.
+Production-oriented Big Data platform for analyzing traffic risk from two coordinated sources: US accident replay data and live TomTom traffic incidents. The system pretrains on pre-2020 US accidents, replays post-2020 US accidents as a realtime stream, ingests TomTom incidents as a live stream, retrains the US model from accumulated replay features, and exposes analytical APIs for a dashboard layer.
 
 ## Problem Statement
 
@@ -21,8 +21,11 @@ Given an accident that has already occurred and includes time, location, weather
 
 This repository focuses on the full data and ML pipeline:
 
-- replaying post-2020 US accident events into Kafka
-- streaming feature engineering and inference with Flink
+- replaying post-2020 US accident events into Kafka topic `traffic.us.raw`
+- ingesting TomTom live incidents into Kafka topic `traffic.tomtom.raw`
+- streaming feature engineering with one unified Flink job
+- running H2O/MLflow inference only for US replay events
+- writing US and TomTom serving records to separate PostgreSQL/PostGIS tables
 - batch Silver-to-Gold processing with Spark
 - scheduled retraining with H2O AutoML and MLflow
 - serving predictions and analytics through FastAPI
@@ -52,15 +55,27 @@ The deployed cloud topology uses three Google Compute Engine VMs:
 End-to-end data flow:
 
 ```text
-Bronze CSV / GCS
+US pre-2020 Bronze CSV / GCS
+  -> H2O offline training
+  -> MLflow Model Registry
+
+US post-2020 Bronze CSV / GCS
   -> Kafka replay producer
-  -> Flink streaming feature engineering + MLflow inference
-  -> Silver JSONL + PostgreSQL predictions
+  -> Flink feature engineering + MLflow inference
+  -> Silver JSONL + PostgreSQL traffic_risk_predictions
   -> Spark batch cleaning / dedup / partitioning
   -> Gold Parquet + CSV
   -> H2O AutoML retraining
   -> MLflow Model Registry
+
+TomTom Incident API
+  -> Kafka TomTom producer
+  -> Flink TomTom enrichment + rule-based severity
+  -> PostgreSQL traffic_tomtom_incidents
+
+PostgreSQL + MLflow + Prometheus
   -> FastAPI analytics and prediction APIs
+  -> Dashboard / Grafana
 ```
 ## Dataset Strategy
 
@@ -94,12 +109,13 @@ Key findings used in modeling decisions:
 | Layer | What it does |
 | --- | --- |
 | Ingestion | Reads post-2020 CSV rows and publishes raw JSON events to Kafka topic `traffic.us.raw` |
-| Streaming | Flink parses raw events, builds features, calls MLflow Serving, writes Silver JSONL and PostgreSQL predictions |
+| Streaming | One Flink job reads US and TomTom Kafka topics in parallel; US calls MLflow/H2O, TomTom uses rule-based severity |
 | Batch | Spark validates schema, fills defaults, removes duplicates, and writes Gold Parquet/CSV |
 | Training | H2O AutoML trains or retrains severity models and logs runs to MLflow |
 | Orchestration | Airflow triggers hourly retraining and health-check DAGs |
-| Serving | FastAPI exposes overview, prediction, hotspot, analytics, system, and model endpoints |
-| Monitoring | Prometheus and Grafana collect runtime health metrics |
+| Serving | FastAPI exposes overview, prediction, hotspot, analytics, system, model, and pipeline endpoints |
+| Dashboard | Map modes: Replay circles, Live TomTom triangles, and Full combined view |
+| Monitoring | Prometheus and Grafana collect runtime health and API metrics |
 
 ## Tech Stack
 
@@ -220,6 +236,18 @@ Deploy Node 1 and start Node 2 plus Node 3 in sync:
 make -f makefile/gcp/Makefile deploy-all
 ```
 
+Reset and run the full cloud pipeline from the beginning:
+
+```bash
+BRANCH=main make -f makefile/gcp/Makefile full-reset-run
+```
+
+Collect measured evidence after a run:
+
+```bash
+make -f makefile/gcp/Makefile collect-metrics
+```
+
 Useful operational commands:
 
 ```bash
@@ -233,8 +261,9 @@ For the full cloud runbook, see [docs/run.md](docs/run.md).
 ## Current Scope And Limitations
 
 - The backend API is implemented and usable.
-- The frontend application is not yet a finalized production dashboard; `dashboard/frontend/` currently contains design baselines and reference screens.
-- US Accidents is the only active production dataset.
+- The cloud deployment serves the Next.js dashboard on Node 1 at port `3001`.
+- US replay and TomTom live data are active but intentionally stored in separate PostgreSQL tables.
+- TomTom risk coloring is rule-based from TomTom delay/icon signals; it is not an H2O prediction.
 - The main modeling challenge is severe class imbalance, especially for class `1`.
 
 ## References

@@ -315,6 +315,16 @@ button {
   color: var(--text);
 }
 
+.ghost-button.active {
+  border-color: rgba(245, 158, 11, 0.8);
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+}
+
+.mode-switcher {
+  gap: 6px;
+}
+
 .side-list {
   display: grid;
   gap: 10px;

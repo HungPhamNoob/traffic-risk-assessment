@@ -26,11 +26,21 @@ mkdir -p "${CLOUDSDK_CONFIG}"
 chmod 700 "${CLOUDSDK_CONFIG}"
 echo "Cloud SDK runtime config: ${CLOUDSDK_CONFIG}"
 
-echo "Stopping Node 2 streaming services if this script is running on Node 2..."
-docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml down --remove-orphans 2>/dev/null || true
+echo "Stopping Node 2 streaming services and clearing local Kafka/Flink volumes if this script is running on Node 2..."
+docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml down --volumes --remove-orphans 2>/dev/null || true
 
-echo "Stopping Node 3 batch services if this script is running on Node 3..."
-docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml down --remove-orphans 2>/dev/null || true
+echo "Stopping Node 3 batch services and clearing local Spark volumes if this script is running on Node 3..."
+docker compose --env-file "${ENV_FILE}" -f deployment/node3-batch/docker-compose.yaml down --volumes --remove-orphans 2>/dev/null || true
+
+echo "Dropping realtime PostgreSQL serving tables if this script is running on Node 1..."
+if docker ps --format '{{.Names}}' | grep -q '^node1-postgres$'; then
+  docker exec -i node1-postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" <<SQL
+DROP TABLE IF EXISTS ${POSTGRES_US_PREDICTION_TABLE:-${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}} CASCADE;
+DROP TABLE IF EXISTS ${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents} CASCADE;
+SQL
+else
+  echo "Node 1 PostgreSQL container is not present on this host. Skipping table reset."
+fi
 
 echo "Deleting Flink checkpoints: ${FLINK_CHECKPOINT_DIR}"
 gsutil -m rm -r "${FLINK_CHECKPOINT_DIR%/}/**" 2>/dev/null || true

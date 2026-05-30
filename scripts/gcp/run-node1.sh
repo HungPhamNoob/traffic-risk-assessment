@@ -4,7 +4,7 @@
 # Node 1 responsibilities:
 #   - PostgreSQL/PostGIS for prediction storage.
 #   - MLflow tracking and model serving.
-#   - FastAPI dashboard backend.
+#   - FastAPI dashboard backend and Next.js dashboard frontend.
 #   - Airflow scheduler/webserver.
 #   - Offline H2O training on pre-2020 data before stream/batch nodes start.
 
@@ -33,8 +33,8 @@ IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-false}"
 echo "Node 1 MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
 echo "IS_TRAIN_OFFLINE: ${IS_TRAIN_OFFLINE}"
 
-NODE1_CANONICAL_NAME_PATTERN='^node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi)$'
-NODE1_TRANSIENT_NAME_PATTERN='^.+_node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi)$'
+NODE1_CANONICAL_NAME_PATTERN='^node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi|dashboard-frontend)$'
+NODE1_TRANSIENT_NAME_PATTERN='^.+_node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi|dashboard-frontend)$'
 
 remove_matching_node1_containers() {
   # Remove containers that match the supplied pattern. The caller decides whether

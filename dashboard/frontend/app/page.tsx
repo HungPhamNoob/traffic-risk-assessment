@@ -17,7 +17,7 @@ import {
 import { Layers, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { fallbackHotspots, fallbackPoints, fallbackSummary } from "@/lib/fallback";
-import type { Hotspot, OverviewSummary, PredictionPoint } from "@/lib/types";
+import type { Hotspot, MapMode, OverviewSummary, PredictionPoint } from "@/lib/types";
 import { FallbackBanner, KpiCard, RiskBadge } from "@/components/DataState";
 
 const RiskMap = dynamic(
@@ -29,20 +29,21 @@ export default function DashboardPage() {
   const [minRisk, setMinRisk] = useState(0);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [selected, setSelected] = useState<PredictionPoint | null>(null);
+  const [mode, setMode] = useState<MapMode>("full");
 
   const summaryQuery = useQuery({
-    queryKey: ["overview"],
-    queryFn: api.overview,
+    queryKey: ["overview", mode],
+    queryFn: () => api.overview(mode),
     refetchInterval: 30_000
   });
   const pointsQuery = useQuery({
-    queryKey: ["points", minRisk],
-    queryFn: () => api.mapPoints({ limit: 5000, min_risk: minRisk }),
+    queryKey: ["points", minRisk, mode],
+    queryFn: () => api.mapPoints({ limit: 5000, min_risk: minRisk, mode }),
     refetchInterval: 30_000
   });
   const latestQuery = useQuery({
-    queryKey: ["latest"],
-    queryFn: () => api.latest(10),
+    queryKey: ["latest", mode],
+    queryFn: () => api.latest(10, mode),
     refetchInterval: 30_000
   });
   const hotspotsQuery = useQuery({
@@ -152,6 +153,21 @@ export default function DashboardPage() {
               />
               <span className="mono">{minRisk.toFixed(2)}</span>
             </div>
+            <div className="toolbar mode-switcher" aria-label="Map mode">
+              {(["replay", "live", "full"] as MapMode[]).map((item) => (
+                <button
+                  className={mode === item ? "ghost-button active" : "ghost-button"}
+                  key={item}
+                  onClick={() => {
+                    setMode(item);
+                    setSelected(null);
+                  }}
+                  type="button"
+                >
+                  {item === "replay" ? "Replay ●" : item === "live" ? "Live ▲" : "Full ●▲"}
+                </button>
+              ))}
+            </div>
             <button
               className="ghost-button"
               onClick={() => setShowHeatmap((value) => !value)}
@@ -175,6 +191,11 @@ export default function DashboardPage() {
                   {selected.lat.toFixed(5)}, {selected.lon.toFixed(5)}
                 </div>
                 <div>Risk {selected.risk_score.toFixed(4)}</div>
+                <div className="muted">
+                  {selected.data_source === "tomtom_live"
+                    ? "TomTom live, rule-based severity"
+                    : "US replay, H2O risk score"}
+                </div>
                 <div className="muted">{selected.event_time}</div>
               </div>
             ) : (
@@ -199,6 +220,8 @@ export default function DashboardPage() {
                       true_severity: null,
                       event_time: null,
                       model_status: "hotspot",
+                      data_source: "us_replay",
+                      marker_shape: "circle",
                       risk_level:
                         hotspot.avg_risk_score >= 0.7
                           ? "high"

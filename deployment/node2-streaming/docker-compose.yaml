@@ -1,7 +1,7 @@
 # ============================================================
 # Node 2 - Streaming (Spot VM)
-# 3 Kafka Brokers + Flink + Redis
-# Topic: traffic.us.raw (1 partition, 3 replicas)
+# 3 Kafka brokers, one unified Flink job, Redis, and US/TomTom producers.
+# Topics: traffic.us.raw and traffic.tomtom.raw
 # ============================================================
 
 services:
@@ -448,10 +448,13 @@ services:
       PYTHONPATH: /opt/traffic
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_US_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
+      KAFKA_TOPIC_TOMTOM_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
       FLINK_INFERENCE_GROUP: ${FLINK_INFERENCE_GROUP:-flink-us-inference}
+      FLINK_TOMTOM_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
       FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}
       FLINK_CHECKPOINT_DIR: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
-      FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_LOCAL_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/us-accident-inference}
+      FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_LOCAL_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/unified-traffic-streaming}
       FLINK_KAFKA_CONNECTOR_JAR: ${FLINK_KAFKA_CONNECTOR_JAR:-file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,file:///opt/flink/connectors/kafka-clients-3.6.1.jar}
       SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
       MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
@@ -462,6 +465,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-capstone}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
       POSTGRES_PREDICTION_TABLE: ${POSTGRES_PREDICTION_TABLE:-traffic_risk_predictions}
+      POSTGRES_US_PREDICTION_TABLE: ${POSTGRES_US_PREDICTION_TABLE:-traffic_risk_predictions}
+      POSTGRES_TOMTOM_TABLE: ${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
       - ../..:/opt/traffic:ro
@@ -475,16 +480,6 @@ services:
       flink-jobmanager:
         condition: service_started
     restart: on-failure
-
-  flink-tomtom-python-job:
-    extends:
-      service: flink-python-job
-    container_name: node2-flink-tomtom-python-job
-    environment:
-      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
-      FLINK_INFERENCE_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
-      FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_TOMTOM_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/tomtom-inference}
-      SILVER_FEATURES_PATH: ${TOMTOM_SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/tomtom_features}
 
 networks:
   capstone-net:

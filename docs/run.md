@@ -11,7 +11,36 @@ The project uses three Google Compute Engine VMs:
 The expected data flow is:
 
 ```text
-Bronze GCS -> Node2 Kafka/Flink -> Silver GCS + Postgres -> Node3 Spark -> Gold GCS -> H2O/MLflow -> FastAPI JSON
+US before 2020 -> H2O/MLflow baseline
+US from 2020 -> Node2 Kafka/Flink -> Silver GCS + Postgres -> Node3 Spark -> Gold GCS -> H2O/MLflow
+TomTom live -> Node2 Kafka/Flink -> Postgres
+Postgres + MLflow -> FastAPI JSON -> Dashboard
+```
+
+## Public URLs
+
+Current VM addresses from the latest provided inventory:
+
+| Service | URL |
+| --- | --- |
+| Dashboard | `http://35.224.149.110:3001` |
+| FastAPI docs | `http://35.224.149.110:8000/docs` |
+| Airflow | `http://35.224.149.110:8080` |
+| MLflow | `http://35.224.149.110:5000` |
+| Grafana | `http://35.224.149.110:3000` |
+| Prometheus | `http://35.224.149.110:9090` |
+| Flink JobManager | `http://35.225.231.57:8081` |
+| Spark Master | `http://34.63.78.147:8080` |
+
+Credentials from `.env.cloud` defaults:
+
+- Airflow: `admin` / `123`
+- Grafana: `admin` / `123`
+
+If an external IP changes, regenerate the table with:
+
+```bash
+make -f makefile/gcp/Makefile collect-metrics
 ```
 
 ## 1. Local Machine Rules
@@ -235,6 +264,23 @@ Then push again to `hung1`.
 
 ## 7. Full Cloud Pipeline Validation
 
+For a real end-to-end run from a clean state, prefer the automated command:
+
+```bash
+BRANCH=main STREAM_MAX_RECORDS=0 STREAM_THROTTLE_SECONDS=0.0 \
+make -f makefile/gcp/Makefile full-reset-run
+```
+
+This command:
+
+- Resets PostgreSQL serving tables, Kafka/Flink/Spark local volumes, checkpoints, Silver, and Gold outputs.
+- Starts Node 1 and runs or verifies pre-2020 H2O model bootstrap.
+- Starts Node 2 with full US replay and TomTom live ingestion.
+- Starts Node 3 Spark Silver-to-Gold and H2O retraining.
+- Collects measured evidence into `logs/cloud_runs/<run-id>/cloud-metrics.md`.
+
+Use `STREAM_MAX_RECORDS=0` for a real full replay. Set a positive value only for debugging.
+
 ### 7.1 Check Node 1 API and databases
 
 ```bash
@@ -242,7 +288,9 @@ gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4
   curl -fsS http://localhost:8000/health && echo &&
   curl -fsS http://localhost:8000/api/v1/system/status | python3 -m json.tool &&
   docker exec node1-postgres psql -U capstone -d capstone_db \
-    -c "SELECT count(*) AS predictions, max(event_time) AS latest_event_time FROM traffic_risk_predictions;"
+    -c "SELECT count(*) AS us_predictions, max(event_time) AS latest_us_time FROM traffic_risk_predictions;" &&
+  docker exec node1-postgres psql -U capstone -d capstone_db \
+    -c "SELECT count(*) AS tomtom_incidents, max(event_time) AS latest_tomtom_time FROM traffic_tomtom_incidents;"
 '
 ```
 
@@ -330,13 +378,31 @@ for path in \
 done
 ```
 
-## 8. Reset and Retry
+## 8. Metrics Evidence
+
+After the pipeline has been running, collect real measured values:
+
+```bash
+make -f makefile/gcp/Makefile collect-metrics
+```
+
+The generated markdown includes:
+
+- Producer throughput samples from Kafka producer logs.
+- API throughput and p95 latency from Prometheus.
+- End-to-end latency from PostgreSQL `end_to_end_latency_ms`.
+- Row counts and latest event timestamps for `traffic_risk_predictions` and `traffic_tomtom_incidents`.
+- Kafka topic offsets for `traffic.us.raw` and `traffic.tomtom.raw`.
+- Docker service status across all VMs.
+
+Do not report throughput or latency numbers in the final report until they come from this evidence file.
+
+## 9. Reset and Retry
 
 Reset replay/checkpoint state before a clean streaming demo:
 
 ```bash
-gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && bash scripts/gcp/reset-realtime.sh'
-gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && bash scripts/gcp/reset-realtime.sh'
+make -f makefile/gcp/Makefile reset-realtime
 ```
 
 Restart Node 2 and Node 3 as a pair:
@@ -346,7 +412,7 @@ gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group
 gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && NODE3_WAIT_FOR_SILVER_SECONDS=600 bash scripts/gcp/run-node3.sh'
 ```
 
-## 9. Common Failures
+## 10. Common Failures
 
 - `node3-batch not found`: run `scripts/gcp/setup_gcp.sh`; the current script creates all three VMs.
 - Node 1 disk 100%: resize boot disk, then run `sudo growpart /dev/sda 1 && sudo resize2fs /dev/sda1` on the VM.
@@ -356,7 +422,7 @@ gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 -
 - Backend returns empty JSON: this is valid if `traffic_risk_predictions` has no rows yet. Run streaming replay first.
 - Local Docker cannot stop containers: repair Snap AppArmor as shown in Section 1.
 
-## 10. Git Ignore Notes
+## 11. Git Ignore Notes
 
 `.gitignore` only prevents new untracked files from being added. It does not remove files that are already tracked in Git history.
 
@@ -374,7 +440,7 @@ git commit -m "Remove generated file from tracking"
 
 Do not commit private keys, service-account JSON files, raw datasets, local virtual environments, Docker volumes, logs, or model artifacts.
 
-## 11. Operating Principles
+## 12. Operating Principles
 
 - Deploy Node 1 before Node 2 and Node 3.
 - Treat Node 2 and Node 3 as a pair after replay/checkpoint failures.

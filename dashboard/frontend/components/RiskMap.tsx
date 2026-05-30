@@ -2,7 +2,7 @@
 
 import DeckGL from "@deck.gl/react";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import Map from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot, PredictionPoint } from "@/lib/types";
@@ -14,6 +14,15 @@ function colorForRisk(score: number): [number, number, number, number] {
   if (score >= 0.7) return [239, 68, 68, 220];
   if (score >= 0.4) return [245, 158, 11, 210];
   return [34, 197, 94, 190];
+}
+
+function triangleForPoint(point: PredictionPoint): [number, number][] {
+  const size = 0.018;
+  return [
+    [point.lon, point.lat + size],
+    [point.lon - size, point.lat - size],
+    [point.lon + size, point.lat - size]
+  ];
 }
 
 export function RiskMap({
@@ -30,6 +39,8 @@ export function RiskMap({
   showHeatmap: boolean;
 }) {
   const first = points[0];
+  const replayPoints = points.filter((point) => point.data_source !== "tomtom_live");
+  const livePoints = points.filter((point) => point.data_source === "tomtom_live");
   const viewState = {
     longitude: first?.lon ?? -96,
     latitude: first?.lat ?? 38,
@@ -50,8 +61,8 @@ export function RiskMap({
         threshold: 0.02
       }),
     new ScatterplotLayer<PredictionPoint>({
-      id: "risk-points",
-      data: points,
+      id: "us-replay-risk-points",
+      data: replayPoints,
       pickable: true,
       opacity: 0.9,
       stroked: true,
@@ -62,6 +73,20 @@ export function RiskMap({
       getRadius: (d) => (d.event_id === selectedId ? 240 : 120),
       getFillColor: (d) => colorForRisk(d.risk_score),
       getLineColor: [255, 255, 255, 210],
+      lineWidthMinPixels: 1,
+      onClick: (info) => {
+        if (info.object && onSelect) onSelect(info.object);
+      }
+    }),
+    new PolygonLayer<PredictionPoint>({
+      id: "tomtom-live-risk-triangles",
+      data: livePoints,
+      pickable: true,
+      stroked: true,
+      filled: true,
+      getPolygon: triangleForPoint,
+      getFillColor: (d) => colorForRisk(d.risk_score),
+      getLineColor: [255, 255, 255, 230],
       lineWidthMinPixels: 1,
       onClick: (info) => {
         if (info.object && onSelect) onSelect(info.object);

@@ -17,7 +17,8 @@ def get_system_status() -> dict:
     return {
         "environment": settings.environment,
         "kafka": {
-            "topic": settings.kafka_topic_raw,
+            "us_topic": settings.kafka_topic_raw,
+            "tomtom_topic": settings.kafka_topic_tomtom_raw,
             "status": "configured",
         },
         "flink": {
@@ -36,7 +37,8 @@ def get_system_status() -> dict:
             "latest_version": settings.model_version or "latest",
         },
         "postgres": {
-            "prediction_table": settings.prediction_table,
+            "us_prediction_table": settings.us_prediction_table,
+            "tomtom_events_table": settings.tomtom_events_table,
             "row_count": summary.get("total_events", 0),
         },
     }

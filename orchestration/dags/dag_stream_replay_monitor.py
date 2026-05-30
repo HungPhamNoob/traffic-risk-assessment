@@ -3,7 +3,7 @@
 Airflow DAG 2 - Realtime Pair Health Check
 
 Purpose:
-    Runs every hour to verify the synchronized realtime pair is healthy.
+    Runs frequently to verify the synchronized realtime pair is healthy.
     Checks Kafka, Flink, the active Flink job, and Spark.
 
     If either branch is unhealthy, Airflow restarts Node 2 and Node 3 together
@@ -13,6 +13,7 @@ Purpose:
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
+import os
 
 # ============================================================
 # Default args
@@ -33,7 +34,7 @@ with DAG(
     "streaming_health_check",
     default_args=default_args,
     description="Monitor Kafka + Flink + Producer health",
-    schedule_interval="@hourly",
+    schedule_interval=os.getenv("AIRFLOW_STREAM_HEALTH_SCHEDULE", "*/5 * * * *"),
     start_date=datetime(2026, 5, 1),
     catchup=False,
     tags=["streaming", "monitoring"],
