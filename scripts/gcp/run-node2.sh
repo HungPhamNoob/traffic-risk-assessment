@@ -38,6 +38,7 @@ docker rm -f \
   node2-producer-0 \
   node2-producer-1 \
   node2-producer-2 \
+  node2-tomtom-producer \
   node2-flink-jm \
   node2-flink-tm \
   node2-redis \
