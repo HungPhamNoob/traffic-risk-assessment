@@ -3,7 +3,7 @@
 Airflow DAG 2 - Realtime Pair Health Check
 
 Purpose:
-    Runs every hour to verify the synchronized realtime pair is healthy.
+    Runs frequently to verify the synchronized realtime pair is healthy.
     Checks Kafka, both raw topics, both Flink jobs, and the TomTom producer.
 
     TomTom live ingestion does not depend on Spark/Node 3, so this DAG only
@@ -37,7 +37,7 @@ with DAG(
     "streaming_health_check",
     default_args=default_args,
     description="Monitor Node2 Kafka + Flink + TomTom producer health",
-    schedule_interval="@hourly",
+    schedule_interval=os.getenv("AIRFLOW_STREAM_HEALTH_SCHEDULE", "*/5 * * * *"),
     start_date=datetime(2026, 5, 1),
     catchup=False,
     tags=["streaming", "monitoring"],

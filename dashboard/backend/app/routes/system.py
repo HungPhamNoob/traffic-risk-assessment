@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.core.config import get_settings
+from app.services.pipeline_service import gold_last_update
 from app.services.prediction_service import overview_summary
 
 router = APIRouter()
@@ -16,7 +17,8 @@ def get_system_status() -> dict:
     return {
         "environment": settings.environment,
         "kafka": {
-            "topic": settings.kafka_topic_raw,
+            "us_topic": settings.kafka_topic_raw,
+            "tomtom_topic": settings.kafka_topic_tomtom_raw,
             "status": "configured",
         },
         "flink": {
@@ -26,7 +28,7 @@ def get_system_status() -> dict:
             "checkpoint_interval_ms": settings.flink_checkpoint_interval_ms,
         },
         "spark": {
-            "last_gold_update": summary.get("latest_event_time"),
+            "last_gold_update": gold_last_update(),
             "gold_path": settings.gold_retrain_path,
         },
         "mlflow": {
@@ -35,7 +37,8 @@ def get_system_status() -> dict:
             "latest_version": settings.model_version or "latest",
         },
         "postgres": {
-            "prediction_table": settings.prediction_table,
+            "us_prediction_table": settings.us_prediction_table,
+            "tomtom_events_table": settings.tomtom_events_table,
             "row_count": summary.get("total_events", 0),
         },
     }
@@ -43,11 +46,13 @@ def get_system_status() -> dict:
 
 @router.get("/model/info")
 def get_model_info() -> dict:
-    """Return model configuration used by the backend."""
+    """Return deprecated model configuration alias used by older clients."""
     settings = get_settings()
     return {
         "model_name": settings.model_name,
         "model_version": settings.model_version or "latest",
         "tracking_uri": settings.mlflow_tracking_uri,
         "serving_endpoint": settings.mlflow_serving_endpoint,
+        "deprecated": True,
+        "canonical_endpoint": "/api/v1/model/info",
     }

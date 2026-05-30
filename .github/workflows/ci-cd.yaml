@@ -54,7 +54,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install black==24.3.0 flake8 pytest pytest-cov pandas numpy pyyaml requests python-dotenv
-          pip install fastapi pydantic pydantic-settings prometheus-client psycopg2-binary scikit-learn pyarrow
+          pip install fastapi email-validator pydantic pydantic-settings prometheus-client psycopg2-binary scikit-learn pyarrow
 
       # Step 3: Check code formatting with Black
       - name: Check code formatting (Black)
@@ -224,6 +224,8 @@ jobs:
             printf 'NODE2_INTERNAL_IP=%s\n' "$NODE2_INTERNAL_IP"
             printf 'NODE3_INTERNAL_IP=%s\n' "$NODE3_INTERNAL_IP"
             printf 'POSTGRES_HOST=%s\n' "$NODE1_INTERNAL_IP"
+            printf 'POSTGRES_US_PREDICTION_TABLE=traffic_risk_predictions\n'
+            printf 'POSTGRES_TOMTOM_TABLE=traffic_tomtom_incidents\n'
             printf 'US_TRAIN_OFFLINE_PATH=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv\n'
             printf 'US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv\n'
             printf 'SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features\n'
@@ -235,8 +237,12 @@ jobs:
             printf 'MLFLOW_SERVING_ENDPOINT=http://%s:5001/invocations\n' "$NODE1_INTERNAL_IP"
             printf 'MLFLOW_GUNICORN_TIMEOUT_SECONDS=300\n'
             printf 'MLFLOW_GUNICORN_WORKERS=2\n'
+            printf 'TOMTOM_BBOXES=US:New_York:-74.25909,40.477399,-73.700181,40.917577\n'
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
+          NODE1_EXTERNAL_IP="$(gcloud compute instances describe node1-control --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
+          printf 'DASHBOARD_PORT=3001\n' >> .env.cloud
+          printf 'NEXT_PUBLIC_API_BASE_URL=http://%s:8000\n' "$NODE1_EXTERNAL_IP" >> .env.cloud
           printf 'IS_TRAIN_OFFLINE=false\n' >> .env.cloud
           chmod 600 .env.cloud
           gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud

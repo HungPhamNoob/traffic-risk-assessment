@@ -3,9 +3,9 @@
 #
 # Node 2 responsibilities:
 #   - Three Kafka brokers.
-#   - One raw topic with one partition and three replicas.
+#   - Two raw topics with one partition and three replicas each.
 #   - Three replay producers split by row_index modulo producer index.
-#   - Flink streaming inference job using existing checkpoints when present.
+#   - One Flink job that reads US replay and TomTom live streams together.
 
 set -euo pipefail
 
@@ -38,10 +38,12 @@ docker rm -f \
   node2-producer-0 \
   node2-producer-1 \
   node2-producer-2 \
+  node2-tomtom-producer \
   node2-flink-jm \
   node2-flink-tm \
   node2-redis \
   node2-flink-python-job \
+  node2-flink-tomtom-python-job \
   2>/dev/null || true
 
 echo "Ensuring the shared Docker network exists before Compose starts."

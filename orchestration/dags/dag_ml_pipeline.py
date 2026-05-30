@@ -16,6 +16,7 @@ Purpose:
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
+import os
 
 # ============================================================
 # Default args - applied to all tasks
@@ -36,7 +37,7 @@ with DAG(
     "model_retrain_hourly",
     default_args=default_args,
     description="Hourly H2O retrain from latest silver data",
-    schedule_interval="@hourly",
+    schedule_interval=os.getenv("AIRFLOW_MODEL_RETRAIN_SCHEDULE", "*/15 * * * *"),
     start_date=datetime(2026, 5, 1),
     catchup=False,
     tags=["ml", "retrain", "batch"],

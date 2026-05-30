@@ -12,7 +12,7 @@ SSH_BASE := gcloud compute ssh --project=$(PROJECT_ID) --zone=$(ZONE) --tunnel-t
 
 .PHONY: help list ssh-node1 ssh-node2 ssh-node3 sync-env \
 	node1 node2 node3 start-node23 reset-realtime status logs-node1 logs-node2 logs-node3 \
-	validate push deploy-all backup-checkpoints kafka-topic-check docker-recover-node1 docker-recover-node2 docker-recover-node3
+	validate push deploy-all full-reset-run collect-metrics backup-checkpoints kafka-topic-check docker-recover-node1 docker-recover-node2 docker-recover-node3
 
 help:
 	@echo "GCP Makefile for the Traffic Risk Assessment platform"
@@ -26,6 +26,8 @@ help:
 	@echo "  make -f makefile/gcp/Makefile kafka-topic-check Verify the single Kafka topic on Node 2"
 	@echo "  make -f makefile/gcp/Makefile backup-checkpoints Back up GCP checkpoint directories"
 	@echo "  make -f makefile/gcp/Makefile deploy-all       Pull branch and start all node services"
+	@echo "  make -f makefile/gcp/Makefile full-reset-run  Reset and run the full cloud pipeline"
+	@echo "  make -f makefile/gcp/Makefile collect-metrics Collect measured cloud evidence"
 
 list:
 	gcloud compute instances list --project=$(PROJECT_ID) \
@@ -57,7 +59,9 @@ start-node23:
 	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/start-node23-synced.sh'
 
 reset-realtime:
-	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/reset-realtime.sh'
+	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && RESET_LOCAL_COMPOSE=false RESET_POSTGRES=true RESET_GCS=true bash scripts/gcp/reset-realtime.sh'
+	$(SSH_BASE) $(NODE2) --command='cd $(PROJECT_ROOT) && RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh'
+	$(SSH_BASE) $(NODE3) --command='cd $(PROJECT_ROOT) && RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh'
 
 status:
 	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT)/deployment/node1-control && docker compose --env-file $(PROJECT_ROOT)/.env.cloud ps'
@@ -82,6 +86,12 @@ push:
 	git push -u origin $(BRANCH)
 
 deploy-all: sync-env node1 start-node23
+
+full-reset-run:
+	BRANCH=$(BRANCH) GCP_PROJECT_ID=$(PROJECT_ID) GCP_ZONE=$(ZONE) bash scripts/gcp/full-cloud-reset-run.sh
+
+collect-metrics:
+	GCP_PROJECT_ID=$(PROJECT_ID) GCP_ZONE=$(ZONE) bash scripts/gcp/collect-cloud-metrics.sh
 
 backup-checkpoints:
 	$(SSH_BASE) $(NODE1) --command='cd $(PROJECT_ROOT) && bash scripts/gcp/backup-checkpoints.sh'

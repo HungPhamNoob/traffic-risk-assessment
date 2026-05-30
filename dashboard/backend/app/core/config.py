@@ -19,8 +19,20 @@ class Settings(BaseSettings):
         default="traffic_risk_predictions",
         alias="POSTGRES_PREDICTION_TABLE",
     )
+    us_prediction_table: str = Field(
+        default="traffic_risk_predictions",
+        alias="POSTGRES_US_PREDICTION_TABLE",
+    )
+    tomtom_events_table: str = Field(
+        default="traffic_tomtom_incidents",
+        alias="POSTGRES_TOMTOM_TABLE",
+    )
 
     kafka_topic_raw: str = Field(default="traffic.us.raw", alias="KAFKA_TOPIC_RAW")
+    kafka_topic_tomtom_raw: str = Field(
+        default="traffic.tomtom.raw",
+        alias="KAFKA_TOPIC_TOMTOM_RAW",
+    )
     flink_checkpoint_dir: str = Field(
         default="gs://big-data-group-4-backups/checkpoints/flink",
         alias="FLINK_CHECKPOINT_DIR",
@@ -34,6 +46,9 @@ class Settings(BaseSettings):
     )
     mlflow_tracking_uri: str = Field(
         default="http://localhost:5000", alias="MLFLOW_TRACKING_URI"
+    )
+    mlflow_experiment_name: str = Field(
+        default="traffic-risk-assessment", alias="MLFLOW_EXPERIMENT_NAME"
     )
     mlflow_serving_endpoint: str = Field(
         default="http://localhost:5001/invocations",

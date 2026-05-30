@@ -18,15 +18,19 @@ def get_prediction_map(
     start_time: str | None = None,
     end_time: str | None = None,
     limit: int = Query(default=5000, ge=1, le=20000),
+    mode: str = Query(default="full", pattern="^(replay|live|full)$"),
 ) -> dict:
     """Return prediction points for the live risk map."""
-    return map_points(bbox, min_risk, start_time, end_time, limit)
+    return map_points(bbox, min_risk, start_time, end_time, limit, mode)
 
 
 @router.get("/latest")
-def get_latest_predictions(limit: int = Query(default=100, ge=1, le=1000)) -> dict:
+def get_latest_predictions(
+    limit: int = Query(default=100, ge=1, le=1000),
+    mode: str = Query(default="full", pattern="^(replay|live|full)$"),
+) -> dict:
     """Return the most recent prediction rows."""
-    return latest_predictions(limit)
+    return latest_predictions(limit, mode)
 
 
 @router.get("/{event_id}")

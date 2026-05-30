@@ -1,6 +1,6 @@
 # Cloud Infrastructure Inventory
 
-Updated from live VM command output collected on 2026-05-14 (UTC).
+Updated from the current GCP VM inventory provided on 2026-05-30.
 
 ## Scope
 
@@ -17,8 +17,8 @@ This document summarizes the actual cloud infrastructure currently running, base
 
 | Node | Role | Zone | Internal IP | External IP | Machine Type | vCPU | RAM | Root Disk | OS |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `node1-control` | control / monitoring / API / ML | `us-central1-a` | `10.128.0.4` | `34.61.176.172` | `e2-medium` | 2 | 3.8 GiB | 40 GB | Debian 12 |
-| `node2-streaming` | streaming / messaging | `us-central1-a` | `10.128.0.5` | `23.236.57.67` | `e2-custom-medium-8192` | 2 | 7.8 GiB | 30 GB | Debian 12 |
+| `node1-control` | control / monitoring / API / ML | `us-central1-a` | `10.128.0.4` | `35.224.149.110` | `e2-standard-2` | 2 | 8 GiB | verify on VM | Debian 12 |
+| `node2-streaming` | streaming / messaging | `us-central1-a` | `10.128.0.5` | `35.225.231.57` | `e2-standard-2` | 2 | 8 GiB | verify on VM | Debian 12 |
 | `node3-batch` | batch / Spark | `us-central1-a` | `10.128.0.8` | `34.63.78.147` | `e2-standard-2` | 2 | 7.8 GiB | 30 GB | Debian 12 |
 
 ## Node Details
@@ -155,6 +155,7 @@ Observed behavior:
 | Node | Port | Service |
 | --- | --- | --- |
 | `node1-control` | `3000` | Grafana |
+| `node1-control` | `3001` | Next.js dashboard |
 | `node1-control` | `5000` | MLflow |
 | `node1-control` | `5001` | MLflow serving |
 | `node1-control` | `5432` | Postgres |
@@ -237,4 +238,3 @@ Observed in runtime:
 3. Fix Kafka producer bootstrap server configuration to match the deployed broker naming scheme.
 4. Resize or rebalance `node1-control` workloads, or move ML serving off the control node.
 5. Investigate why GCP credentials are mounted as `/dev/null` in multiple containers.
-

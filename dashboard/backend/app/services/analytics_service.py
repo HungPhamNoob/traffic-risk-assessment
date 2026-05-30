@@ -11,9 +11,17 @@ from app.services.prediction_service import table_identifier
 def timeseries(
     group_by: str, metric: str, start_time: str | None, end_time: str | None
 ) -> dict[str, Any]:
-    """Return accident count and average risk grouped by day, month, or year."""
+    """Return a selected metric grouped by day, month, or year."""
     allowed_groups = {"day": "day", "month": "month", "year": "year"}
     date_part = allowed_groups.get(group_by, "day")
+    allowed_metrics = {
+        "avg_risk": sql.SQL("AVG(risk_score)::DOUBLE PRECISION"),
+        "count": sql.SQL("COUNT(*)::DOUBLE PRECISION"),
+        "high_risk_count": sql.SQL(
+            "COALESCE(SUM(CASE WHEN risk_score >= 0.7 THEN 1 ELSE 0 END), 0)::DOUBLE PRECISION"
+        ),
+    }
+    metric_key = metric if metric in allowed_metrics else "avg_risk"
     params: dict[str, Any] = {}
     where_clauses = ["event_time IS NOT NULL"]
     if start_time:
@@ -27,8 +35,10 @@ def timeseries(
         """
         SELECT
             DATE_TRUNC({date_part}, event_time)::DATE AS time,
+            {metric_expr} AS value,
             AVG(risk_score)::DOUBLE PRECISION AS avg_risk_score,
-            COUNT(*)::BIGINT AS accident_count
+            COUNT(*)::BIGINT AS accident_count,
+            COALESCE(SUM(CASE WHEN risk_score >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_count
         FROM {table}
         WHERE {where_clause}
         GROUP BY DATE_TRUNC({date_part}, event_time)
@@ -36,13 +46,14 @@ def timeseries(
         """
     ).format(
         date_part=sql.Literal(date_part),
+        metric_expr=allowed_metrics[metric_key],
         table=table_identifier(),
         where_clause=sql.SQL(" AND ").join(sql.SQL(clause) for clause in where_clauses),
     )
     rows = fetch_all(query, params)
     for row in rows:
         row["time"] = row["time"].isoformat()
-    return {"series": rows, "metric": metric}
+    return {"series": rows, "metric": metric_key, "group_by": date_part}
 
 
 def severity_distribution() -> dict[str, Any]:
