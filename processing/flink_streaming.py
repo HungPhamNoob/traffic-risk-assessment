@@ -27,7 +27,6 @@ from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
 
 from processing.feature_engineering import build_features
-from processing.streaming_enrichment import enrich_tomtom_event
 
 try:
     from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
@@ -41,7 +40,7 @@ logging.basicConfig(
     level=os.getenv("STREAMING_LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
-logger = logging.getLogger("flink-dual-stream")
+logger = logging.getLogger("flink-us-stream")
 
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
@@ -49,9 +48,7 @@ KAFKA_TOPIC_US_RAW = os.getenv(
     "KAFKA_TOPIC_US_RAW",
     os.getenv("KAFKA_TOPIC_RAW", "traffic.us.raw"),
 )
-KAFKA_TOPIC_TOMTOM_RAW = os.getenv("KAFKA_TOPIC_TOMTOM_RAW", "traffic.tomtom.raw")
-FLINK_INFERENCE_GROUP = os.getenv("FLINK_INFERENCE_GROUP", "flink-dual-inference")
-FLINK_TOMTOM_GROUP = os.getenv("FLINK_TOMTOM_GROUP", "flink-dual-tomtom")
+FLINK_INFERENCE_GROUP = os.getenv("FLINK_INFERENCE_GROUP", "flink-us-inference")
 FLINK_PARALLELISM = int(os.getenv("FLINK_PARALLELISM", "1"))
 FLINK_CHECKPOINT_INTERVAL = int(os.getenv("FLINK_CHECKPOINT_INTERVAL", "30000"))
 FLINK_CHECKPOINT_DIR = os.getenv(
@@ -81,9 +78,6 @@ PG_US_TABLE = os.getenv(
     "POSTGRES_US_PREDICTION_TABLE",
     os.getenv("POSTGRES_PREDICTION_TABLE", "traffic_risk_predictions"),
 )
-PG_TOMTOM_TABLE = os.getenv("POSTGRES_TOMTOM_TABLE", "traffic_tomtom_incidents")
-
-
 MODEL_FEATURE_COLUMNS = [
     "lat",
     "lon",
@@ -107,7 +101,7 @@ MODEL_FEATURE_COLUMNS = [
     "is_night",
 ]
 
-SCHEMA_READY = {"us": False, "tomtom": False}
+SCHEMA_READY = {"us": False}
 
 
 def table_name(value: str) -> str:
@@ -119,7 +113,6 @@ def table_name(value: str) -> str:
 
 
 PG_US_TABLE = table_name(PG_US_TABLE)
-PG_TOMTOM_TABLE = table_name(PG_TOMTOM_TABLE)
 
 
 def pg_connect():
@@ -337,101 +330,6 @@ def ensure_us_schema(cursor) -> None:
         )
 
 
-def ensure_tomtom_schema(cursor) -> None:
-    """Create or evolve the TomTom live incident table."""
-    cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
-    cursor.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {PG_TOMTOM_TABLE} (
-            event_id VARCHAR PRIMARY KEY,
-            incident_id VARCHAR,
-            event_time TIMESTAMP,
-            lat DOUBLE PRECISION,
-            lon DOUBLE PRECISION,
-            severity INT,
-            risk_score DOUBLE PRECISION,
-            icon_category INT,
-            delay_magnitude INT,
-            delay_seconds DOUBLE PRECISION,
-            length_meters DOUBLE PRECISION,
-            weather_code INT,
-            temperature_f DOUBLE PRECISION,
-            humidity DOUBLE PRECISION,
-            wind_speed_mph DOUBLE PRECISION,
-            visibility_mi DOUBLE PRECISION,
-            road_type_code INT,
-            hour INT,
-            day_of_week INT,
-            is_weekend INT,
-            is_rush_hour INT,
-            is_junction INT,
-            has_traffic_signal INT,
-            is_crossing INT,
-            is_roundabout INT,
-            is_stop INT,
-            is_station INT,
-            is_railway INT,
-            is_night INT,
-            state_or_region VARCHAR,
-            city VARCHAR,
-            from_road TEXT,
-            to_road TEXT,
-            geometry_wkt TEXT,
-            model_status VARCHAR(32),
-            ingestion_time TIMESTAMP,
-            processed_time TIMESTAMP,
-            end_to_end_latency_ms DOUBLE PRECISION,
-            geom GEOMETRY(Point, 4326),
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """
-    )
-    for statement in [
-        "incident_id VARCHAR",
-        "event_time TIMESTAMP",
-        "lat DOUBLE PRECISION",
-        "lon DOUBLE PRECISION",
-        "severity INT",
-        "risk_score DOUBLE PRECISION",
-        "icon_category INT",
-        "delay_magnitude INT",
-        "delay_seconds DOUBLE PRECISION",
-        "length_meters DOUBLE PRECISION",
-        "weather_code INT",
-        "temperature_f DOUBLE PRECISION",
-        "humidity DOUBLE PRECISION",
-        "wind_speed_mph DOUBLE PRECISION",
-        "visibility_mi DOUBLE PRECISION",
-        "road_type_code INT",
-        "hour INT",
-        "day_of_week INT",
-        "is_weekend INT",
-        "is_rush_hour INT",
-        "is_junction INT",
-        "has_traffic_signal INT",
-        "is_crossing INT",
-        "is_roundabout INT",
-        "is_stop INT",
-        "is_station INT",
-        "is_railway INT",
-        "is_night INT",
-        "state_or_region VARCHAR",
-        "city VARCHAR",
-        "from_road TEXT",
-        "to_road TEXT",
-        "geometry_wkt TEXT",
-        "model_status VARCHAR(32)",
-        "ingestion_time TIMESTAMP",
-        "processed_time TIMESTAMP",
-        "end_to_end_latency_ms DOUBLE PRECISION",
-        "geom GEOMETRY(Point, 4326)",
-        "created_at TIMESTAMP DEFAULT NOW()",
-    ]:
-        cursor.execute(
-            f"ALTER TABLE {PG_TOMTOM_TABLE} ADD COLUMN IF NOT EXISTS {statement};"
-        )
-
-
 def parse_latency_ms(ingestion_time: Any, processed_time: str) -> Optional[float]:
     """Compute end-to-end latency from producer ingestion time to sink write time."""
     if not ingestion_time:
@@ -538,118 +436,6 @@ def insert_us_prediction(
         connection.close()
 
 
-def insert_tomtom_incident(
-    raw_row: Dict[str, Any],
-    features: Dict[str, Any],
-    ingestion_time: Optional[str],
-    processed_time: str,
-    end_to_end_latency_ms: Optional[float],
-) -> None:
-    """Insert one TomTom incident into its live PostgreSQL/PostGIS table."""
-    global SCHEMA_READY
-    severity = features.get("true_severity")
-    risk_score = _severity_to_risk_score(severity)
-
-    connection = pg_connect()
-    try:
-        with connection:
-            with connection.cursor() as cursor:
-                if not SCHEMA_READY["tomtom"]:
-                    ensure_tomtom_schema(cursor)
-                    SCHEMA_READY["tomtom"] = True
-
-                cursor.execute(
-                    f"""
-                INSERT INTO {PG_TOMTOM_TABLE} (
-                    event_id, incident_id, event_time, lat, lon, severity,
-                    risk_score, icon_category, delay_magnitude, delay_seconds,
-                    length_meters, weather_code, temperature_f, humidity,
-                    wind_speed_mph, visibility_mi, road_type_code, hour,
-                    day_of_week, is_weekend, is_rush_hour, is_junction,
-                    has_traffic_signal, is_crossing, is_roundabout, is_stop,
-                    is_station, is_railway, is_night, state_or_region, city,
-                    from_road, to_road, geometry_wkt, model_status,
-                    ingestion_time, processed_time, end_to_end_latency_ms, geom
-                ) VALUES (
-                    %(event_id)s, %(incident_id)s, %(event_time)s, %(lat)s,
-                    %(lon)s, %(severity)s, %(risk_score)s, %(icon_category)s,
-                    %(delay_magnitude)s, %(delay_seconds)s, %(length_meters)s,
-                    %(weather_code)s, %(temperature_f)s, %(humidity)s,
-                    %(wind_speed_mph)s, %(visibility_mi)s, %(road_type_code)s,
-                    %(hour)s, %(day_of_week)s, %(is_weekend)s, %(is_rush_hour)s,
-                    %(is_junction)s, %(has_traffic_signal)s, %(is_crossing)s,
-                    %(is_roundabout)s, %(is_stop)s, %(is_station)s,
-                    %(is_railway)s, %(is_night)s, %(state_or_region)s, %(city)s,
-                    %(from_road)s, %(to_road)s, %(geometry_wkt)s, %(model_status)s,
-                    %(ingestion_time)s, %(processed_time)s,
-                    %(end_to_end_latency_ms)s,
-                    ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)
-                )
-                ON CONFLICT (event_id) DO UPDATE SET
-                    incident_id = EXCLUDED.incident_id,
-                    event_time = EXCLUDED.event_time,
-                    lat = EXCLUDED.lat,
-                    lon = EXCLUDED.lon,
-                    severity = EXCLUDED.severity,
-                    risk_score = EXCLUDED.risk_score,
-                    icon_category = EXCLUDED.icon_category,
-                    delay_magnitude = EXCLUDED.delay_magnitude,
-                    delay_seconds = EXCLUDED.delay_seconds,
-                    length_meters = EXCLUDED.length_meters,
-                    weather_code = EXCLUDED.weather_code,
-                    temperature_f = EXCLUDED.temperature_f,
-                    humidity = EXCLUDED.humidity,
-                    wind_speed_mph = EXCLUDED.wind_speed_mph,
-                    visibility_mi = EXCLUDED.visibility_mi,
-                    road_type_code = EXCLUDED.road_type_code,
-                    hour = EXCLUDED.hour,
-                    day_of_week = EXCLUDED.day_of_week,
-                    is_weekend = EXCLUDED.is_weekend,
-                    is_rush_hour = EXCLUDED.is_rush_hour,
-                    is_junction = EXCLUDED.is_junction,
-                    has_traffic_signal = EXCLUDED.has_traffic_signal,
-                    is_crossing = EXCLUDED.is_crossing,
-                    is_roundabout = EXCLUDED.is_roundabout,
-                    is_stop = EXCLUDED.is_stop,
-                    is_station = EXCLUDED.is_station,
-                    is_railway = EXCLUDED.is_railway,
-                    is_night = EXCLUDED.is_night,
-                    state_or_region = EXCLUDED.state_or_region,
-                    city = EXCLUDED.city,
-                    from_road = EXCLUDED.from_road,
-                    to_road = EXCLUDED.to_road,
-                    geometry_wkt = EXCLUDED.geometry_wkt,
-                    model_status = EXCLUDED.model_status,
-                    ingestion_time = EXCLUDED.ingestion_time,
-                    processed_time = EXCLUDED.processed_time,
-                    end_to_end_latency_ms = EXCLUDED.end_to_end_latency_ms,
-                    geom = EXCLUDED.geom,
-                    created_at = NOW();
-                    """,
-                    {
-                        **features,
-                        "incident_id": raw_row.get("incident_id"),
-                        "severity": severity,
-                        "risk_score": risk_score,
-                        "icon_category": _to_int(raw_row.get("icon_category")),
-                        "delay_magnitude": _to_int(raw_row.get("delay_magnitude")),
-                        "delay_seconds": _to_float(raw_row.get("delay_seconds")),
-                        "length_meters": _to_float(raw_row.get("length_meters")),
-                        "state_or_region": raw_row.get("state_or_region"),
-                        "city": raw_row.get("city"),
-                        "from_road": raw_row.get("from_road"),
-                        "to_road": raw_row.get("to_road"),
-                        "geometry_wkt": raw_row.get("geometry_wkt"),
-                        "model_status": "rule_based",
-                        "ingestion_time": ingestion_time,
-                        "processed_time": processed_time,
-                        "end_to_end_latency_ms": end_to_end_latency_ms,
-                    },
-                )
-    finally:
-        connection.close()
-
-
 def process_us_message(raw_message: str) -> str:
     """Process one US replay message from Kafka."""
     start = time.time()
@@ -683,35 +469,6 @@ def process_us_message(raw_message: str) -> str:
     except Exception as exc:
         logger.exception("US message processing failed: %s", str(raw_message)[:200])
         return f"US_FAIL: {exc}"
-
-
-def process_tomtom_message(raw_message: str) -> str:
-    """Process one TomTom live incident message from Kafka."""
-    try:
-        raw_row = json.loads(raw_message)
-        ingestion_time = raw_row.get("_ingested_at_utc") or raw_row.get(
-            "ingestion_time"
-        )
-        enriched = enrich_tomtom_event(raw_row)
-        if enriched is None:
-            raise ValueError("TomTom enrichment returned no record")
-
-        features = build_features(enriched)
-        if features is None:
-            raise ValueError("TomTom feature engineering returned no record")
-
-        processed_time = datetime.now(timezone.utc).isoformat()
-        insert_tomtom_incident(
-            raw_row=raw_row,
-            features=features,
-            ingestion_time=ingestion_time,
-            processed_time=processed_time,
-            end_to_end_latency_ms=parse_latency_ms(ingestion_time, processed_time),
-        )
-        return f"TOMTOM_OK: {features.get('event_id')}"
-    except Exception as exc:
-        logger.exception("TomTom message processing failed: %s", str(raw_message)[:200])
-        return f"TOMTOM_FAIL: {exc}"
 
 
 def build_kafka_source(topic: str, group_id: str, source_name: str):
