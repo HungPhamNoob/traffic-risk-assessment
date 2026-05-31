@@ -278,17 +278,22 @@ For the full cloud runbook, see [docs/run.md](docs/run.md).
 
 ## Cloud Service URLs
 
-| Service | URL |
-| --- | --- |
-| Dashboard | `http://35.224.149.110:3001` |
-| FastAPI | `http://35.224.149.110:8000` |
-| FastAPI Docs | `http://35.224.149.110:8000/docs` |
-| Airflow | `http://35.224.149.110:8080` |
-| MLflow | `http://35.224.149.110:5000` |
-| Grafana | `http://35.224.149.110:3000` |
-| Prometheus | `http://35.224.149.110:9090` |
-| Flink JobManager | `http://35.225.231.57:8081` |
-| Spark Master | `http://34.63.78.147:8080` |
+| Service | URL | Node | Credentials | Health Check |
+| --- | --- | --- | --- | --- |
+| **Next.js Dashboard** | `http://35.224.149.110:3001` | node1 | — | `curl -fsS http://35.224.149.110:3001` |
+| **FastAPI Backend** | `http://35.224.149.110:8000` | node1 | — | `curl -fsS http://35.224.149.110:8000/health` |
+| **FastAPI Swagger Docs** | `http://35.224.149.110:8000/docs` | node1 | — | `curl -fsS http://35.224.149.110:8000/docs` |
+| **MLflow Tracking UI** | `http://35.224.149.110:5000` | node1 | — | `curl -fsS http://35.224.149.110:5000/health` |
+| **MLflow Model Serving** | `http://35.224.149.110:5001/invocations` | node1 | — | `curl -X POST http://35.224.149.110:5001/invocations` |
+| **Airflow Webserver** | `http://35.224.149.110:8080` | node1 | admin / admin | `curl -fsS http://35.224.149.110:8080/api/v1/health` |
+| **Prometheus** | `http://35.224.149.110:9090` | node1 | — | `curl -fsS http://35.224.149.110:9090/-/healthy` |
+| **Grafana** | `http://35.224.149.110:3000` | node1 | admin / admin | `curl -fsS http://35.224.149.110:3000/api/health` |
+| **Blackbox Exporter** | `http://35.224.149.110:9115` | node1 | — | `curl -fsS http://35.224.149.110:9115/probe?target=localhost` |
+| **PostgreSQL** | `35.224.149.110:5432` | node1 | capstone / 123 / capstone_db | `docker exec node1-postgres pg_isready` |
+| **Flink JobManager UI** | `http://35.225.231.57:8081` | node2 | — | `curl -fsS http://35.225.231.57:8081/overview` |
+| **Kafka Broker** | `35.225.231.57:9092` | node2 | — | `docker exec node2-kafka kafka-topics --list` |
+| **Spark Master UI** | `http://34.63.78.147:8080` | node3 | — | `curl -fsS http://34.63.78.147:8080/json/` |
+| **Spark Master REST** | `spark://10.128.0.8:7077` | node3 | — | Internal only |
 
 ## Current Scope And Limitations
 
