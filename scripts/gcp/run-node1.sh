@@ -80,7 +80,7 @@ if ! python3 -m venv --help >/dev/null 2>&1; then
   sudo apt-get install -y python3-venv
 fi
 
-echo "Starting Node 1 Docker services from the current workspace snapshot..."
+echo "Starting Node 1 Docker services..."
 echo "Preparing writable runtime directories for containers."
 mkdir -p orchestration/logs ml/mlruns
 chown -R 50000:0 orchestration/logs 2>/dev/null || true
@@ -97,7 +97,7 @@ docker compose \
   --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
-  up -d --build --remove-orphans
+  up -d --remove-orphans
 
 echo "Waiting for MLflow tracking server before checking model registry..."
 for attempt in $(seq 1 30); do
@@ -158,7 +158,7 @@ docker compose \
   --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
-  up -d --build mlflow-serving fastapi
+  up -d mlflow-serving fastapi
 
 echo "Node 1 services:"
 docker compose \
