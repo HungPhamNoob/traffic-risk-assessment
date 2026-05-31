@@ -16,6 +16,14 @@ NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-600}"
 NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS="${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS:-15}"
 NODE3_MIN_SILVER_OBJECTS="${NODE3_MIN_SILVER_OBJECTS:-100}"
 APT_CACHE_UPDATED=0
+NODE3_TEMP_DIR="$(mktemp -d /tmp/node3-run-XXXXXX)"
+NODE3_SILVER_LS_STDOUT="${NODE3_TEMP_DIR}/silver-ls.txt"
+NODE3_SILVER_LS_STDERR="${NODE3_TEMP_DIR}/silver-ls.err"
+
+cleanup_node3_temp() {
+  rm -rf "${NODE3_TEMP_DIR}" 2>/dev/null || true
+}
+trap cleanup_node3_temp EXIT
 
 echo "Node 3 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
@@ -120,13 +128,13 @@ wait_for_silver_data() {
   echo "Silver object glob: ${silver_glob}"
 
   while [ "${waited_seconds}" -le "${NODE3_WAIT_FOR_SILVER_SECONDS}" ]; do
-    if gcloud storage ls "${silver_glob}" >/tmp/node3-silver-ls.txt 2>/tmp/node3-silver-ls.err; then
-      if [ -s /tmp/node3-silver-ls.txt ]; then
+    if gcloud storage ls "${silver_glob}" >"${NODE3_SILVER_LS_STDOUT}" 2>"${NODE3_SILVER_LS_STDERR}"; then
+      if [ -s "${NODE3_SILVER_LS_STDOUT}" ]; then
         local object_count
-        object_count="$(wc -l < /tmp/node3-silver-ls.txt | tr -d ' ')"
+        object_count="$(wc -l < "${NODE3_SILVER_LS_STDOUT}" | tr -d ' ')"
         if [ "${object_count}" -ge "${NODE3_MIN_SILVER_OBJECTS}" ]; then
           echo "Silver data is available with ${object_count} objects. Sample objects:"
-          head -20 /tmp/node3-silver-ls.txt
+          head -20 "${NODE3_SILVER_LS_STDOUT}"
           return 0
         fi
         echo "Silver data exists but only ${object_count} objects are visible. Waiting for at least ${NODE3_MIN_SILVER_OBJECTS} objects."
@@ -140,9 +148,9 @@ wait_for_silver_data() {
 
   echo "ERROR: No Silver data found after ${NODE3_WAIT_FOR_SILVER_SECONDS}s."
   echo "ERROR: Start Node 2 first and verify flink-python-job writes to ${SILVER_FEATURES_PATH}."
-  if [ -s /tmp/node3-silver-ls.err ]; then
+  if [ -s "${NODE3_SILVER_LS_STDERR}" ]; then
     echo "Last gcloud storage ls error:"
-    cat /tmp/node3-silver-ls.err
+    cat "${NODE3_SILVER_LS_STDERR}"
   fi
   exit 1
 }
