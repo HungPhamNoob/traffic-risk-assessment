@@ -143,18 +143,21 @@ sync_workspace_to_node "${NODE3}" | tee "${LOG_DIR}/03-sync-node3.log"
 echo "Resetting Node 1 PostgreSQL tables and run-specific GCS prefixes."
 ssh_cmd "${NODE1}" "
   cd ${PROJECT_ROOT}
+  mkdir -p ${PROJECT_ROOT}/logs ${PROJECT_ROOT}/data/cloud ${PROJECT_ROOT}/data/process || sudo mkdir -p ${PROJECT_ROOT}/logs ${PROJECT_ROOT}/data/cloud ${PROJECT_ROOT}/data/process
   RESET_LOCAL_COMPOSE=false RESET_POSTGRES=true RESET_GCS=true bash scripts/gcp/reset-realtime.sh
 " | tee "${LOG_DIR}/04-reset-node1.log"
 
 echo "Resetting Node 2 Kafka and Flink state."
 ssh_cmd "${NODE2}" "
   cd ${PROJECT_ROOT}
+  mkdir -p ${PROJECT_ROOT}/logs ${PROJECT_ROOT}/data/cloud ${PROJECT_ROOT}/data/process || sudo mkdir -p ${PROJECT_ROOT}/logs ${PROJECT_ROOT}/data/cloud ${PROJECT_ROOT}/data/process
   RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh
 " | tee "${LOG_DIR}/05-reset-node2.log"
 
 echo "Resetting Node 3 Spark local state."
 ssh_cmd "${NODE3}" "
   cd ${PROJECT_ROOT}
+  mkdir -p ${PROJECT_ROOT}/logs ${PROJECT_ROOT}/data/cloud ${PROJECT_ROOT}/data/process || sudo mkdir -p ${PROJECT_ROOT}/logs ${PROJECT_ROOT}/data/cloud ${PROJECT_ROOT}/data/process
   RESET_LOCAL_COMPOSE=true RESET_POSTGRES=false RESET_GCS=false bash scripts/gcp/reset-realtime.sh
 " | tee "${LOG_DIR}/06-reset-node3.log"
 

@@ -45,8 +45,9 @@ if [[ "${TARGET_NODE}" == --node ]]; then
   TARGET_NODE="${2:-all}"
 fi
 
-mkdir -p "${RUN_DIR}"
-exec > >(tee -a "${RESET_LOG}") 2>&1
+mkdir -p "${RUN_DIR}" 2>/dev/null || sudo mkdir -p "${RUN_DIR}" 2>/dev/null || true
+touch "${RESET_LOG}" 2>/dev/null || sudo touch "${RESET_LOG}" 2>/dev/null || true
+exec > >(tee -a "${RESET_LOG}" 2>/dev/null) 2>&1
 
 echo "============================================================================"
 echo "Realtime-Only Reset — Started at ${TIMESTAMP}"
