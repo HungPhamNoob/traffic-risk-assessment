@@ -72,8 +72,8 @@ export const api = {
   modelInfo: () => request("/api/v1/model/info"),
   throughput: (window = "5m") =>
     request("/api/v1/pipeline/throughput", { params: { window } }),
-  latency: (metric = "p95") =>
-    request("/api/v1/pipeline/latency", { params: { metric } }),
+  latency: (metric = "p95", window = "5m") =>
+    request("/api/v1/pipeline/latency", { params: { metric, window } }),
   checkpoints: () => request("/api/v1/pipeline/checkpoints"),
   replayHealth: () => request("/api/v1/pipeline/replay-health"),
   fullRealtimeReset: (force = false) =>

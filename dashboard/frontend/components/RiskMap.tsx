@@ -67,7 +67,8 @@ export function RiskMap({
   const first = points[0];
   const replayPoints = points.filter((point) => point.data_source !== "tomtom_live");
   const livePoints = points.filter((point) => point.data_source === "tomtom_live");
-  const [viewState, setViewState] = useState<RiskMapViewState>(DEFAULT_VIEW_STATE);
+  const [initialViewState, setInitialViewState] =
+    useState<RiskMapViewState>(DEFAULT_VIEW_STATE);
   const hasUserAdjustedView = useRef(false);
   const initialPositionDone = useRef(false);
 
@@ -76,7 +77,7 @@ export function RiskMap({
       return;
     }
     initialPositionDone.current = true;
-    setViewState((current) => ({
+    setInitialViewState((current) => ({
       ...current,
       longitude: first.lon,
       latitude: first.lat,
@@ -148,10 +149,17 @@ export function RiskMap({
     <DeckGL
       controller
       layers={layers}
-      viewState={viewState}
-      onViewStateChange={({ viewState: nextViewState }: { viewState: RiskMapViewState }) => {
-        hasUserAdjustedView.current = true;
-        setViewState(nextViewState);
+      initialViewState={initialViewState}
+      onViewStateChange={({ interactionState }) => {
+        const userIsInteracting = Boolean(
+          interactionState?.isDragging ||
+            interactionState?.isPanning ||
+            interactionState?.isZooming ||
+            interactionState?.isRotating
+        );
+        if (userIsInteracting) {
+          hasUserAdjustedView.current = true;
+        }
       }}
       getTooltip={({ object }) => {
         const point = object as PredictionPoint | undefined;

@@ -209,43 +209,9 @@ services:
     volumes:
       - ../../ml/mlruns:/mlruns
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+      - ../../scripts/gcp/mlflow-serving-entrypoint.sh:/app/mlflow-serving-entrypoint.sh:ro
     command: >
-      bash -c "
-        set -e;
-        apt-get update &&
-        apt-get install -y --no-install-recommends openjdk-17-jre-headless curl &&
-        rm -rf /var/lib/apt/lists/* &&
-        pip install --no-cache-dir h2o==3.46.0.6 pandas numpy scikit-learn google-auth google-cloud-storage &&
-        MODEL_NAME=\"$${ML_MODEL_NAME:-traffic-risk-model}\";
-        echo 'Waiting for MLflow tracking server to be healthy...';
-        while ! curl --max-time 5 -fsS http://mlflow:5000/health >/dev/null 2>&1; do
-          echo '  MLflow not ready yet. Sleeping 5s.';
-          sleep 5;
-        done;
-        echo 'MLflow is healthy. Looking for registered models...';
-        while true; do
-          FOUND='';
-          if curl --max-time 10 -fsS \"http://mlflow:5000/api/2.0/mlflow/registered-models/get?name=$${MODEL_NAME}\" >/dev/null 2>&1; then
-            FOUND=\"$${MODEL_NAME}\";
-          else
-            REG_LIST=$$(curl -s --max-time 10 http://mlflow:5000/api/2.0/mlflow/registered-models/list 2>/dev/null || true);
-            FIRST_MODEL=$$(echo \"$${REG_LIST}\" | python3 -c \"import json,sys; d=json.load(sys.stdin); print(d['registered_models'][0]['name']) if d.get('registered_models') else sys.exit(1)\" 2>/dev/null || true);
-            if [ -n \"$${FIRST_MODEL}\" ]; then
-              FOUND=\"$${FIRST_MODEL}\";
-            fi;
-          fi;
-          if [ -n \"$${FOUND}\" ]; then
-            echo \"Serving model: $${FOUND}\";
-            mlflow models serve -m \"models:/$${FOUND}/latest\" -h 0.0.0.0 -p 5001 -t $${MLFLOW_SERVING_TIMEOUT_SECONDS:-300} --env-manager local || {
-              echo 'Model serving exited. Retrying in 10s...';
-              sleep 10;
-            };
-          else
-            echo 'No registered model found in MLflow. Waiting 15s before retry...';
-            sleep 15;
-          fi;
-        done
-      "
+      bash /app/mlflow-serving-entrypoint.sh
     depends_on:
       - mlflow
     networks:
@@ -265,6 +231,8 @@ services:
       dockerfile: dashboard/backend/Dockerfile
     image: us-central1-docker.pkg.dev/big-data-group-4/capstone/fastapi:latest
     container_name: node1-fastapi
+    env_file:
+      - ../../.env.cloud
     ports:
       - "8000:8000"
     environment:
@@ -284,6 +252,10 @@ services:
       - FLINK_CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
       - FLINK_CHECKPOINT_INTERVAL=${FLINK_CHECKPOINT_INTERVAL:-30000}
       - GOLD_RETRAIN_PATH=${GOLD_RETRAIN_PATH:-gs://big-data-group-4-gold/features/retrain}
+      - PIPELINE_RESET_SCRIPT=/app/scripts/gcp/dashboard-full-realtime-reset-run.sh
+      - PIPELINE_RUNTIME_ENV_FILE=/app/.env.cloud
+      - SSH_KEY=/run/secrets/google_compute_engine
+      - SSH_USER=${HUNG_SSH_USER:-runner}
     depends_on:
       postgres:
         condition: service_healthy
@@ -291,6 +263,9 @@ services:
         condition: service_started
     networks:
       - capstone-net
+    volumes:
+      - ../../.env.cloud:/app/.env.cloud:ro
+      - ${FASTAPI_SSH_KEY_PATH:-/home/runner/.ssh/google_compute_engine}:/run/secrets/google_compute_engine:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

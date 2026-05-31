@@ -21,7 +21,7 @@ Input:
     (or a local CSV path set via US_PIPELINE_REPLAY_PATH)
 
 Output:
-    Kafka topic: traffic.us.raw (1 partition, 3 replicas)
+    Kafka topic: traffic.us.raw (multi-partition, replicated)
 """
 
 import csv

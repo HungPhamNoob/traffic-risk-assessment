@@ -7,6 +7,10 @@ from psycopg2 import sql
 
 from app.core.config import get_settings
 from app.core.database import fetch_all, fetch_one
+from app.services.risk_sql import (
+    effective_tomtom_risk_score_expr,
+    effective_us_risk_score_expr,
+)
 
 
 def risk_level(score: float | None) -> str:
@@ -77,6 +81,8 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
     normalized_mode = _normalize_mode(mode)
     settings = get_settings()
     selects: list[sql.Composable] = []
+    us_risk_score = effective_us_risk_score_expr()
+    tomtom_risk_score = effective_tomtom_risk_score_expr()
 
     if normalized_mode in {"replay", "full"} and _table_exists(
         settings.us_prediction_table
@@ -84,10 +90,13 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
         selects.append(
             sql.SQL(
                 """
-                SELECT risk_score, event_time
+                SELECT {risk_score} AS risk_score, event_time
                 FROM {table}
                 """
-            ).format(table=us_table_identifier())
+            ).format(
+                risk_score=us_risk_score,
+                table=us_table_identifier(),
+            )
         )
     if normalized_mode in {"live", "full"} and _table_exists(
         settings.tomtom_events_table
@@ -95,10 +104,13 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
         selects.append(
             sql.SQL(
                 """
-                SELECT risk_score, event_time
+                SELECT {risk_score} AS risk_score, event_time
                 FROM {table}
                 """
-            ).format(table=tomtom_table_identifier())
+            ).format(
+                risk_score=tomtom_risk_score,
+                table=tomtom_table_identifier(),
+            )
         )
 
     row = None
@@ -179,7 +191,9 @@ def map_points(
 ) -> dict[str, list[dict[str, Any]]]:
     """Return replay, live, or combined points for map rendering."""
     normalized_mode = _normalize_mode(mode)
-    where_clauses = ["risk_score >= %(min_risk)s"]
+    us_risk_score = effective_us_risk_score_expr()
+    tomtom_risk_score = effective_tomtom_risk_score_expr()
+    where_clauses = ["{risk_score} >= %(min_risk)s"]
     params: dict[str, Any] = {"min_risk": min_risk, "limit": limit}
     use_postgis_bbox = False
 
@@ -220,7 +234,7 @@ def map_points(
             event_id,
             lat,
             lon,
-            risk_score,
+            {risk_score} AS risk_score,
             predicted_severity,
             true_severity,
             event_time,
@@ -231,8 +245,11 @@ def map_points(
         WHERE {where_clause}
         """
     ).format(
+        risk_score=us_risk_score,
         table=us_table_identifier(),
-        where_clause=sql.SQL(" AND ").join(sql.SQL(clause) for clause in where_clauses),
+        where_clause=sql.SQL(" AND ").join(
+            sql.SQL(clause).format(risk_score=us_risk_score) for clause in where_clauses
+        ),
     )
     tomtom_select = sql.SQL(
         """
@@ -240,7 +257,7 @@ def map_points(
             event_id,
             lat,
             lon,
-            risk_score,
+            {risk_score} AS risk_score,
             severity AS predicted_severity,
             severity AS true_severity,
             event_time,
@@ -251,8 +268,12 @@ def map_points(
         WHERE {where_clause}
         """
     ).format(
+        risk_score=tomtom_risk_score,
         table=tomtom_table_identifier(),
-        where_clause=sql.SQL(" AND ").join(sql.SQL(clause) for clause in where_clauses),
+        where_clause=sql.SQL(" AND ").join(
+            sql.SQL(clause).format(risk_score=tomtom_risk_score)
+            for clause in where_clauses
+        ),
     )
 
     selects: list[sql.Composable] = []
@@ -325,7 +346,7 @@ def prediction_detail(event_id: str) -> dict[str, Any]:
                     event_time,
                     lat,
                     lon,
-                    risk_score,
+                    {risk_score} AS risk_score,
                     predicted_severity,
                     true_severity,
                     model_status,
@@ -335,7 +356,10 @@ def prediction_detail(event_id: str) -> dict[str, Any]:
                 FROM {table}
                 WHERE event_id = %(event_id)s
                 """
-            ).format(table=us_table_identifier())
+            ).format(
+                risk_score=effective_us_risk_score_expr(),
+                table=us_table_identifier(),
+            )
         )
     if _table_exists(settings.tomtom_events_table):
         selects.append(
@@ -346,7 +370,7 @@ def prediction_detail(event_id: str) -> dict[str, Any]:
                     event_time,
                     lat,
                     lon,
-                    risk_score,
+                    {risk_score} AS risk_score,
                     severity AS predicted_severity,
                     severity AS true_severity,
                     model_status,
@@ -356,7 +380,10 @@ def prediction_detail(event_id: str) -> dict[str, Any]:
                 FROM {table}
                 WHERE event_id = %(event_id)s
                 """
-            ).format(table=tomtom_table_identifier())
+            ).format(
+                risk_score=effective_tomtom_risk_score_expr(),
+                table=tomtom_table_identifier(),
+            )
         )
     if not selects:
         raise HTTPException(status_code=404, detail="Prediction event not found")
@@ -399,7 +426,7 @@ def latest_predictions(
                     event_time,
                     lat,
                     lon,
-                    risk_score,
+                    {risk_score} AS risk_score,
                     predicted_severity,
                     true_severity,
                     model_status,
@@ -407,7 +434,10 @@ def latest_predictions(
                     'circle' AS marker_shape
                 FROM {table}
                 """
-            ).format(table=us_table_identifier())
+            ).format(
+                risk_score=effective_us_risk_score_expr(),
+                table=us_table_identifier(),
+            )
         )
     if normalized_mode in {"live", "full"} and _table_exists(
         settings.tomtom_events_table
@@ -420,7 +450,7 @@ def latest_predictions(
                     event_time,
                     lat,
                     lon,
-                    risk_score,
+                    {risk_score} AS risk_score,
                     severity AS predicted_severity,
                     severity AS true_severity,
                     model_status,
@@ -428,7 +458,10 @@ def latest_predictions(
                     'triangle' AS marker_shape
                 FROM {table}
                 """
-            ).format(table=tomtom_table_identifier())
+            ).format(
+                risk_score=effective_tomtom_risk_score_expr(),
+                table=tomtom_table_identifier(),
+            )
         )
     if not selects:
         return {"predictions": []}

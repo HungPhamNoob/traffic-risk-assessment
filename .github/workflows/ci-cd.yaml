@@ -299,14 +299,14 @@ jobs:
             echo "=== Pulling latest code from Git ==="
 
             # Fix Git permissions (in case sudo was used before)
-            sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
+            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
             git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 
             if [ ! -d /opt/traffic/.git ]; then
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
-                sudo chown -R \$(whoami):\$(whoami) /opt/traffic
+                sudo chown -R $(whoami):$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
                 git checkout $BRANCH
@@ -329,9 +329,9 @@ jobs:
 
             echo "=== Starting Node 1 services and offline training bootstrap ==="
             TRAINING_PID_FILE="/opt/traffic/logs/cloud_h2o_before_2020.pid"
-            if [ -f "\${TRAINING_PID_FILE}" ] && ps -p "\$(cat "\${TRAINING_PID_FILE}")" >/dev/null 2>&1; then
+            if [ -f "${TRAINING_PID_FILE}" ] && ps -p "$(cat "${TRAINING_PID_FILE}")" >/dev/null 2>&1; then
                 echo "Active full H2O training detected. Skipping Node 1 service restart to avoid interrupting MLflow tracking."
-                echo "Training PID: \$(cat "\${TRAINING_PID_FILE}")"
+                echo "Training PID: $(cat "${TRAINING_PID_FILE}")"
                 echo "Node 1 deployment is considered successful because the active full-training run owns MLflow until it completes."
                 exit 0
             else
@@ -427,14 +427,14 @@ jobs:
             echo "=== Pulling latest code ==="
             # Normalize ownership and trust for the deployment checkout. Older
             # startup scripts may have created /opt/traffic with root ownership.
-            sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
+            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
             git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 
             if [ ! -d /opt/traffic/.git ]; then
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
-                sudo chown -R \$(whoami):\$(whoami) /opt/traffic
+                sudo chown -R $(whoami):$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
                 git checkout $BRANCH
@@ -558,14 +558,14 @@ jobs:
             echo "=== Pulling latest code ==="
             # Normalize ownership and trust for the deployment checkout. Older
             # startup scripts may have created /opt/traffic with root ownership.
-            sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
+            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
             git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 
             if [ ! -d /opt/traffic/.git ]; then
                 echo "=== First deployment: cloning repository ==="
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
-                sudo chown -R \$(whoami):\$(whoami) /opt/traffic
+                sudo chown -R $(whoami):$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
                 git checkout $BRANCH

@@ -12,6 +12,9 @@ export type ModelPerformance = {
   weighted_recall?: number;
   weighted_f1?: number;
   logloss?: number;
+  selected_run_id?: string;
+  selected_run_name?: string;
+  selection_metric?: string;
 };
 
 export type OverviewSummary = {

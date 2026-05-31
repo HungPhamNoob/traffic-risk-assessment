@@ -107,12 +107,7 @@ export default function DashboardPage() {
   const weatherHistogram =
     (weatherQuery.data?.histogram as Record<string, Array<{ bin: string; count: number }>> | undefined) || {};
   const modelPerformance = summary.model_performance as ModelPerformance | undefined;
-  const selectedRunName =
-    summary.model_performance &&
-    typeof summary.model_performance === "object" &&
-    "selected_run_name" in summary.model_performance
-      ? String(summary.model_performance.selected_run_name || "")
-      : "";
+  const selectedRunName = String(modelPerformance?.selected_run_name || "");
   const activeModelMetrics = [
     {
       label: "Accuracy",
@@ -180,14 +175,13 @@ export default function DashboardPage() {
         <KpiCard
           label="Active model"
           value={summary.latest_model_version || "latest"}
-          detail={selectedRunName ? `Run: ${selectedRunName}` : "Best run by F1"}
+          detail={selectedRunName ? `Run: ${selectedRunName}` : "Current serving model"}
         />
         {activeModelMetrics.map((metric) => (
           <KpiCard
             key={metric.label}
             label={metric.label}
             value={metric.value!}
-            detail="Best run by weighted F1"
           />
         ))}
       </section>

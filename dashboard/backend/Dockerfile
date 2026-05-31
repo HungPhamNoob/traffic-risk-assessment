@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends bash curl openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY dashboard/backend/requirements.txt /app/requirements.txt
@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY dashboard/backend/app /app/app
 COPY shared /app/shared
+COPY scripts/gcp /app/scripts/gcp
 
 EXPOSE 8000
 

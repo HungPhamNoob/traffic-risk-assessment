@@ -97,6 +97,14 @@ SILVER_FEATURES_PATH = os.getenv(
     "SILVER_FEATURES_PATH",
     "gs://big-data-group-4-silver/process/flink_features",
 )
+SILVER_WRITE_ENABLED = os.getenv("SILVER_WRITE_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+SILVER_FLUSH_EVERY_N = int(
+    os.getenv("SILVER_FLUSH_EVERY_N", os.getenv("SILVER_BATCH_SIZE", "100"))
+)
 
 PG_HOST = os.getenv("POSTGRES_HOST", "10.128.0.4")
 PG_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
@@ -111,6 +119,11 @@ PG_US_TABLE = os.getenv(
     os.getenv("POSTGRES_PREDICTION_TABLE", "traffic_risk_predictions"),
 )
 PG_TOMTOM_TABLE = os.getenv("POSTGRES_TOMTOM_TABLE", "traffic_tomtom_incidents")
+FLINK_PRINT_EACH_EVENT = os.getenv("FLINK_PRINT_EACH_EVENT", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 MODEL_FEATURE_COLUMNS = [
@@ -399,6 +412,7 @@ def initialize_schemas() -> None:
 # ---------------------------------------------------------------------------
 
 _GCS_FS = None
+_SILVER_BATCH_BUFFERS: Dict[str, List[Dict[str, Any]]] = {}
 
 
 def _get_gcs_fs():
@@ -410,31 +424,54 @@ def _get_gcs_fs():
     return _GCS_FS
 
 
-def write_to_gcs_silver(features: Dict[str, Any]) -> None:
-    """Write one US replay feature record to the Silver layer (single JSONL line).
+def _silver_prefix(features: Dict[str, Any]) -> str:
+    """Return the date partition used for Silver feature batches."""
+    event_time = features.get("event_time")
+    if event_time:
+        dt = datetime.fromisoformat(str(event_time).replace("Z", "+00:00"))
+        return f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
+    return "unknown_date"
 
-    The GCS client is reused across calls to avoid per-event auth overhead.
-    """
+
+def flush_silver_prefix(prefix: str) -> None:
+    """Flush one buffered Silver batch to a JSONL object in GCS."""
+    rows = _SILVER_BATCH_BUFFERS.get(prefix) or []
+    if not rows:
+        return
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    path = (
+        f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/batches/"
+        f"features-{timestamp}.jsonl"
+    )
+    payload = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
+
     try:
-        event_time = features.get("event_time")
-        if event_time:
-            dt = datetime.fromisoformat(str(event_time).replace("Z", "+00:00"))
-            prefix = f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
-        else:
-            prefix = "unknown_date"
-
-        safe_event_id = str(features.get("event_id", "unknown_event")).replace("/", "_")
-        path = (
-            f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events/{safe_event_id}.json"
-        )
-        payload = json.dumps(features, ensure_ascii=False) + "\n"
-
         fs = _get_gcs_fs()
         with fs.open(path, "wb") as file_obj:
             file_obj.write(payload.encode("utf-8"))
-        logger.debug("Wrote US features to Silver: %s", path)
+        logger.debug("Flushed %d Silver features to %s", len(rows), path)
+        _SILVER_BATCH_BUFFERS[prefix] = []
     except Exception:
-        logger.exception("Failed to write US features to Silver")
+        logger.exception("Failed to flush Silver feature batch: %s", path)
+
+
+def flush_all_silver_batches() -> None:
+    """Flush all buffered Silver feature batches before shutdown."""
+    for prefix in list(_SILVER_BATCH_BUFFERS):
+        flush_silver_prefix(prefix)
+
+
+def write_to_gcs_silver(features: Dict[str, Any]) -> None:
+    """Buffer US replay features and flush them to GCS as JSONL batches."""
+    if not SILVER_WRITE_ENABLED:
+        return
+
+    prefix = _silver_prefix(features)
+    buffer = _SILVER_BATCH_BUFFERS.setdefault(prefix, [])
+    buffer.append(features)
+    if len(buffer) >= SILVER_FLUSH_EVERY_N:
+        flush_silver_prefix(prefix)
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +718,7 @@ def process_us_message(raw_message: str) -> str:
         write_to_gcs_silver(features)
 
         # MLflow inference
-        predicted_severity, ml_risk_score = call_mlflow_model(features)
+        predicted_severity, _ml_risk_score = call_mlflow_model(features)
         inference_latency_ms = (time.time() - start) * 1000
 
         # Compute unified risk score using all available context features.
@@ -830,7 +867,17 @@ def main() -> None:
     )
     logger.info("US MLflow endpoint: %s", MLFLOW_SERVING_ENDPOINT)
     logger.info("US Silver path: %s", SILVER_FEATURES_PATH)
-    logger.info("PG pool: min=%d max=%d batch_size=%d", PG_POOL_MIN, PG_POOL_MAX, PG_BATCH_SIZE)
+    logger.info(
+        "PG pool: min=%d max=%d batch_size=%d",
+        PG_POOL_MIN,
+        PG_POOL_MAX,
+        PG_BATCH_SIZE,
+    )
+    logger.info(
+        "Silver write: enabled=%s batch_size=%d",
+        SILVER_WRITE_ENABLED,
+        SILVER_FLUSH_EVERY_N,
+    )
     logger.info("=" * 80)
 
     # Initialize database schemas once before the hot path.
@@ -877,10 +924,12 @@ def main() -> None:
         source_name=tomtom_source_name,
     ).map(process_tomtom_message, output_type=Types.STRING())
 
-    us_stream.union(tomtom_stream).print()
+    if FLINK_PRINT_EACH_EVENT:
+        us_stream.union(tomtom_stream).print()
 
     # Flush any remaining buffered rows before the job exits.
     import atexit
+    atexit.register(flush_all_silver_batches)
     atexit.register(flush_us_batch)
     atexit.register(flush_tomtom_batch)
 

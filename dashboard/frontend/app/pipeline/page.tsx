@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -42,6 +43,7 @@ function formatPercent(value: unknown) {
 }
 
 export default function PipelinePage() {
+  const [resetLaunchResult, setResetLaunchResult] = useState<AnyRecord | null>(null);
   const health = useQuery({ queryKey: ["health"], queryFn: api.health });
   const system = useQuery({
     queryKey: ["system"],
@@ -55,8 +57,8 @@ export default function PipelinePage() {
     refetchInterval: 10_000
   });
   const latency = useQuery({
-    queryKey: ["latency"],
-    queryFn: () => api.latency("p95"),
+    queryKey: ["latency", "5m"],
+    queryFn: () => api.latency("p95", "5m"),
     refetchInterval: 10_000
   });
   const checkpoints = useQuery({
@@ -86,8 +88,15 @@ export default function PipelinePage() {
   });
   const resetMutation = useMutation({
     mutationFn: () => api.fullRealtimeReset(false),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setResetLaunchResult((data as AnyRecord) || null);
       resetStatus.refetch();
+    },
+    onError: (error) => {
+      setResetLaunchResult({
+        status: "request_failed",
+        message: error instanceof Error ? error.message : "Reset request failed"
+      });
     }
   });
 
@@ -100,6 +109,13 @@ export default function PipelinePage() {
   const retrainData = retrain.data as AnyRecord | undefined;
   const trendData = trend.data as AnyRecord | undefined;
   const resetData = resetStatus.data as AnyRecord | undefined;
+  const resetStatusText = String(
+    resetData?.status || resetLaunchResult?.status || "not_started"
+  );
+  const resetMessage =
+    (typeof resetLaunchResult?.message === "string" && resetLaunchResult.message) ||
+    (typeof resetData?.message === "string" && resetData.message) ||
+    null;
 
   const latencyChart = latencyData?.latency_ms
     ? Object.entries(latencyData.latency_ms).map(([metric, value]) => ({
@@ -138,6 +154,40 @@ export default function PipelinePage() {
     ["FastAPI", "fastapi", "configured", "REST API & docs"],
     ["Grafana", "grafana", "configured", "Monitoring dashboards"]
   ];
+  const airflowConfigRows = [
+    {
+      label: "Executor",
+      keyName: "AIRFLOW__CORE__EXECUTOR",
+      value: systemData?.airflow?.executor || "unavailable"
+    },
+    {
+      label: "Retrain schedule",
+      keyName: "AIRFLOW_MODEL_RETRAIN_SCHEDULE",
+      value: systemData?.airflow?.model_retrain_schedule || "unavailable"
+    },
+    {
+      label: "Stream health schedule",
+      keyName: "AIRFLOW_STREAM_HEALTH_SCHEDULE",
+      value: systemData?.airflow?.stream_health_schedule || "unavailable"
+    },
+    {
+      label: "Flink checkpoint interval",
+      keyName: "FLINK_CHECKPOINT_INTERVAL",
+      value: systemData?.flink?.checkpoint_interval_ms
+        ? `${systemData.flink.checkpoint_interval_ms} ms`
+        : "unavailable"
+    },
+    {
+      label: "Reset script",
+      keyName: "PIPELINE_RESET_SCRIPT",
+      value: systemData?.pipeline?.full_realtime_reset_script || "unavailable"
+    },
+    {
+      label: "Reset log directory",
+      keyName: "PIPELINE_RESET_LOG_DIR",
+      value: systemData?.pipeline?.reset_log_dir || "unavailable"
+    }
+  ];
 
   return (
     <div className="page-stack">
@@ -174,7 +224,7 @@ export default function PipelinePage() {
               ? "N/A"
               : `${Number(latencyData.latency_ms.avg).toFixed(1)}ms`
           }
-          detail="End-to-end average"
+          detail={`Recent window: ${String(latencyData?.window || "5m")}`}
         />
         <KpiCard
           label="Prediction rows"
@@ -194,7 +244,13 @@ export default function PipelinePage() {
         <KpiCard
           label="Reset job"
           value={String(resetData?.status || "not_started")}
-          detail={resetData?.run_id ? `Run: ${String(resetData.run_id)}` : "No active reset"}
+          detail={
+            resetData?.run_id
+              ? `Run: ${String(resetData.run_id)}`
+              : resetLaunchResult?.run_id
+                ? `Run: ${String(resetLaunchResult.run_id)}`
+                : "No active reset"
+          }
         />
       </section>
 
@@ -219,8 +275,16 @@ export default function PipelinePage() {
                 ? "Starting..."
                 : "Run full realtime reset on cloud VMs"}
             </button>
-            <span className="status-pill">{String(resetData?.status || "not_started")}</span>
+            <span className="status-pill">{resetStatusText}</span>
           </div>
+          {resetMessage && (
+            <p className="muted" style={{ margin: 0 }}>
+              {resetMessage}
+            </p>
+          )}
+          <p className="mono muted" style={{ margin: 0 }}>
+            Script: {String(systemData?.pipeline?.full_realtime_reset_script || "unavailable")}
+          </p>
           {resetData?.log_path && (
             <p className="mono muted" style={{ margin: 0 }}>
               {String(resetData.log_path)}
@@ -252,36 +316,13 @@ export default function PipelinePage() {
             <ServerCog size={18} />
           </div>
           <div className="side-list">
-            {[
-              ["Executor", systemData?.airflow?.executor || "unavailable"],
-              [
-                "Retrain schedule",
-                systemData?.airflow?.model_retrain_schedule || "unavailable"
-              ],
-              [
-                "Stream health schedule",
-                systemData?.airflow?.stream_health_schedule || "unavailable"
-              ],
-              [
-                "Flink checkpoint interval",
-                systemData?.flink?.checkpoint_interval_ms
-                  ? `${systemData.flink.checkpoint_interval_ms} ms`
-                  : "unavailable"
-              ],
-              [
-                "Reset script",
-                systemData?.pipeline?.full_realtime_reset_script || "unavailable"
-              ],
-              [
-                "Reset log directory",
-                systemData?.pipeline?.reset_log_dir || "unavailable"
-              ]
-            ].map(([label, value]) => (
-              <div className="row-item" key={String(label)}>
+            {airflowConfigRows.map((row) => (
+              <div className="row-item" key={row.keyName}>
                 <div className="row-top">
-                  <strong>{label}</strong>
+                  <strong>{row.label}</strong>
                 </div>
-                <span className="mono muted">{String(value)}</span>
+                <span className="mono muted">{row.keyName}</span>
+                <span className="mono">{String(row.value)}</span>
               </div>
             ))}
           </div>

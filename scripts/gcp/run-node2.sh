@@ -3,7 +3,7 @@
 #
 # Node 2 responsibilities:
 #   - Three Kafka brokers.
-#   - Two raw topics with one partition and three replicas each.
+#   - Two raw topics with multiple partitions and three replicas each.
 #   - Three replay producers split by row_index modulo producer index.
 #   - One Flink job that reads US replay and TomTom live streams together.
 

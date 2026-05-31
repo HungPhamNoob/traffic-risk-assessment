@@ -21,9 +21,12 @@ def get_throughput(window: str = Query(default="5m")) -> dict:
 
 
 @router.get("/latency")
-def get_latency(metric: str = Query(default="p95")) -> dict:
+def get_latency(
+    metric: str = Query(default="p95"),
+    window: str = Query(default="5m"),
+) -> dict:
     """Return latency percentiles from the prediction table."""
-    return latency(metric)
+    return latency(metric, window)
 
 
 @router.get("/checkpoints")

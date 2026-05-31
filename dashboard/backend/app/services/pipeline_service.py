@@ -63,6 +63,10 @@ def _parse_window_seconds(window: str) -> int:
 def _time_column(columns: set[str]) -> str | None:
     if "created_at" in columns:
         return "created_at"
+    if "processed_time" in columns:
+        return "processed_time"
+    if "ingestion_time" in columns:
+        return "ingestion_time"
     if "event_time" in columns:
         return "event_time"
     return None
@@ -131,10 +135,11 @@ def throughput(window: str) -> dict[str, Any]:
     }
 
 
-def latency(metric: str) -> dict[str, Any]:
-    """Return latency percentiles using available latency columns."""
+def latency(metric: str, window: str = "5m") -> dict[str, Any]:
+    """Return latency percentiles over a recent window."""
+    window_seconds = _parse_window_seconds(window)
     selects: list[sql.Composable] = []
-    source_columns: dict[str, list[str]] = {}
+    source_columns: dict[str, dict[str, Any]] = {}
     for table_name in _prediction_table_names():
         columns = _columns_for_table(table_name)
         latency_columns = [
@@ -142,25 +147,31 @@ def latency(metric: str) -> dict[str, Any]:
             for column in ("end_to_end_latency_ms", "inference_latency_ms")
             if column in columns
         ]
-        if not latency_columns:
+        time_column = _time_column(columns)
+        if not latency_columns or not time_column:
             continue
         column = latency_columns[0]
-        source_columns[table_name] = latency_columns
+        source_columns[table_name] = {
+            "latency_columns": latency_columns,
+            "time_column": time_column,
+        }
         selects.append(
             sql.SQL(
                 """
                 SELECT {latency_column} AS latency_ms
                 FROM {table}
                 WHERE {latency_column} IS NOT NULL
+                  AND {time_column} >= NOW() - (%(window_seconds)s * INTERVAL '1 second')
                 """
             ).format(
                 table=table_identifier(table_name),
                 latency_column=sql.Identifier(column),
+                time_column=sql.Identifier(time_column),
             )
         )
 
     if not selects:
-        return {"status": "unavailable", "metric": metric, "columns": []}
+        return {"status": "unavailable", "metric": metric, "window": window, "columns": []}
 
     query = sql.SQL(
         """
@@ -173,12 +184,14 @@ def latency(metric: str) -> dict[str, Any]:
         FROM ({union_query}) AS latency_samples
         """
     ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
-    row = fetch_one(query) or {}
+    row = fetch_one(query, {"window_seconds": window_seconds}) or {}
     allowed = {"p50", "p95", "p99", "avg"}
     metric_key = metric if metric in allowed else "p95"
     return {
         "status": "ok" if row.get("sample_count") else "not_enough_data",
         "metric": metric_key,
+        "window": window,
+        "window_seconds": window_seconds,
         "value_ms": row.get(metric_key),
         "latency_ms": {
             "p50": row.get("p50"),
