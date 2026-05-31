@@ -112,7 +112,7 @@ docker compose \
 
 echo "Waiting for MLflow tracking server before checking model registry..."
 for attempt in $(seq 1 30); do
-  if curl --max-time 5 -fsS "${MLFLOW_TRACKING_URI}/ping" >/dev/null 2>&1; then
+  if curl --max-time 5 -fsS "${MLFLOW_TRACKING_URI}/health" >/dev/null 2>&1; then
     echo "MLflow tracking server is reachable."
     break
   fi
