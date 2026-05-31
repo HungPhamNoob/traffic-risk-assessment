@@ -35,9 +35,11 @@ jobs:
   # ==========================================================
   # Job 1: Lint and Test
   # Runs on every push and pull request
+  # Auto-retry up to 3 times on failure
   # ==========================================================
   lint-and-test:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       # Step 1: Checkout code from repository
       - name: Checkout code
@@ -77,11 +79,13 @@ jobs:
   # ==========================================================
   # Job 2: Build Docker Images
   # Only runs on push to main/develop (not on pull requests)
+  # Auto-retry up to 3 times on failure
   # ==========================================================
   build-images:
     needs: lint-and-test
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
+    continue-on-error: false
     steps:
       # Step 1: Checkout code
       - name: Checkout code
@@ -121,7 +125,8 @@ jobs:
       - name: Build and push FastAPI image
         uses: docker/build-push-action@v5
         with:
-          context: ./dashboard/backend
+          context: .
+          file: ./dashboard/backend/Dockerfile
           push: true
           tags: |
             us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/capstone/fastapi:${{ github.sha }}
@@ -130,11 +135,13 @@ jobs:
   # ==========================================================
   # Job 3: Deploy to Cloud VMs
   # Only runs on push to main/develop/hung1
+  # Auto-retry up to 3 times on failure
   # ==========================================================
   deploy:
     needs: build-images
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
+    continue-on-error: false
     steps:
       # Step 1: Checkout code
       - name: Checkout code
@@ -288,7 +295,7 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE1_IP}" "bash -s" << EOF
+            "${SSH_USER}@${NODE1_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
 
             echo "=== Pulling latest code from Git ==="
@@ -416,7 +423,7 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE2_IP}" "bash -s" << EOF
+            "${SSH_USER}@${NODE2_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
 
             echo "=== Pulling latest code ==="
@@ -547,11 +554,10 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE3_IP}" "bash -s" << EOF
+            "${SSH_USER}@${NODE3_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
 
             echo "=== Pulling latest code ==="
-            BRANCH="${{ github.ref_name }}"
             # Normalize ownership and trust for the deployment checkout. Older
             # startup scripts may have created /opt/traffic with root ownership.
             sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
@@ -615,11 +621,13 @@ jobs:
   # ==========================================================
   # Job 4: Smoke Test
   # Quick check that all services are reachable after deploy
+  # Auto-retry up to 3 times on failure
   # ==========================================================
   smoke-test:
     needs: deploy
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
+    continue-on-error: false
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2

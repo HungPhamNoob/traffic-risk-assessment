@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -24,6 +25,13 @@ const RiskMap = dynamic(
   () => import("@/components/RiskMap").then((module) => module.RiskMap),
   { ssr: false }
 );
+
+function formatMetricPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return null;
+  }
+  return `${(value * 100).toFixed(2)}%`;
+}
 
 export default function DashboardPage() {
   const [minRisk, setMinRisk] = useState(0);
@@ -98,6 +106,31 @@ export default function DashboardPage() {
     [];
   const weatherHistogram =
     (weatherQuery.data?.histogram as Record<string, Array<{ bin: string; count: number }>> | undefined) || {};
+  const modelPerformance = summary.model_performance as ModelPerformance | undefined;
+  const selectedRunName =
+    summary.model_performance &&
+    typeof summary.model_performance === "object" &&
+    "selected_run_name" in summary.model_performance
+      ? String(summary.model_performance.selected_run_name || "")
+      : "";
+  const activeModelMetrics = [
+    {
+      label: "Accuracy",
+      value: formatMetricPercent(modelPerformance?.accuracy)
+    },
+    {
+      label: "Precision",
+      value: formatMetricPercent(modelPerformance?.weighted_precision)
+    },
+    {
+      label: "Recall",
+      value: formatMetricPercent(modelPerformance?.weighted_recall)
+    },
+    {
+      label: "F1 Score",
+      value: formatMetricPercent(modelPerformance?.weighted_f1)
+    }
+  ].filter((metric) => metric.value !== null);
 
   const statusText = (point: PredictionPoint) =>
     point.model_status === "success" || point.model_status === "failed"
@@ -113,10 +146,15 @@ export default function DashboardPage() {
           <h1>Realtime Risk Dashboard</h1>
           <p>Live accident risk map, hotspot ranking, and model output overview.</p>
         </div>
-        <span className="status-pill">
-          <RefreshCw size={14} />
-          Auto-refresh 10s
-        </span>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <Link className="ghost-button" href="/pipeline">
+            Pipeline controls
+          </Link>
+          <span className="status-pill">
+            <RefreshCw size={14} />
+            Auto-refresh 10s
+          </span>
+        </div>
       </div>
 
       <FallbackBanner active={fallbackActive} />
@@ -129,31 +167,29 @@ export default function DashboardPage() {
           tone="high"
           detail={highRiskPct}
         />
-        <KpiCard
-          label="Average risk"
-          value={`${(Number(summary.avg_risk_score || 0) * 100).toFixed(1)}%`}
-          tone={summary.avg_risk_score >= 0.7 ? "high" : "medium"}
-        />
+         <KpiCard
+           label="Average risk"
+           value={`${(Number(summary.avg_risk_score || 0) * 100).toFixed(1)}%`}
+           tone={Number(summary.avg_risk_score || 0) >= 0.7 ? "high" : (Number(summary.avg_risk_score || 0) >= 0.15 ? "medium" : "low")}
+         />
         <KpiCard
           label="Latest event"
           value={summary.latest_event_time ? "Online" : "No data"}
           detail={summary.latest_event_time || "Waiting for replay"}
         />
         <KpiCard
-          label="Model"
+          label="Active model"
           value={summary.latest_model_version || "latest"}
+          detail={selectedRunName ? `Run: ${selectedRunName}` : "Best run by F1"}
         />
-        {summary.model_performance?.weighted_f1 != null && (
+        {activeModelMetrics.map((metric) => (
           <KpiCard
-            label="Best weighted F1"
-            value={`${((summary.model_performance as ModelPerformance).weighted_f1! * 100).toFixed(2)}%`}
-            detail={
-              (summary.model_performance as Record<string, unknown>).selected_run_name
-                ? `Run: ${String((summary.model_performance as Record<string, unknown>).selected_run_name)}`
-                : "Best MLflow run"
-            }
+            key={metric.label}
+            label={metric.label}
+            value={metric.value!}
+            detail="Best run by weighted F1"
           />
-        )}
+        ))}
       </section>
 
       <section className="grid dashboard-grid">

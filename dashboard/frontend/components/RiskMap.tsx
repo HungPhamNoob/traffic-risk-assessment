@@ -3,12 +3,29 @@
 import DeckGL from "@deck.gl/react";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { useEffect, useRef, useState } from "react";
 import Map from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot, PredictionPoint } from "@/lib/types";
 
 const MAP_STYLE =
   "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+
+type RiskMapViewState = {
+  longitude: number;
+  latitude: number;
+  zoom: number;
+  pitch: number;
+  bearing: number;
+};
+
+const DEFAULT_VIEW_STATE: RiskMapViewState = {
+  longitude: -96,
+  latitude: 38,
+  zoom: 3.1,
+  pitch: 35,
+  bearing: 0
+};
 
 function colorForRisk(score: number): [number, number, number, number] {
   if (score >= 0.7) return [239, 68, 68, 220];
@@ -50,13 +67,22 @@ export function RiskMap({
   const first = points[0];
   const replayPoints = points.filter((point) => point.data_source !== "tomtom_live");
   const livePoints = points.filter((point) => point.data_source === "tomtom_live");
-  const viewState = {
-    longitude: first?.lon ?? -96,
-    latitude: first?.lat ?? 38,
-    zoom: first ? 7 : 3.1,
-    pitch: 35,
-    bearing: 0
-  };
+  const [viewState, setViewState] = useState<RiskMapViewState>(DEFAULT_VIEW_STATE);
+  const hasUserAdjustedView = useRef(false);
+  const initialPositionDone = useRef(false);
+
+  useEffect(() => {
+    if (!first || initialPositionDone.current || hasUserAdjustedView.current) {
+      return;
+    }
+    initialPositionDone.current = true;
+    setViewState((current) => ({
+      ...current,
+      longitude: first.lon,
+      latitude: first.lat,
+      zoom: 7
+    }));
+  }, [first]);
 
   const layers = [
     showHeatmap &&
@@ -121,8 +147,12 @@ export function RiskMap({
   return (
     <DeckGL
       controller
-      initialViewState={viewState}
       layers={layers}
+      viewState={viewState}
+      onViewStateChange={({ viewState: nextViewState }: { viewState: RiskMapViewState }) => {
+        hasUserAdjustedView.current = true;
+        setViewState(nextViewState);
+      }}
       getTooltip={({ object }) => {
         const point = object as PredictionPoint | undefined;
         if (!point?.event_id) return null;

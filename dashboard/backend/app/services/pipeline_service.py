@@ -338,13 +338,6 @@ def trigger_full_realtime_reset(force: bool = False) -> dict[str, Any]:
             "message": "Reset script path does not exist on this runtime host.",
         }
 
-    if not shutil.which("gcloud"):
-        return {
-            "status": "missing_dependency",
-            "script": str(script_path),
-            "message": "gcloud CLI is not installed in the backend runtime. Run the reset script on the VM host shell.",
-        }
-
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     log_dir = Path(settings.pipeline_reset_log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)

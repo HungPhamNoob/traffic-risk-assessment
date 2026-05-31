@@ -190,7 +190,7 @@ services:
 
         for TOPIC_NAME in $${TOPICS}; do
           echo "Creating Kafka topic $${TOPIC_NAME} with one partition and three replicas."
-          kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 1 --replication-factor 3
+          kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --create --if-not-exists --topic "$${TOPIC_NAME}" --partitions 3 --replication-factor 3
 
           echo "Validating Kafka topic $${TOPIC_NAME}."
           kafka-topics --bootstrap-server "$${BOOTSTRAP_SERVERS}" --describe --topic "$${TOPIC_NAME}"

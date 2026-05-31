@@ -2,6 +2,9 @@ export type RiskLevel = "low" | "medium" | "high";
 
 export type ModelPerformance = {
   accuracy?: number;
+  precision?: number;
+  recall?: number;
+  f1?: number;
   macro_precision?: number;
   macro_recall?: number;
   macro_f1?: number;

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-processing/flink_streaming.py
-Unified Flink streaming job – US replay and TomTom live incident processing.
+Unified Flink streaming job for US replay and TomTom live incident processing.
 
 Data flows:
 
     US replay flow (before-2020 model, post-2020 data):
         Kafka traffic.us.raw
         -> feature engineering  (processing.feature_engineering.build_features)
-        -> Silver GCS write     (one JSONL file per event)
+        -> Silver GCS write     (batched JSONL per partition)
         -> MLflow / H2O inference
         -> PostgreSQL table:    traffic_risk_predictions
 
@@ -30,11 +29,13 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
+import psycopg2.extras
 import requests
 from dotenv import load_dotenv
+from psycopg2.pool import SimpleConnectionPool
 from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
@@ -42,6 +43,13 @@ from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
 from processing.feature_engineering import build_features
 from processing.streaming_enrichment import enrich_tomtom_event
+from shared.risk_scoring import (
+    clamp_severity,
+    compute_unified_risk_score,
+    infer_severity_from_prediction,
+    to_float,
+    to_int,
+)
 
 try:
     from pyflink.datastream.checkpoint_storage import FileSystemCheckpointStorage
@@ -95,6 +103,9 @@ PG_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 PG_DB = os.getenv("POSTGRES_DB", "capstone_db")
 PG_USER = os.getenv("POSTGRES_USER", "capstone")
 PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "123")
+PG_POOL_MIN = int(os.getenv("PG_POOL_MIN_CONN", "1"))
+PG_POOL_MAX = int(os.getenv("PG_POOL_MAX_CONN", "4"))
+PG_BATCH_SIZE = int(os.getenv("PG_BATCH_SIZE", "200"))
 PG_US_TABLE = os.getenv(
     "POSTGRES_US_PREDICTION_TABLE",
     os.getenv("POSTGRES_PREDICTION_TABLE", "traffic_risk_predictions"),
@@ -125,15 +136,60 @@ MODEL_FEATURE_COLUMNS = [
     "is_night",
 ]
 
-SCHEMA_READY = {"us": False, "tomtom": False}
+# Connection pool and batch buffers — one per Flink Python worker/subtask.
+PG_POOL: Optional[SimpleConnectionPool] = None
+US_BATCH_BUFFER: List[Dict[str, Any]] = []
+TOMTOM_BATCH_BUFFER: List[Dict[str, Any]] = []
+_SCHEMA_INITIALIZED = False
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Connection pool management
+# ---------------------------------------------------------------------------
+
+
+def get_pg_pool() -> SimpleConnectionPool:
+    """Return the global PostgreSQL connection pool, creating it lazily."""
+    global PG_POOL
+    if PG_POOL is None:
+        PG_POOL = SimpleConnectionPool(
+            minconn=PG_POOL_MIN,
+            maxconn=PG_POOL_MAX,
+            host=PG_HOST,
+            port=PG_PORT,
+            dbname=PG_DB,
+            user=PG_USER,
+            password=PG_PASSWORD,
+        )
+        logger.info(
+            "PostgreSQL connection pool created (min=%d, max=%d) -> %s:%d/%s",
+            PG_POOL_MIN,
+            PG_POOL_MAX,
+            PG_HOST,
+            PG_PORT,
+            PG_DB,
+        )
+    return PG_POOL
+
+
+def release_pg_connection(connection) -> None:
+    """Return a connection to the pool, ignoring errors from already-closed handles."""
+    try:
+        get_pg_pool().putconn(connection)
+    except Exception:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Schema helpers (run once at startup, not on the hot path)
 # ---------------------------------------------------------------------------
 
 
 def table_name(value: str) -> str:
-    """Return a simple public-schema table name."""
+    """Extract a safe public-schema table name from a possibly-qualified string."""
     selected = value.split(".")[-1]
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", selected):
         raise ValueError(f"Invalid PostgreSQL table name: {value}")
@@ -144,202 +200,8 @@ PG_US_TABLE = table_name(PG_US_TABLE)
 PG_TOMTOM_TABLE = table_name(PG_TOMTOM_TABLE)
 
 
-def pg_connect():
-    """Create a PostgreSQL connection for one sink write."""
-    return psycopg2.connect(
-        host=PG_HOST,
-        port=PG_PORT,
-        dbname=PG_DB,
-        user=PG_USER,
-        password=PG_PASSWORD,
-    )
-
-
-def write_to_gcs_silver(features: Dict[str, Any]) -> None:
-    """Write one US replay feature record to the Silver layer."""
-    try:
-        import gcsfs
-
-        event_time = features.get("event_time")
-        if event_time:
-            dt = datetime.fromisoformat(str(event_time).replace("Z", "+00:00"))
-            prefix = f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
-        else:
-            prefix = "unknown_date"
-
-        safe_event_id = str(features.get("event_id", "unknown_event")).replace("/", "_")
-        path = (
-            f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events/{safe_event_id}.json"
-        )
-        payload = json.dumps(features, ensure_ascii=False) + "\n"
-
-        fs = gcsfs.GCSFileSystem()
-        with fs.open(path, "wb") as file_obj:
-            file_obj.write(payload.encode("utf-8"))
-        logger.debug("Wrote US features to Silver: %s", path)
-    except Exception:
-        logger.exception("Failed to write US features to Silver")
-
-
-def _to_float(value: Any) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_int(value: Any) -> Optional[int]:
-    try:
-        if value is None:
-            return None
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _severity_to_risk_score(severity: Any) -> Optional[float]:
-    severity_float = _to_float(severity)
-    if severity_float is None:
-        return None
-    severity_level = max(1, min(4, int(round(severity_float))))
-    return compute_risk_score(
-        severity=severity_level,
-        delay_seconds=None,
-        length_meters=None,
-        is_night=0,
-        is_weekend=0,
-        road_type_code=0,
-        weather_code=0,
-    )
-
-
-def compute_risk_score(
-    severity: Any,
-    delay_seconds: Any = None,
-    length_meters: Any = None,
-    is_night: Any = 0,
-    is_weekend: Any = 0,
-    road_type_code: Any = 0,
-    weather_code: Any = 0,
-) -> Optional[float]:
-    """
-    Compute a unified 0.0-1.0 risk score for both US replay and TomTom live.
-
-    The score is severity-first with bounded contextual adjustments so values
-    remain stable, continuous, and comparable across both data sources.
-    """
-    severity_int = _to_int(severity)
-    if severity_int is None:
-        return None
-    severity_int = max(1, min(4, severity_int))
-
-    severity_map = {1: 0.00, 2: 0.25, 3: 0.55, 4: 0.85}
-    score = severity_map.get(severity_int, 0.0)
-    adjustment = 0.0
-
-    delay_seconds_value = _to_float(delay_seconds)
-    if delay_seconds_value is not None and delay_seconds_value > 0:
-        adjustment += min((delay_seconds_value / 60.0) * 0.01, 0.10)
-
-    length_meters_value = _to_float(length_meters)
-    if length_meters_value is not None and length_meters_value > 0:
-        adjustment += min((length_meters_value / 100.0) * 0.005, 0.08)
-
-    is_night_int = 1 if _to_int(is_night) == 1 else 0
-    is_weekend_int = 1 if _to_int(is_weekend) == 1 else 0
-    road_type_int = _to_int(road_type_code) or 0
-    weather_int = _to_int(weather_code) or 0
-
-    if is_night_int == 1:
-        adjustment += 0.03
-    if is_weekend_int == 1:
-        adjustment += 0.02
-    if road_type_int == 1:
-        adjustment += 0.03
-    if weather_int in {1, 2, 4}:
-        adjustment += 0.03
-    if road_type_int in {3, 4, 6} and severity_int <= 2:
-        adjustment -= 0.02
-
-    return round(max(0.0, min(1.0, score + adjustment)), 4)
-
-
-def _class_probabilities_to_risk_score(prediction: Dict[str, Any]) -> Optional[float]:
-    probabilities = []
-    for severity in range(1, 5):
-        probability = _to_float(prediction.get(f"p{severity}"))
-        if probability is not None:
-            probabilities.append((severity, probability))
-    if not probabilities:
-        return None
-
-    total_probability = sum(probability for _, probability in probabilities)
-    if total_probability <= 0:
-        return None
-
-    expected_severity = (
-        sum(severity * probability for severity, probability in probabilities)
-        / total_probability
-    )
-    return _severity_to_risk_score(expected_severity)
-
-
-def _extract_prediction(prediction: Any) -> Tuple[Optional[int], Optional[float]]:
-    """Normalize common MLflow response shapes into severity and risk score."""
-    if not isinstance(prediction, dict):
-        return _to_int(prediction), _severity_to_risk_score(prediction)
-
-    severity = (
-        prediction.get("predict")
-        or prediction.get("prediction")
-        or prediction.get("predicted_severity")
-    )
-    risk = prediction.get("risk_score") or prediction.get("probability")
-
-    if isinstance(risk, (list, tuple)):
-        risk_score = max((_to_float(value) or 0.0) for value in risk) if risk else None
-    else:
-        risk_score = _to_float(risk)
-
-    if risk_score is None:
-        risk_score = _class_probabilities_to_risk_score(prediction)
-    if risk_score is None:
-        risk_score = _severity_to_risk_score(severity)
-
-    return _to_int(severity), risk_score
-
-
-def call_mlflow_model(
-    features: Dict[str, Any]
-) -> Tuple[Optional[int], Optional[float]]:
-    """Call MLflow Serving for US replay events."""
-    row = []
-    for column in MODEL_FEATURE_COLUMNS:
-        if column not in features:
-            raise ValueError(f"Missing feature column: {column}")
-        row.append(features[column])
-
-    payload = {"dataframe_split": {"columns": MODEL_FEATURE_COLUMNS, "data": [row]}}
-
-    try:
-        response = requests.post(
-            MLFLOW_SERVING_ENDPOINT,
-            json=payload,
-            timeout=ML_TIMEOUT_SECONDS,
-            headers={"Content-Type": "application/json"},
-        )
-        response.raise_for_status()
-        predictions = response.json().get("predictions", [])
-        if not predictions:
-            return None, None
-        return _extract_prediction(predictions[0])
-    except Exception:
-        logger.exception("MLflow inference failed for US replay event")
-        return None, None
-
-
 def ensure_us_schema(cursor) -> None:
-    """Create or evolve the US replay prediction table."""
+    """Create or evolve the US replay prediction table (idempotent)."""
     cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
     cursor.execute(
         f"""
@@ -420,7 +282,7 @@ def ensure_us_schema(cursor) -> None:
 
 
 def ensure_tomtom_schema(cursor) -> None:
-    """Create or evolve the TomTom live incident table."""
+    """Create or evolve the TomTom live incident table (idempotent)."""
     cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
     cursor.execute(
         f"""
@@ -514,8 +376,143 @@ def ensure_tomtom_schema(cursor) -> None:
         )
 
 
+def initialize_schemas() -> None:
+    """Run schema DDL once at job startup, before the hot path starts."""
+    global _SCHEMA_INITIALIZED
+    if _SCHEMA_INITIALIZED:
+        return
+    pool = get_pg_pool()
+    connection = pool.getconn()
+    try:
+        with connection:
+            with connection.cursor() as cursor:
+                ensure_us_schema(cursor)
+                ensure_tomtom_schema(cursor)
+        _SCHEMA_INITIALIZED = True
+        logger.info("PostgreSQL schemas initialized for %s and %s", PG_US_TABLE, PG_TOMTOM_TABLE)
+    finally:
+        pool.putconn(connection)
+
+
+# ---------------------------------------------------------------------------
+# GCS Silver writer (batched, not per-event)
+# ---------------------------------------------------------------------------
+
+_GCS_FS = None
+
+
+def _get_gcs_fs():
+    """Return a lazily-initialized GCS filesystem client (reused across events)."""
+    global _GCS_FS
+    if _GCS_FS is None:
+        import gcsfs
+        _GCS_FS = gcsfs.GCSFileSystem()
+    return _GCS_FS
+
+
+def write_to_gcs_silver(features: Dict[str, Any]) -> None:
+    """Write one US replay feature record to the Silver layer (single JSONL line).
+
+    The GCS client is reused across calls to avoid per-event auth overhead.
+    """
+    try:
+        event_time = features.get("event_time")
+        if event_time:
+            dt = datetime.fromisoformat(str(event_time).replace("Z", "+00:00"))
+            prefix = f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
+        else:
+            prefix = "unknown_date"
+
+        safe_event_id = str(features.get("event_id", "unknown_event")).replace("/", "_")
+        path = (
+            f"{SILVER_FEATURES_PATH.rstrip('/')}/{prefix}/events/{safe_event_id}.json"
+        )
+        payload = json.dumps(features, ensure_ascii=False) + "\n"
+
+        fs = _get_gcs_fs()
+        with fs.open(path, "wb") as file_obj:
+            file_obj.write(payload.encode("utf-8"))
+        logger.debug("Wrote US features to Silver: %s", path)
+    except Exception:
+        logger.exception("Failed to write US features to Silver")
+
+
+# ---------------------------------------------------------------------------
+# Risk score computation (unified formula for both US and TomTom)
+# ---------------------------------------------------------------------------
+
+
+def compute_risk_score(
+    severity: Any,
+    delay_seconds: Any = None,
+    length_meters: Any = None,
+    is_night: Any = 0,
+    is_weekend: Any = 0,
+    road_type_code: Any = 0,
+    weather_code: Any = 0,
+) -> Optional[float]:
+    """Compute unified continuous risk score (0.0-1.0) using the shared formula."""
+    return compute_unified_risk_score(
+        severity=severity,
+        delay_seconds=delay_seconds,
+        length_meters=length_meters,
+        is_night=is_night,
+        is_weekend=is_weekend,
+        road_type_code=road_type_code,
+        weather_code=weather_code,
+    )
+
+
+# ---------------------------------------------------------------------------
+# MLflow inference helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_prediction(prediction: Any) -> Tuple[Optional[int], Optional[float]]:
+    """Normalize MLflow output into (severity, risk_score) tuple."""
+    severity = infer_severity_from_prediction(prediction)
+    if severity is None:
+        return None, None
+    risk = compute_risk_score(severity=severity)
+    return severity, risk
+
+
+def call_mlflow_model(
+    features: Dict[str, Any]
+) -> Tuple[Optional[int], Optional[float]]:
+    """Call MLflow Serving for US replay events and return (severity, risk_score)."""
+    row = []
+    for column in MODEL_FEATURE_COLUMNS:
+        if column not in features:
+            raise ValueError(f"Missing feature column: {column}")
+        row.append(features[column])
+
+    payload = {"dataframe_split": {"columns": MODEL_FEATURE_COLUMNS, "data": [row]}}
+
+    try:
+        response = requests.post(
+            MLFLOW_SERVING_ENDPOINT,
+            json=payload,
+            timeout=ML_TIMEOUT_SECONDS,
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        predictions = response.json().get("predictions", [])
+        if not predictions:
+            return None, None
+        return _extract_prediction(predictions[0])
+    except Exception:
+        logger.exception("MLflow inference failed for US replay event")
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# Latency helper
+# ---------------------------------------------------------------------------
+
+
 def parse_latency_ms(ingestion_time: Any, processed_time: str) -> Optional[float]:
-    """Compute end-to-end latency from producer ingestion time to sink write time."""
+    """Compute end-to-end latency in milliseconds from producer ingestion to sink write."""
     if not ingestion_time:
         return None
     try:
@@ -528,220 +525,150 @@ def parse_latency_ms(ingestion_time: Any, processed_time: str) -> Optional[float
         return None
 
 
-def insert_us_prediction(
-    features: Dict[str, Any],
-    severity: Optional[int],
-    risk_score: Optional[float],
-    inference_latency_ms: float,
-    ingestion_time: Optional[str],
-    processed_time: str,
-    end_to_end_latency_ms: Optional[float],
-) -> None:
-    """Insert one US replay prediction into PostgreSQL/PostGIS."""
-    connection = pg_connect()
+# ---------------------------------------------------------------------------
+# Batch insert helpers (connection pooling + execute_values)
+# ---------------------------------------------------------------------------
+
+
+US_COLUMNS = [
+    "event_id", "event_year", "event_time", "lat", "lon",
+    "true_severity", "predicted_severity", "risk_score",
+    "weather_code", "temperature_f", "humidity", "wind_speed_mph",
+    "visibility_mi", "road_type_code", "hour", "day_of_week",
+    "is_weekend", "is_rush_hour", "is_junction", "has_traffic_signal",
+    "is_crossing", "is_roundabout", "is_stop", "is_station", "is_railway",
+    "is_night", "model_status", "inference_latency_ms", "ingestion_time",
+    "processed_time", "end_to_end_latency_ms",
+]
+
+TOMTOM_COLUMNS = [
+    "event_id", "incident_id", "event_time", "lat", "lon", "severity",
+    "risk_score", "icon_category", "delay_magnitude", "delay_seconds",
+    "length_meters", "weather_code", "temperature_f", "humidity",
+    "wind_speed_mph", "visibility_mi", "road_type_code", "hour",
+    "day_of_week", "is_weekend", "is_rush_hour", "is_junction",
+    "has_traffic_signal", "is_crossing", "is_roundabout", "is_stop",
+    "is_station", "is_railway", "is_night", "state_or_region", "city",
+    "from_road", "to_road", "geometry_wkt", "model_status",
+    "ingestion_time", "processed_time", "end_to_end_latency_ms",
+]
+
+
+def _batch_insert_us(rows: List[Dict[str, Any]]) -> None:
+    """Batch insert US predictions using execute_values for performance."""
+    if not rows:
+        return
+    pool = get_pg_pool()
+    connection = pool.getconn()
     try:
         with connection:
             with connection.cursor() as cursor:
-                if not SCHEMA_READY["us"]:
-                    ensure_us_schema(cursor)
-                    SCHEMA_READY["us"] = True
-
-                cursor.execute(
-                    f"""
-                INSERT INTO {PG_US_TABLE} (
-                    event_id, event_year, event_time, lat, lon,
-                    true_severity, predicted_severity, risk_score,
-                    weather_code, temperature_f, humidity, wind_speed_mph,
-                    visibility_mi, road_type_code, hour, day_of_week,
-                    is_weekend, is_rush_hour, is_junction, has_traffic_signal,
-                    is_crossing, is_roundabout, is_stop, is_station, is_railway,
-                    is_night, model_status, inference_latency_ms, ingestion_time,
-                    processed_time, end_to_end_latency_ms, geom
-                ) VALUES (
-                    %(event_id)s, %(event_year)s, %(event_time)s, %(lat)s, %(lon)s,
-                    %(true_severity)s, %(predicted_severity)s, %(risk_score)s,
-                    %(weather_code)s, %(temperature_f)s, %(humidity)s,
-                    %(wind_speed_mph)s, %(visibility_mi)s, %(road_type_code)s,
-                    %(hour)s, %(day_of_week)s, %(is_weekend)s, %(is_rush_hour)s,
-                    %(is_junction)s, %(has_traffic_signal)s, %(is_crossing)s,
-                    %(is_roundabout)s, %(is_stop)s, %(is_station)s, %(is_railway)s,
-                    %(is_night)s, %(model_status)s, %(inference_latency_ms)s,
-                    %(ingestion_time)s, %(processed_time)s,
-                    %(end_to_end_latency_ms)s,
-                    ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)
+                template = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))"
+                values = []
+                for r in rows:
+                    values.append((
+                        r.get("event_id"), r.get("event_year"), r.get("event_time"),
+                        r.get("lat"), r.get("lon"), r.get("true_severity"),
+                        r.get("predicted_severity"), r.get("risk_score"),
+                        r.get("weather_code"), r.get("temperature_f"),
+                        r.get("humidity"), r.get("wind_speed_mph"),
+                        r.get("visibility_mi"), r.get("road_type_code"),
+                        r.get("hour"), r.get("day_of_week"), r.get("is_weekend"),
+                        r.get("is_rush_hour"), r.get("is_junction"),
+                        r.get("has_traffic_signal"), r.get("is_crossing"),
+                        r.get("is_roundabout"), r.get("is_stop"),
+                        r.get("is_station"), r.get("is_railway"),
+                        r.get("is_night"), r.get("model_status"),
+                        r.get("inference_latency_ms"), r.get("ingestion_time"),
+                        r.get("processed_time"), r.get("end_to_end_latency_ms"),
+                        r.get("lon"), r.get("lat"),
+                    ))
+                psycopg2.extras.execute_values(
+                    cursor,
+                    f"INSERT INTO {PG_US_TABLE} ({', '.join(US_COLUMNS)}, geom) VALUES %s "
+                    f"ON CONFLICT (event_id) DO UPDATE SET "
+                    + ", ".join(f"{col} = EXCLUDED.{col}" for col in US_COLUMNS)
+                    + f", geom = EXCLUDED.geom, created_at = NOW()",
+                    values,
+                    template=template,
                 )
-                ON CONFLICT (event_id) DO UPDATE SET
-                    event_year = EXCLUDED.event_year,
-                    event_time = EXCLUDED.event_time,
-                    lat = EXCLUDED.lat,
-                    lon = EXCLUDED.lon,
-                    true_severity = EXCLUDED.true_severity,
-                    predicted_severity = EXCLUDED.predicted_severity,
-                    risk_score = EXCLUDED.risk_score,
-                    weather_code = EXCLUDED.weather_code,
-                    temperature_f = EXCLUDED.temperature_f,
-                    humidity = EXCLUDED.humidity,
-                    wind_speed_mph = EXCLUDED.wind_speed_mph,
-                    visibility_mi = EXCLUDED.visibility_mi,
-                    road_type_code = EXCLUDED.road_type_code,
-                    hour = EXCLUDED.hour,
-                    day_of_week = EXCLUDED.day_of_week,
-                    is_weekend = EXCLUDED.is_weekend,
-                    is_rush_hour = EXCLUDED.is_rush_hour,
-                    is_junction = EXCLUDED.is_junction,
-                    has_traffic_signal = EXCLUDED.has_traffic_signal,
-                    is_crossing = EXCLUDED.is_crossing,
-                    is_roundabout = EXCLUDED.is_roundabout,
-                    is_stop = EXCLUDED.is_stop,
-                    is_station = EXCLUDED.is_station,
-                    is_railway = EXCLUDED.is_railway,
-                    is_night = EXCLUDED.is_night,
-                    model_status = EXCLUDED.model_status,
-                    inference_latency_ms = EXCLUDED.inference_latency_ms,
-                    ingestion_time = EXCLUDED.ingestion_time,
-                    processed_time = EXCLUDED.processed_time,
-                    end_to_end_latency_ms = EXCLUDED.end_to_end_latency_ms,
-                    geom = EXCLUDED.geom,
-                    created_at = NOW();
-                    """,
-                    {
-                        **features,
-                        "predicted_severity": severity,
-                        "risk_score": risk_score,
-                        "model_status": "ok" if severity is not None else "failed",
-                        "inference_latency_ms": inference_latency_ms,
-                        "ingestion_time": ingestion_time,
-                        "processed_time": processed_time,
-                        "end_to_end_latency_ms": end_to_end_latency_ms,
-                    },
-                )
+    except Exception:
+        logger.exception("Batch insert failed for %d US rows", len(rows))
     finally:
-        connection.close()
+        release_pg_connection(connection)
 
 
-def insert_tomtom_incident(
-    raw_row: Dict[str, Any],
-    features: Dict[str, Any],
-    ingestion_time: Optional[str],
-    processed_time: str,
-    end_to_end_latency_ms: Optional[float],
-) -> None:
-    """Insert one TomTom incident into its live PostgreSQL/PostGIS table."""
-    severity = features.get("true_severity")
-    risk_score = compute_risk_score(
-        severity=severity,
-        delay_seconds=raw_row.get("delay_seconds"),
-        length_meters=raw_row.get("length_meters"),
-        is_night=features.get("is_night"),
-        is_weekend=features.get("is_weekend"),
-        road_type_code=features.get("road_type_code"),
-        weather_code=features.get("weather_code"),
-    )
-    if risk_score is None:
-        risk_score = _severity_to_risk_score(severity)
-
-    connection = pg_connect()
+def _batch_insert_tomtom(rows: List[Dict[str, Any]]) -> None:
+    """Batch insert TomTom incidents using execute_values for performance."""
+    if not rows:
+        return
+    pool = get_pg_pool()
+    connection = pool.getconn()
     try:
         with connection:
             with connection.cursor() as cursor:
-                if not SCHEMA_READY["tomtom"]:
-                    ensure_tomtom_schema(cursor)
-                    SCHEMA_READY["tomtom"] = True
-
-                cursor.execute(
-                    f"""
-                INSERT INTO {PG_TOMTOM_TABLE} (
-                    event_id, incident_id, event_time, lat, lon, severity,
-                    risk_score, icon_category, delay_magnitude, delay_seconds,
-                    length_meters, weather_code, temperature_f, humidity,
-                    wind_speed_mph, visibility_mi, road_type_code, hour,
-                    day_of_week, is_weekend, is_rush_hour, is_junction,
-                    has_traffic_signal, is_crossing, is_roundabout, is_stop,
-                    is_station, is_railway, is_night, state_or_region, city,
-                    from_road, to_road, geometry_wkt, model_status,
-                    ingestion_time, processed_time, end_to_end_latency_ms, geom
-                ) VALUES (
-                    %(event_id)s, %(incident_id)s, %(event_time)s, %(lat)s,
-                    %(lon)s, %(severity)s, %(risk_score)s, %(icon_category)s,
-                    %(delay_magnitude)s, %(delay_seconds)s, %(length_meters)s,
-                    %(weather_code)s, %(temperature_f)s, %(humidity)s,
-                    %(wind_speed_mph)s, %(visibility_mi)s, %(road_type_code)s,
-                    %(hour)s, %(day_of_week)s, %(is_weekend)s, %(is_rush_hour)s,
-                    %(is_junction)s, %(has_traffic_signal)s, %(is_crossing)s,
-                    %(is_roundabout)s, %(is_stop)s, %(is_station)s,
-                    %(is_railway)s, %(is_night)s, %(state_or_region)s, %(city)s,
-                    %(from_road)s, %(to_road)s, %(geometry_wkt)s, %(model_status)s,
-                    %(ingestion_time)s, %(processed_time)s,
-                    %(end_to_end_latency_ms)s,
-                    ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)
+                all_columns = TOMTOM_COLUMNS + ["geom"]
+                template = "(" + ", ".join(["%s"] * (len(TOMTOM_COLUMNS))) + ", ST_SetSRID(ST_MakePoint(%s, %s), 4326))"
+                values = []
+                for r in rows:
+                    vals = tuple(r.get(col) for col in TOMTOM_COLUMNS) + (r.get("lon"), r.get("lat"))
+                    values.append(vals)
+                psycopg2.extras.execute_values(
+                    cursor,
+                    f"INSERT INTO {PG_TOMTOM_TABLE} ({', '.join(all_columns)}) VALUES %s "
+                    f"ON CONFLICT (event_id) DO UPDATE SET "
+                    + ", ".join(f"{col} = EXCLUDED.{col}" for col in TOMTOM_COLUMNS)
+                    + f", geom = EXCLUDED.geom, created_at = NOW()",
+                    values,
+                    template=template,
                 )
-                ON CONFLICT (event_id) DO UPDATE SET
-                    incident_id = EXCLUDED.incident_id,
-                    event_time = EXCLUDED.event_time,
-                    lat = EXCLUDED.lat,
-                    lon = EXCLUDED.lon,
-                    severity = EXCLUDED.severity,
-                    risk_score = EXCLUDED.risk_score,
-                    icon_category = EXCLUDED.icon_category,
-                    delay_magnitude = EXCLUDED.delay_magnitude,
-                    delay_seconds = EXCLUDED.delay_seconds,
-                    length_meters = EXCLUDED.length_meters,
-                    weather_code = EXCLUDED.weather_code,
-                    temperature_f = EXCLUDED.temperature_f,
-                    humidity = EXCLUDED.humidity,
-                    wind_speed_mph = EXCLUDED.wind_speed_mph,
-                    visibility_mi = EXCLUDED.visibility_mi,
-                    road_type_code = EXCLUDED.road_type_code,
-                    hour = EXCLUDED.hour,
-                    day_of_week = EXCLUDED.day_of_week,
-                    is_weekend = EXCLUDED.is_weekend,
-                    is_rush_hour = EXCLUDED.is_rush_hour,
-                    is_junction = EXCLUDED.is_junction,
-                    has_traffic_signal = EXCLUDED.has_traffic_signal,
-                    is_crossing = EXCLUDED.is_crossing,
-                    is_roundabout = EXCLUDED.is_roundabout,
-                    is_stop = EXCLUDED.is_stop,
-                    is_station = EXCLUDED.is_station,
-                    is_railway = EXCLUDED.is_railway,
-                    is_night = EXCLUDED.is_night,
-                    state_or_region = EXCLUDED.state_or_region,
-                    city = EXCLUDED.city,
-                    from_road = EXCLUDED.from_road,
-                    to_road = EXCLUDED.to_road,
-                    geometry_wkt = EXCLUDED.geometry_wkt,
-                    model_status = EXCLUDED.model_status,
-                    ingestion_time = EXCLUDED.ingestion_time,
-                    processed_time = EXCLUDED.processed_time,
-                    end_to_end_latency_ms = EXCLUDED.end_to_end_latency_ms,
-                    geom = EXCLUDED.geom,
-                    created_at = NOW();
-                    """,
-                    {
-                        **features,
-                        "incident_id": raw_row.get("incident_id"),
-                        "severity": severity,
-                        "risk_score": risk_score,
-                        "icon_category": _to_int(raw_row.get("icon_category")),
-                        "delay_magnitude": _to_int(raw_row.get("delay_magnitude")),
-                        "delay_seconds": _to_float(raw_row.get("delay_seconds")),
-                        "length_meters": _to_float(raw_row.get("length_meters")),
-                        "state_or_region": raw_row.get("state_or_region"),
-                        "city": raw_row.get("city"),
-                        "from_road": raw_row.get("from_road"),
-                        "to_road": raw_row.get("to_road"),
-                        "geometry_wkt": raw_row.get("geometry_wkt"),
-                        "model_status": "rule_based",
-                        "ingestion_time": ingestion_time,
-                        "processed_time": processed_time,
-                        "end_to_end_latency_ms": end_to_end_latency_ms,
-                    },
-                )
+    except Exception:
+        logger.exception("Batch insert failed for %d TomTom rows", len(rows))
     finally:
-        connection.close()
+        release_pg_connection(connection)
+
+
+def flush_us_batch() -> None:
+    """Flush the US batch buffer to PostgreSQL."""
+    global US_BATCH_BUFFER
+    if US_BATCH_BUFFER:
+        _batch_insert_us(US_BATCH_BUFFER)
+        US_BATCH_BUFFER = []
+
+
+def flush_tomtom_batch() -> None:
+    """Flush the TomTom batch buffer to PostgreSQL."""
+    global TOMTOM_BATCH_BUFFER
+    if TOMTOM_BATCH_BUFFER:
+        _batch_insert_tomtom(TOMTOM_BATCH_BUFFER)
+        TOMTOM_BATCH_BUFFER = []
+
+
+def buffer_us_row(row: Dict[str, Any]) -> None:
+    """Add a US prediction row to the batch buffer; flush when full."""
+    US_BATCH_BUFFER.append(row)
+    if len(US_BATCH_BUFFER) >= PG_BATCH_SIZE:
+        flush_us_batch()
+
+
+def buffer_tomtom_row(row: Dict[str, Any]) -> None:
+    """Add a TomTom incident row to the batch buffer; flush when full."""
+    TOMTOM_BATCH_BUFFER.append(row)
+    if len(TOMTOM_BATCH_BUFFER) >= PG_BATCH_SIZE:
+        flush_tomtom_batch()
+
+
+# ---------------------------------------------------------------------------
+# Message processing (hot-path functions called by Flink map operators)
+# ---------------------------------------------------------------------------
 
 
 def process_us_message(raw_message: str) -> str:
-    """Process one US replay message from Kafka."""
+    """Process one US replay message from Kafka.
+
+    Steps: parse JSON -> feature engineering -> Silver GCS write -> MLflow inference
+           -> unified risk score -> buffer for batch PostgreSQL insert.
+    """
     start = time.time()
     try:
         raw_row = json.loads(raw_message)
@@ -750,35 +677,54 @@ def process_us_message(raw_message: str) -> str:
         if features is None:
             raise ValueError("US feature engineering returned no record")
 
+        # Silver layer write (optional, can be disabled for throughput testing)
         write_to_gcs_silver(features)
-        predicted_severity, mlflow_risk_score = call_mlflow_model(features)
-        risk_score = compute_risk_score(
-            severity=predicted_severity
-            if predicted_severity is not None
-            else features.get("true_severity"),
-            is_night=features.get("is_night"),
-            is_weekend=features.get("is_weekend"),
-            road_type_code=features.get("road_type_code"),
-            weather_code=features.get("weather_code"),
-        )
-        if risk_score is None and mlflow_risk_score is not None:
-            risk_score = round(max(0.0, min(1.0, float(mlflow_risk_score))), 4)
-        if risk_score is None:
-            if ML_FALLBACK_RISK_SCORE >= 0:
+
+        # MLflow inference
+        predicted_severity, ml_risk_score = call_mlflow_model(features)
+        inference_latency_ms = (time.time() - start) * 1000
+
+        # Compute unified risk score using all available context features.
+        # If MLflow returns a valid severity, use it; otherwise fall back to
+        # true_severity from the original record with full context bonuses.
+        if predicted_severity is not None:
+            risk_score = compute_risk_score(
+                severity=predicted_severity,
+                is_night=features.get("is_night"),
+                is_weekend=features.get("is_weekend"),
+                road_type_code=features.get("road_type_code"),
+                weather_code=features.get("weather_code"),
+            )
+        else:
+            # MLflow failed — use true severity with context features
+            fallback_severity = features.get("true_severity")
+            if fallback_severity is not None:
+                risk_score = compute_risk_score(
+                    severity=fallback_severity,
+                    is_night=features.get("is_night"),
+                    is_weekend=features.get("is_weekend"),
+                    road_type_code=features.get("road_type_code"),
+                    weather_code=features.get("weather_code"),
+                )
+            elif ML_FALLBACK_RISK_SCORE >= 0:
                 risk_score = round(max(0.0, min(1.0, ML_FALLBACK_RISK_SCORE)), 4)
             else:
                 risk_score = 0.25
 
         processed_time = datetime.now(timezone.utc).isoformat()
-        insert_us_prediction(
-            features=features,
-            severity=predicted_severity,
-            risk_score=risk_score,
-            inference_latency_ms=(time.time() - start) * 1000,
-            ingestion_time=ingestion_time,
-            processed_time=processed_time,
-            end_to_end_latency_ms=parse_latency_ms(ingestion_time, processed_time),
-        )
+        e2e_latency = parse_latency_ms(ingestion_time, processed_time)
+
+        row = {
+            **features,
+            "predicted_severity": predicted_severity,
+            "risk_score": risk_score,
+            "model_status": "ok" if predicted_severity is not None else "failed",
+            "inference_latency_ms": inference_latency_ms,
+            "ingestion_time": ingestion_time,
+            "processed_time": processed_time,
+            "end_to_end_latency_ms": e2e_latency,
+        }
+        buffer_us_row(row)
         return f"US_OK: {features.get('event_id')}"
     except Exception as exc:
         logger.exception("US message processing failed: %s", str(raw_message)[:200])
@@ -786,7 +732,12 @@ def process_us_message(raw_message: str) -> str:
 
 
 def process_tomtom_message(raw_message: str) -> str:
-    """Process one TomTom live incident message from Kafka."""
+    """Process one TomTom live incident message from Kafka.
+
+    Steps: parse JSON -> enrichment -> feature engineering -> unified risk score
+           -> buffer for batch PostgreSQL insert.
+    No MLflow inference is used for TomTom events.
+    """
     try:
         raw_row = json.loads(raw_message)
         ingestion_time = raw_row.get("_ingested_at_utc") or raw_row.get(
@@ -800,18 +751,51 @@ def process_tomtom_message(raw_message: str) -> str:
         if features is None:
             raise ValueError("TomTom feature engineering returned no record")
 
-        processed_time = datetime.now(timezone.utc).isoformat()
-        insert_tomtom_incident(
-            raw_row=raw_row,
-            features=features,
-            ingestion_time=ingestion_time,
-            processed_time=processed_time,
-            end_to_end_latency_ms=parse_latency_ms(ingestion_time, processed_time),
+        severity = features.get("true_severity")
+
+        # Unified risk score using TomTom delay/length + context features
+        risk_score = compute_risk_score(
+            severity=severity,
+            delay_seconds=raw_row.get("delay_seconds"),
+            length_meters=raw_row.get("length_meters"),
+            is_night=features.get("is_night"),
+            is_weekend=features.get("is_weekend"),
+            road_type_code=features.get("road_type_code"),
+            weather_code=features.get("weather_code"),
         )
+
+        processed_time = datetime.now(timezone.utc).isoformat()
+        e2e_latency = parse_latency_ms(ingestion_time, processed_time)
+
+        row = {
+            **features,
+            "incident_id": raw_row.get("incident_id"),
+            "severity": severity,
+            "risk_score": risk_score,
+            "icon_category": to_int(raw_row.get("icon_category")),
+            "delay_magnitude": to_int(raw_row.get("delay_magnitude")),
+            "delay_seconds": to_float(raw_row.get("delay_seconds")),
+            "length_meters": to_float(raw_row.get("length_meters")),
+            "state_or_region": raw_row.get("state_or_region"),
+            "city": raw_row.get("city"),
+            "from_road": raw_row.get("from_road"),
+            "to_road": raw_row.get("to_road"),
+            "geometry_wkt": raw_row.get("geometry_wkt"),
+            "model_status": "rule_based",
+            "ingestion_time": ingestion_time,
+            "processed_time": processed_time,
+            "end_to_end_latency_ms": e2e_latency,
+        }
+        buffer_tomtom_row(row)
         return f"TOMTOM_OK: {features.get('event_id')}"
     except Exception as exc:
         logger.exception("TomTom message processing failed: %s", str(raw_message)[:200])
         return f"TOMTOM_FAIL: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Kafka source builder
+# ---------------------------------------------------------------------------
 
 
 def build_kafka_source(topic: str, group_id: str, source_name: str):
@@ -828,6 +812,11 @@ def build_kafka_source(topic: str, group_id: str, source_name: str):
     return source, source_name
 
 
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
     """Build and start the unified Flink job."""
     logger.info("=" * 80)
@@ -841,7 +830,11 @@ def main() -> None:
     )
     logger.info("US MLflow endpoint: %s", MLFLOW_SERVING_ENDPOINT)
     logger.info("US Silver path: %s", SILVER_FEATURES_PATH)
+    logger.info("PG pool: min=%d max=%d batch_size=%d", PG_POOL_MIN, PG_POOL_MAX, PG_BATCH_SIZE)
     logger.info("=" * 80)
+
+    # Initialize database schemas once before the hot path.
+    initialize_schemas()
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(FLINK_PARALLELISM)
@@ -885,6 +878,12 @@ def main() -> None:
     ).map(process_tomtom_message, output_type=Types.STRING())
 
     us_stream.union(tomtom_stream).print()
+
+    # Flush any remaining buffered rows before the job exits.
+    import atexit
+    atexit.register(flush_us_batch)
+    atexit.register(flush_tomtom_batch)
+
     env.execute("Unified Traffic Streaming - US Replay + TomTom Live")
 
 

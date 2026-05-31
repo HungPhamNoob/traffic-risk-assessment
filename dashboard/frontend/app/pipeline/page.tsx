@@ -34,6 +34,13 @@ function statusText(data: unknown) {
   return String((data as AnyRecord).status || "configured");
 }
 
+function formatPercent(value: unknown) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "N/A";
+  }
+  return `${(value * 100).toFixed(2)}%`;
+}
+
 export default function PipelinePage() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health });
   const system = useQuery({
@@ -193,12 +200,13 @@ export default function PipelinePage() {
 
       <section className="card">
         <div className="card-header">
-          <h2 className="card-title">Realtime reset control</h2>
+          <h2 className="card-title">Cloud realtime reset</h2>
           <RotateCcw size={18} />
         </div>
         <div style={{ display: "grid", gap: 12 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Trigger <span className="mono">scripts/gcp/full-cloud-realtime-reset-run.sh</span> from the backend host and track logs.
+            Trigger the end-to-end realtime reset script from the backend host and
+            follow the live execution log from this page.
           </p>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <button
@@ -207,7 +215,9 @@ export default function PipelinePage() {
               onClick={() => resetMutation.mutate()}
               disabled={resetMutation.isPending || resetData?.status === "running"}
             >
-              {resetMutation.isPending ? "Starting..." : "Run Full Realtime Reset"}
+              {resetMutation.isPending
+                ? "Starting..."
+                : "Run full realtime reset on cloud VMs"}
             </button>
             <span className="status-pill">{String(resetData?.status || "not_started")}</span>
           </div>
@@ -236,6 +246,47 @@ export default function PipelinePage() {
       </section>
 
       <section className="grid pipeline-grid">
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Airflow configuration</h2>
+            <ServerCog size={18} />
+          </div>
+          <div className="side-list">
+            {[
+              ["Executor", systemData?.airflow?.executor || "unavailable"],
+              [
+                "Retrain schedule",
+                systemData?.airflow?.model_retrain_schedule || "unavailable"
+              ],
+              [
+                "Stream health schedule",
+                systemData?.airflow?.stream_health_schedule || "unavailable"
+              ],
+              [
+                "Flink checkpoint interval",
+                systemData?.flink?.checkpoint_interval_ms
+                  ? `${systemData.flink.checkpoint_interval_ms} ms`
+                  : "unavailable"
+              ],
+              [
+                "Reset script",
+                systemData?.pipeline?.full_realtime_reset_script || "unavailable"
+              ],
+              [
+                "Reset log directory",
+                systemData?.pipeline?.reset_log_dir || "unavailable"
+              ]
+            ].map(([label, value]) => (
+              <div className="row-item" key={String(label)}>
+                <div className="row-top">
+                  <strong>{label}</strong>
+                </div>
+                <span className="mono muted">{String(value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">System topology</h2>
@@ -360,10 +411,10 @@ export default function PipelinePage() {
                 <td className="mono">{run.run_name || run.run_id}</td>
                 <td>{run.status}</td>
                 <td>{run.start_time || "-"}</td>
-                <td>{run.metrics?.accuracy?.toFixed?.(4) || "-"}</td>
-                <td>{run.metrics?.weighted_f1?.toFixed?.(4) || run.metrics?.f1?.toFixed?.(4) || "-"}</td>
-                <td>{run.metrics?.weighted_recall?.toFixed?.(4) || run.metrics?.recall?.toFixed?.(4) || "-"}</td>
-                <td>{run.metrics?.weighted_precision?.toFixed?.(4) || run.metrics?.precision?.toFixed?.(4) || "-"}</td>
+                <td>{formatPercent(run.metrics?.accuracy)}</td>
+                <td>{formatPercent(run.metrics?.weighted_f1 ?? run.metrics?.f1)}</td>
+                <td>{formatPercent(run.metrics?.weighted_recall ?? run.metrics?.recall)}</td>
+                <td>{formatPercent(run.metrics?.weighted_precision ?? run.metrics?.precision)}</td>
               </tr>
             ))}
           </tbody>

@@ -41,6 +41,10 @@ def get_system_status() -> dict:
             "model_retrain_schedule": settings.airflow_model_retrain_schedule,
             "stream_health_schedule": settings.airflow_stream_health_schedule,
         },
+        "pipeline": {
+            "full_realtime_reset_script": settings.pipeline_reset_script,
+            "reset_log_dir": settings.pipeline_reset_log_dir,
+        },
         "postgres": {
             "us_prediction_table": settings.us_prediction_table,
             "tomtom_events_table": settings.tomtom_events_table,
