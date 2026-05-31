@@ -115,7 +115,7 @@ export default function DashboardPage() {
         </div>
         <span className="status-pill">
           <RefreshCw size={14} />
-          Auto-refresh 30s
+          Auto-refresh 10s
         </span>
       </div>
 

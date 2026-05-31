@@ -67,6 +67,13 @@ remove_matching_node1_containers() {
   docker rm -f "${stale_containers[@]}" >/dev/null
 }
 
+prepare_runtime_directories() {
+  echo "Preparing writable runtime directories for containers."
+  mkdir -p orchestration/logs/scheduler ml/mlruns
+  sudo chown -R 50000:0 orchestration/logs 2>/dev/null || true
+  sudo chmod -R 2775 orchestration/logs 2>/dev/null || true
+}
+
 echo "Checking host dependencies required for offline H2O training."
 if ! command -v java >/dev/null 2>&1; then
   echo "Java is not installed. Installing OpenJDK 17 because H2O cannot start without a JVM."
@@ -81,10 +88,7 @@ if ! python3 -m venv --help >/dev/null 2>&1; then
 fi
 
 echo "Starting Node 1 Docker services from the current workspace snapshot..."
-echo "Preparing writable runtime directories for containers."
-mkdir -p orchestration/logs ml/mlruns
-chown -R 50000:0 orchestration/logs 2>/dev/null || true
-chmod -R g+rwX orchestration/logs 2>/dev/null || true
+prepare_runtime_directories
 
 echo "Removing stale Node 1 containers from previous Compose project names..."
 remove_matching_node1_containers "${NODE1_CANONICAL_NAME_PATTERN}"
@@ -99,9 +103,16 @@ docker compose \
   -f "${NODE1_COMPOSE_FILE}" \
   up -d --build --remove-orphans
 
+prepare_runtime_directories
+docker compose \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE1_COMPOSE_FILE}" \
+  restart airflow >/dev/null 2>&1 || true
+
 echo "Waiting for MLflow tracking server before checking model registry..."
 for attempt in $(seq 1 30); do
-  if curl --max-time 5 -fsS "${MLFLOW_TRACKING_URI}/health" >/dev/null 2>&1; then
+  if curl --max-time 5 -fsS "${MLFLOW_TRACKING_URI}/ping" >/dev/null 2>&1; then
     echo "MLflow tracking server is reachable."
     break
   fi

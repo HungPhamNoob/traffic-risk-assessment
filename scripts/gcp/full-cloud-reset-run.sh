@@ -78,6 +78,8 @@ prepare_workspace_archive() {
     --exclude=".git" \
     --exclude="dashboard/frontend/.next" \
     --exclude="dashboard/frontend/node_modules" \
+    --exclude="dashboard/frontend/baseline_1" \
+    --exclude="dashboard/frontend/baseline_2" \
     --exclude="logs" \
     --exclude="data/raw" \
     --exclude="data/process" \
@@ -89,6 +91,9 @@ prepare_workspace_archive() {
     --exclude=".venv-node1" \
     --exclude=".venv-node3" \
     --exclude="__pycache__" \
+    --exclude=".pytest_cache" \
+    --exclude="road_accident_risk_platform.egg-info" \
+    --exclude="vendor" \
     -czf "${WORKSPACE_ARCHIVE}" \
     -C "${WORKSPACE_ROOT}" .
 }
@@ -103,10 +108,14 @@ sync_workspace_to_node() {
 
   ssh_cmd "${node}" "
     set -euo pipefail
+    if [ -d ${PROJECT_ROOT} ]; then
+      for compose_file in \$(find ${PROJECT_ROOT}/deployment -mindepth 2 -maxdepth 2 -name docker-compose.yaml 2>/dev/null | sort); do
+        docker compose --env-file ${PROJECT_ROOT}/.env.cloud -f \${compose_file} down --remove-orphans >/dev/null 2>&1 || true
+      done
+    fi
     sudo rm -rf ${PROJECT_ROOT}
-    sudo mkdir -p ${PROJECT_ROOT}
-    sudo chown -R \$(whoami):\$(whoami) ${PROJECT_ROOT}
-    tar -xzf /tmp/${archive_name} -C ${PROJECT_ROOT}
+    sudo install -d -m 0755 -o \$(id -un) -g \$(id -gn) ${PROJECT_ROOT}
+    tar --no-same-owner --no-same-permissions -xzf /tmp/${archive_name} -C ${PROJECT_ROOT}
     mkdir -p \
       ${PROJECT_ROOT}/logs \
       ${PROJECT_ROOT}/data/cloud \
