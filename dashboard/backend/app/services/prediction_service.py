@@ -115,6 +115,9 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
         ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
         row = fetch_one(query)
 
+    # Fetch latest model performance metrics from MLflow.
+    model_metrics = _fetch_latest_model_metrics()
+
     return {
         "total_events": row["total_events"] if row else 0,
         "high_risk_events": row["high_risk_events"] if row else 0,
@@ -134,7 +137,22 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
             )
         ),
         "mode": normalized_mode,
+        "model_performance": model_metrics,
     }
+
+
+def _fetch_latest_model_metrics() -> dict[str, Any]:
+    """Return the most recent model accuracy, precision, recall, and F1 from MLflow."""
+    try:
+        from app.services.model_service import retrain_history
+
+        history = retrain_history(limit=1)
+        runs = history.get("runs", [])
+        if runs:
+            return runs[0].get("metrics", {})
+        return {}
+    except Exception:
+        return {}
 
 
 def map_points(

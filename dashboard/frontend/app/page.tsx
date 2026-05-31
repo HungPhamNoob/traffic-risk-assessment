@@ -17,7 +17,7 @@ import {
 import { Layers, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { fallbackHotspots, fallbackPoints, fallbackSummary } from "@/lib/fallback";
-import type { Hotspot, MapMode, OverviewSummary, PredictionPoint } from "@/lib/types";
+import type { Hotspot, MapMode, ModelPerformance, OverviewSummary, PredictionPoint } from "@/lib/types";
 import { FallbackBanner, KpiCard } from "@/components/DataState";
 
 const RiskMap = dynamic(
@@ -143,6 +143,36 @@ export default function DashboardPage() {
           label="Model"
           value={summary.latest_model_version || "latest"}
         />
+        {summary.model_performance?.accuracy != null && (
+          <KpiCard
+            label="Accuracy"
+            value={((summary.model_performance as ModelPerformance).accuracy! * 100).toFixed(1) + "%"}
+          />
+        )}
+        {summary.model_performance?.macro_f1 != null && (
+          <KpiCard
+            label="Macro F1"
+            value={(summary.model_performance as ModelPerformance).macro_f1!.toFixed(4)}
+          />
+        )}
+        {summary.model_performance?.weighted_f1 != null && (
+          <KpiCard
+            label="Weighted F1"
+            value={(summary.model_performance as ModelPerformance).weighted_f1!.toFixed(4)}
+          />
+        )}
+        {summary.model_performance?.weighted_precision != null && (
+          <KpiCard
+            label="Precision"
+            value={(summary.model_performance as ModelPerformance).weighted_precision!.toFixed(4)}
+          />
+        )}
+        {summary.model_performance?.weighted_recall != null && (
+          <KpiCard
+            label="Recall"
+            value={(summary.model_performance as ModelPerformance).weighted_recall!.toFixed(4)}
+          />
+        )}
       </section>
 
       <section className="grid dashboard-grid">
