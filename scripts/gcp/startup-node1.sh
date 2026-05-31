@@ -5,16 +5,32 @@ set -e
 
 echo "Node 1 startup script running..."
 
-echo "Installing base operating-system packages..."
-apt-get update -qq
-apt-get install -y -qq \
+ensure_apt_packages() {
+  local missing_packages=()
+  local package_name
+  for package_name in "$@"; do
+    if ! dpkg -s "${package_name}" >/dev/null 2>&1; then
+      missing_packages+=("${package_name}")
+    fi
+  done
+
+  if [ "${#missing_packages[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  echo "Installing missing operating-system packages: ${missing_packages[*]}"
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing_packages[@]}"
+}
+
+ensure_apt_packages \
   ca-certificates \
   curl \
   git \
   openjdk-17-jre-headless \
   python3 \
   python3-pip \
-  python3-venv > /dev/null 2>&1 || true
+  python3-venv
 
 # Install Docker
 if ! command -v docker &> /dev/null; then
@@ -32,9 +48,9 @@ fi
 if ! docker compose version &> /dev/null; then
   echo "Installing Docker Compose..."
   DOCKER_CONFIG=${DOCKER_CONFIG:-/usr/local/lib/docker}
-  mkdir -p $DOCKER_CONFIG/cli-plugins
-  curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
-  chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+  mkdir -p "${DOCKER_CONFIG}/cli-plugins"
+  curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o "${DOCKER_CONFIG}/cli-plugins/docker-compose"
+  chmod +x "${DOCKER_CONFIG}/cli-plugins/docker-compose"
 fi
 
 if ! command -v gcloud &> /dev/null; then

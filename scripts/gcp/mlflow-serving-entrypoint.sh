@@ -3,18 +3,24 @@
 
 set -euo pipefail
 
-apt-get update
-apt-get install -y --no-install-recommends openjdk-17-jre-headless
-rm -rf /var/lib/apt/lists/*
+if ! command -v java >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y --no-install-recommends openjdk-17-jre-headless
+  rm -rf /var/lib/apt/lists/*
+fi
 
-pip install --no-cache-dir \
-  h2o==3.46.0.6 \
-  pandas \
-  numpy \
-  scikit-learn \
-  google-auth \
-  google-cloud-storage \
-  requests
+MISSING_PYTHON_PACKAGES=()
+python3 -c "import h2o" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("h2o==3.46.0.6")
+python3 -c "import pandas" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("pandas")
+python3 -c "import numpy" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("numpy")
+python3 -c "import sklearn" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("scikit-learn")
+python3 -c "import google.auth" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("google-auth")
+python3 -c "import google.cloud.storage" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("google-cloud-storage")
+python3 -c "import requests" >/dev/null 2>&1 || MISSING_PYTHON_PACKAGES+=("requests")
+
+if [ "${#MISSING_PYTHON_PACKAGES[@]}" -gt 0 ]; then
+  pip install --no-cache-dir "${MISSING_PYTHON_PACKAGES[@]}"
+fi
 
 MODEL_NAME="${ML_MODEL_NAME:-traffic-risk-model}"
 MLFLOW_TRACKING_URL="${MLFLOW_TRACKING_URI:-http://mlflow:5000}"

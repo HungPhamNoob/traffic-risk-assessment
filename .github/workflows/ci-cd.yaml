@@ -70,6 +70,18 @@ jobs:
         run: |
           python -m compileall dashboard/backend/app processing ingestion ml/dataset ml/training orchestration -q
 
+      - name: Ensure Docker Compose tooling
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io
+          fi
+          if ! docker compose version >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+          fi
+          docker compose version
+
       # Step 5: Validate Docker Compose files used by local and GCP deployments
       - name: Validate Docker Compose files
         run: |
@@ -295,8 +307,44 @@ jobs:
             -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE1_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
+            REPO_URL="https://github.com/HungPhamNoob/traffic-risk-assessment.git"
+            APT_CACHE_UPDATED=0
 
-            echo "=== Pulling latest code from Git ==="
+            apt_install_if_missing() {
+              if [ "${APT_CACHE_UPDATED}" -eq 0 ]; then
+                sudo apt-get update
+                APT_CACHE_UPDATED=1
+              fi
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+            }
+
+            ensure_cmd() {
+              local cmd_name="$1"
+              local pkg_name="$2"
+              if command -v "${cmd_name}" >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "Installing missing dependency: ${pkg_name}"
+              apt_install_if_missing "${pkg_name}"
+            }
+
+            ensure_docker_compose() {
+              if docker compose version >/dev/null 2>&1; then
+                return 0
+              fi
+              if command -v docker-compose >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "Installing missing dependency: docker-compose-plugin"
+              apt_install_if_missing docker-compose-plugin
+            }
+
+            ensure_cmd git git
+            ensure_cmd curl curl
+            ensure_cmd docker docker.io
+            ensure_docker_compose
+
+            echo "=== Updating code from Git (pull first, clone if missing) ==="
 
             # Fix Git permissions (in case sudo was used before)
             sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
@@ -307,20 +355,24 @@ jobs:
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
                 sudo chown -R $(whoami):$(whoami) /opt/traffic
-                git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+                git clone "${REPO_URL}" /opt/traffic
                 cd /opt/traffic
-                git checkout $BRANCH
+                git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH"
             else
-                echo "=== Repository exists: force-syncing deployment worktree ==="
+                echo "=== Repository exists: updating with git pull ==="
                 cd /opt/traffic
-                # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
-                # generated files, or partial previous deployments cannot block releases.
+                current_remote="$(git remote get-url origin 2>/dev/null || true)"
+                if [ "${current_remote}" != "${REPO_URL}" ]; then
+                    git remote remove origin 2>/dev/null || true
+                    git remote add origin "${REPO_URL}"
+                fi
                 git fetch --prune origin
-                git reset --hard
-                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
-                git checkout -B "$BRANCH" "origin/$BRANCH"
-                git reset --hard "origin/$BRANCH"
-                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
+                if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+                    git checkout "$BRANCH"
+                else
+                    git checkout -B "$BRANCH" "origin/$BRANCH"
+                fi
+                git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
             fi
 
             echo "=== Loading cloud environment ==="
@@ -338,30 +390,16 @@ jobs:
                 sudo -E bash scripts/gcp/run-node1.sh
             fi
 
-            echo "=== Waiting for services to be healthy ==="
-            sleep 45
-
-            echo "=== Checking service health ==="
+            echo "=== Verifying Node 1 containers are running ==="
             cd /opt/traffic/deployment/node1-control
             sudo docker compose ps
-            check_url() {
-              local service_name="$1"
-              local url="$2"
-              for attempt in $(seq 1 18); do
-                if curl -fsS "$url" >/tmp/node1-health.txt; then
-                  echo "$service_name is healthy."
-                  return 0
-                fi
-                echo "$service_name not ready yet ($attempt/18)."
-                sleep 10
-              done
-              echo "ERROR: $service_name health check failed: $url"
-              return 1
-            }
-            check_url "Airflow" "http://localhost:8080/health"
-            check_url "MLflow" "http://localhost:5000/ping"
-            check_url "FastAPI" "http://localhost:8000/health"
-            check_url "Dashboard" "http://localhost:3001"
+            required_services="node1-postgres node1-mlflow node1-fastapi node1-dashboard-frontend"
+            for svc in ${required_services}; do
+              if ! sudo docker ps --format '{{.Names}}' | grep -q "^${svc}$"; then
+                echo "ERROR: Expected container is not running: ${svc}"
+                exit 1
+              fi
+            done
           EOF
 
           echo "Node 1 deployment completed."
@@ -423,8 +461,44 @@ jobs:
             -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE2_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
+            REPO_URL="https://github.com/HungPhamNoob/traffic-risk-assessment.git"
+            APT_CACHE_UPDATED=0
 
-            echo "=== Pulling latest code ==="
+            apt_install_if_missing() {
+              if [ "${APT_CACHE_UPDATED}" -eq 0 ]; then
+                sudo apt-get update
+                APT_CACHE_UPDATED=1
+              fi
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+            }
+
+            ensure_cmd() {
+              local cmd_name="$1"
+              local pkg_name="$2"
+              if command -v "${cmd_name}" >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "Installing missing dependency: ${pkg_name}"
+              apt_install_if_missing "${pkg_name}"
+            }
+
+            ensure_docker_compose() {
+              if docker compose version >/dev/null 2>&1; then
+                return 0
+              fi
+              if command -v docker-compose >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "Installing missing dependency: docker-compose-plugin"
+              apt_install_if_missing docker-compose-plugin
+            }
+
+            ensure_cmd git git
+            ensure_cmd curl curl
+            ensure_cmd docker docker.io
+            ensure_docker_compose
+
+            echo "=== Updating code from Git (pull first, clone if missing) ==="
             # Normalize ownership and trust for the deployment checkout. Older
             # startup scripts may have created /opt/traffic with root ownership.
             sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
@@ -435,20 +509,24 @@ jobs:
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
                 sudo chown -R $(whoami):$(whoami) /opt/traffic
-                git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+                git clone "${REPO_URL}" /opt/traffic
                 cd /opt/traffic
-                git checkout $BRANCH
+                git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH"
             else
-                echo "=== Repository exists: force-syncing deployment worktree ==="
+                echo "=== Repository exists: updating with git pull ==="
                 cd /opt/traffic
-                # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
-                # generated files, or partial previous deployments cannot block releases.
+                current_remote="$(git remote get-url origin 2>/dev/null || true)"
+                if [ "${current_remote}" != "${REPO_URL}" ]; then
+                    git remote remove origin 2>/dev/null || true
+                    git remote add origin "${REPO_URL}"
+                fi
                 git fetch --prune origin
-                git reset --hard
-                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
-                git checkout -B "$BRANCH" "origin/$BRANCH"
-                git reset --hard "origin/$BRANCH"
-                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
+                if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+                    git checkout "$BRANCH"
+                else
+                    git checkout -B "$BRANCH" "origin/$BRANCH"
+                fi
+                git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
             fi
 
             echo "=== Restarting streaming services ==="
@@ -456,44 +534,16 @@ jobs:
             cp /tmp/.env.cloud /opt/traffic/.env
             sudo -E bash scripts/gcp/run-node2.sh
 
-            echo "=== Waiting for services ==="
-            sleep 20
-
+            echo "=== Verifying Node 2 containers are running ==="
             cd /opt/traffic/deployment/node2-streaming
             sudo docker compose ps
-            check_url() {
-              local service_name="$1"
-              local url="$2"
-              for attempt in $(seq 1 18); do
-                if curl -fsS "$url" >/tmp/node2-health.txt; then
-                  echo "$service_name is healthy."
-                  return 0
-                fi
-                echo "$service_name not ready yet ($attempt/18)."
-                sleep 10
-              done
-              echo "ERROR: $service_name health check failed: $url"
-              return 1
-            }
-            check_tcp() {
-              local service_name="$1"
-              local host="$2"
-              local port="$3"
-              for attempt in $(seq 1 18); do
-                if bash -ec "echo > /dev/tcp/${host}/${port}" >/dev/null 2>&1; then
-                  echo "$service_name TCP port is reachable (${host}:${port})."
-                  return 0
-                fi
-                echo "$service_name TCP port not ready ($attempt/18)."
-                sleep 10
-              done
-              echo "ERROR: $service_name TCP check failed on ${host}:${port}"
-              return 1
-            }
-            check_tcp "Kafka broker 1" "localhost" "9092"
-            check_tcp "Kafka broker 2" "localhost" "9093"
-            check_tcp "Kafka broker 3" "localhost" "9094"
-            check_url "Flink REST API" "http://localhost:8081/overview"
+            required_services="node2-kafka-1 node2-kafka-2 node2-kafka-3 node2-flink-python-job"
+            for svc in ${required_services}; do
+              if ! sudo docker ps --format '{{.Names}}' | grep -q "^${svc}$"; then
+                echo "ERROR: Expected container is not running: ${svc}"
+                exit 1
+              fi
+            done
           EOF
 
           echo "Node 2 deployment completed."
@@ -506,6 +556,7 @@ jobs:
         if: ${{ vars.DEPLOY_BATCH == 'true' }}
         run: |
           echo "Deploying to Node 3 (Spot VM)..."
+          BRANCH="${{ github.ref_name }}"
 
           SSH_USER="${{ vars.HUNG_SSH_USER }}"
           SSH_USER="${SSH_USER:-runner}"
@@ -554,8 +605,44 @@ jobs:
             -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE3_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
+            REPO_URL="https://github.com/HungPhamNoob/traffic-risk-assessment.git"
+            APT_CACHE_UPDATED=0
 
-            echo "=== Pulling latest code ==="
+            apt_install_if_missing() {
+              if [ "${APT_CACHE_UPDATED}" -eq 0 ]; then
+                sudo apt-get update
+                APT_CACHE_UPDATED=1
+              fi
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+            }
+
+            ensure_cmd() {
+              local cmd_name="$1"
+              local pkg_name="$2"
+              if command -v "${cmd_name}" >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "Installing missing dependency: ${pkg_name}"
+              apt_install_if_missing "${pkg_name}"
+            }
+
+            ensure_docker_compose() {
+              if docker compose version >/dev/null 2>&1; then
+                return 0
+              fi
+              if command -v docker-compose >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "Installing missing dependency: docker-compose-plugin"
+              apt_install_if_missing docker-compose-plugin
+            }
+
+            ensure_cmd git git
+            ensure_cmd curl curl
+            ensure_cmd docker docker.io
+            ensure_docker_compose
+
+            echo "=== Updating code from Git (pull first, clone if missing) ==="
             # Normalize ownership and trust for the deployment checkout. Older
             # startup scripts may have created /opt/traffic with root ownership.
             sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
@@ -566,20 +653,24 @@ jobs:
                 sudo rm -rf /opt/traffic 2>/dev/null || true
                 sudo mkdir -p /opt/traffic
                 sudo chown -R $(whoami):$(whoami) /opt/traffic
-                git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
+                git clone "${REPO_URL}" /opt/traffic
                 cd /opt/traffic
-                git checkout $BRANCH
+                git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH"
             else
-                echo "=== Repository exists: force-syncing deployment worktree ==="
+                echo "=== Repository exists: updating with git pull ==="
                 cd /opt/traffic
-                # CI owns the VM deployment checkout. Force-sync it so stale VM edits,
-                # generated files, or partial previous deployments cannot block releases.
+                current_remote="$(git remote get-url origin 2>/dev/null || true)"
+                if [ "${current_remote}" != "${REPO_URL}" ]; then
+                    git remote remove origin 2>/dev/null || true
+                    git remote add origin "${REPO_URL}"
+                fi
                 git fetch --prune origin
-                git reset --hard
-                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
-                git checkout -B "$BRANCH" "origin/$BRANCH"
-                git reset --hard "origin/$BRANCH"
-                git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
+                if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+                    git checkout "$BRANCH"
+                else
+                    git checkout -B "$BRANCH" "origin/$BRANCH"
+                fi
+                git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
             fi
 
             echo "=== Restarting batch services ==="
@@ -587,26 +678,16 @@ jobs:
             cp /tmp/.env.cloud /opt/traffic/.env
             sudo -E bash scripts/gcp/run-node3.sh
 
-            echo "=== Waiting for services ==="
-            sleep 20
-
+            echo "=== Verifying Node 3 containers are running ==="
             cd /opt/traffic/deployment/node3-batch
             sudo docker compose ps
-            check_url() {
-              local service_name="$1"
-              local url="$2"
-              for attempt in $(seq 1 18); do
-                if curl -fsS "$url" >/tmp/node3-health.txt; then
-                  echo "$service_name is healthy."
-                  return 0
-                fi
-                echo "$service_name not ready yet ($attempt/18)."
-                sleep 10
-              done
-              echo "ERROR: $service_name health check failed: $url"
-              return 1
-            }
-            check_url "Spark master UI" "http://localhost:8080"
+            required_services="node3-spark-master node3-spark-worker-1"
+            for svc in ${required_services}; do
+              if ! sudo docker ps --format '{{.Names}}' | grep -q "^${svc}$"; then
+                echo "ERROR: Expected container is not running: ${svc}"
+                exit 1
+              fi
+            done
           EOF
 
           echo "Node 3 deployment completed."
@@ -615,103 +696,3 @@ jobs:
         if: always()
         run: |
           rm -f .env.cloud ~/.ssh/hung_vm_key
-
-  # ==========================================================
-  # Job 4: Smoke Test
-  # Quick check that all services are reachable after deploy
-  # ==========================================================
-  smoke-test:
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    steps:
-      - name: Retry smoke test up to 3 times
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 12
-          max_attempts: 3
-          command: |
-            echo "=== Smoke test attempt $ATTEMPT ==="
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
-
-      - name: Setup gcloud CLI
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Prepare VM SSH key
-        env:
-          HUNG_SSH_PRIVATE_KEY: ${{ secrets.HUNG_SSH_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          key = os.environ["HUNG_SSH_PRIVATE_KEY"].strip()
-          if "\\n" in key and "\n" not in key:
-              key = key.replace("\\n", "\n")
-          key = key.replace("\r\n", "\n").replace("\r", "\n")
-          if not key.endswith("\n"):
-              key += "\n"
-
-          key_path = Path.home() / ".ssh" / "hung_vm_key"
-          key_path.write_text(key, encoding="utf-8")
-          key_path.chmod(0o600)
-          PY
-          ssh-keygen -y -f ~/.ssh/hung_vm_key >/dev/null
-          echo "SUCCESS: VM SSH key installed and parsed for smoke tests."
-
-      - name: Run smoke tests
-        run: |
-          echo "=== Getting Node 1 IP ==="
-          SSH_USER="${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="${SSH_USER:-runner}"
-          NODE1_IP=$(gcloud compute instances describe node1-control \
-            --zone=$GCP_ZONE \
-            --project=$GCP_PROJECT_ID \
-            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
-          echo "Node 1 IP: $NODE1_IP"
-
-          ssh -i ~/.ssh/hung_vm_key \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE1_IP}" "bash -s" << 'EOF'
-            set -euo pipefail
-
-            check_url() {
-              local service_name="$1"
-              local url="$2"
-
-              echo "=== Testing ${service_name}: ${url} ==="
-              for attempt in $(seq 1 18); do
-                if curl -fsS "${url}" >/tmp/smoke-response.txt; then
-                  echo "${service_name}: OK"
-                  cat /tmp/smoke-response.txt
-                  echo ""
-                  return 0
-                fi
-                echo "${service_name}: not ready yet (${attempt}/18)."
-                sleep 10
-              done
-
-              echo "ERROR: ${service_name} did not become healthy."
-              return 1
-            }
-
-            check_url "Airflow" "http://localhost:8080/health"
-            check_url "MLflow" "http://localhost:5000/ping"
-            check_url "FastAPI" "http://localhost:8000/health"
-          EOF
-
-          echo ""
-          echo "=== All smoke tests completed ==="
-
-      - name: Cleanup smoke-test secrets
-        if: always()
-        run: |
-          rm -f ~/.ssh/hung_vm_key

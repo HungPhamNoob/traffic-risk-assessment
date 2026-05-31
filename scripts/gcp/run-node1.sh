@@ -14,6 +14,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE1_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node1-control/docker-compose.yaml"
 NODE1_COMPOSE_DIR="$(dirname "${NODE1_COMPOSE_FILE}")"
+APT_CACHE_UPDATED=0
 
 # Capture incoming environment variables to prevent them from being overwritten by sourcing env files
 INCOMING_IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-}"
@@ -67,6 +68,48 @@ remove_matching_node1_containers() {
   docker rm -f "${stale_containers[@]}" >/dev/null
 }
 
+apt_install_if_missing() {
+  if [ "${APT_CACHE_UPDATED}" -eq 0 ]; then
+    sudo apt-get update
+    APT_CACHE_UPDATED=1
+  fi
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+}
+
+ensure_command() {
+  local command_name="$1"
+  local package_name="$2"
+  if command -v "${command_name}" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing missing dependency for '${command_name}': ${package_name}"
+  apt_install_if_missing "${package_name}"
+}
+
+ensure_docker_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing missing dependency for 'docker compose': docker-compose-plugin"
+  apt_install_if_missing docker-compose-plugin
+}
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose "$@"
+    return
+  fi
+  ensure_docker_compose
+  docker compose "$@"
+}
+
 prepare_runtime_directories() {
   echo "Preparing writable runtime directories for containers."
   mkdir -p orchestration/logs/scheduler ml/mlruns
@@ -75,16 +118,15 @@ prepare_runtime_directories() {
 }
 
 echo "Checking host dependencies required for offline H2O training."
-if ! command -v java >/dev/null 2>&1; then
-  echo "Java is not installed. Installing OpenJDK 17 because H2O cannot start without a JVM."
-  sudo apt-get update
-  sudo apt-get install -y openjdk-17-jre-headless
-fi
+ensure_command curl curl
+ensure_command docker docker.io
+ensure_docker_compose
+ensure_command java openjdk-17-jre-headless
+ensure_command python3 python3
 
 if ! python3 -m venv --help >/dev/null 2>&1; then
   echo "python3-venv is not installed. Installing it before creating training environments."
-  sudo apt-get update
-  sudo apt-get install -y python3-venv
+  apt_install_if_missing python3-venv
 fi
 
 echo "Starting Node 1 Docker services from the current workspace snapshot..."
@@ -97,14 +139,14 @@ remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
-docker compose \
+compose_cmd \
   --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
   up -d --build --remove-orphans
 
 prepare_runtime_directories
-docker compose \
+compose_cmd \
   --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
@@ -130,26 +172,54 @@ fi
 
 run_offline_training() {
   echo "Running offline feature engineering and H2O training."
-  python3 -m venv "${PROJECT_ROOT}/.venv-node1"
+  local training_venv="${PROJECT_ROOT}/.venv-node1"
+  local training_python="${training_venv}/bin/python"
+  if [ ! -x "${training_python}" ]; then
+    python3 -m venv "${training_venv}"
+  fi
 
-  TRAINING_PYTHON="${PROJECT_ROOT}/.venv-node1/bin/python"
-  "${TRAINING_PYTHON}" -m pip install --upgrade pip
-  "${TRAINING_PYTHON}" -m pip install \
-    h2o==3.46.0.6 \
-    mlflow==2.12.1 \
-    pandas==2.2.2 \
-    numpy==1.26.4 \
-    scikit-learn==1.4.2 \
-    python-dotenv==1.0.1 \
-    gcsfs==2024.3.1 \
-    "google-auth>=2.23.0" \
-    "google-cloud-storage>=2.14.0"
+  local missing_specs=()
+  if ! "${training_python}" -c "import h2o" >/dev/null 2>&1; then
+    missing_specs+=("h2o==3.46.0.6")
+  fi
+  if ! "${training_python}" -c "import mlflow" >/dev/null 2>&1; then
+    missing_specs+=("mlflow==2.12.1")
+  fi
+  if ! "${training_python}" -c "import pandas" >/dev/null 2>&1; then
+    missing_specs+=("pandas==2.2.2")
+  fi
+  if ! "${training_python}" -c "import numpy" >/dev/null 2>&1; then
+    missing_specs+=("numpy==1.26.4")
+  fi
+  if ! "${training_python}" -c "import sklearn" >/dev/null 2>&1; then
+    missing_specs+=("scikit-learn==1.4.2")
+  fi
+  if ! "${training_python}" -c "import dotenv" >/dev/null 2>&1; then
+    missing_specs+=("python-dotenv==1.0.1")
+  fi
+  if ! "${training_python}" -c "import gcsfs" >/dev/null 2>&1; then
+    missing_specs+=("gcsfs==2024.3.1")
+  fi
+  if ! "${training_python}" -c "import google.auth" >/dev/null 2>&1; then
+    missing_specs+=("google-auth>=2.23.0")
+  fi
+  if ! "${training_python}" -c "import google.cloud.storage" >/dev/null 2>&1; then
+    missing_specs+=("google-cloud-storage>=2.14.0")
+  fi
+
+  if [ "${#missing_specs[@]}" -gt 0 ]; then
+    echo "Installing missing Python training dependencies into ${training_venv}."
+    "${training_python}" -m pip install --upgrade pip
+    "${training_python}" -m pip install "${missing_specs[@]}"
+  else
+    echo "Python training dependencies already exist in ${training_venv}."
+  fi
   if [[ "${US_TRAIN_OFFLINE_PATH:-}" != gs://* ]]; then
-    "${TRAINING_PYTHON}" ml/dataset/dataset_offline.py
+    "${training_python}" ml/dataset/dataset_offline.py
   else
     echo "US_TRAIN_OFFLINE_PATH is a GCS feature CSV. Skipping local feature generation."
   fi
-  "${TRAINING_PYTHON}" ml/training/h2o_before_2020.py
+  "${training_python}" ml/training/h2o_before_2020.py
 }
 
 if [ "${IS_TRAIN_OFFLINE}" = "true" ]; then
@@ -165,14 +235,14 @@ fi
 echo "Restarting MLflow model serving after model bootstrap..."
 echo "Removing any transient Node 1 containers that could block the serving restart."
 remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
-docker compose \
+compose_cmd \
   --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
   up -d --build mlflow-serving fastapi
 
 echo "Node 1 services:"
-docker compose \
+compose_cmd \
   --project-directory "${NODE1_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \

@@ -13,6 +13,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE2_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node2-streaming/docker-compose.yaml"
 NODE2_COMPOSE_DIR="$(dirname "${NODE2_COMPOSE_FILE}")"
+APT_CACHE_UPDATED=0
 
 echo "Node 2 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
@@ -28,6 +29,52 @@ else
   echo "ERROR: ${ENV_FILE} does not exist."
   exit 1
 fi
+
+apt_install_if_missing() {
+  if [ "${APT_CACHE_UPDATED}" -eq 0 ]; then
+    sudo apt-get update
+    APT_CACHE_UPDATED=1
+  fi
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+}
+
+ensure_command() {
+  local command_name="$1"
+  local package_name="$2"
+  if command -v "${command_name}" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing missing dependency for '${command_name}': ${package_name}"
+  apt_install_if_missing "${package_name}"
+}
+
+ensure_docker_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing missing dependency for 'docker compose': docker-compose-plugin"
+  apt_install_if_missing docker-compose-plugin
+}
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose "$@"
+    return
+  fi
+  ensure_docker_compose
+  docker compose "$@"
+}
+
+echo "Checking host dependencies required for Node 2 services."
+ensure_command docker docker.io
+ensure_docker_compose
 
 echo "Starting Kafka, producers, Redis, and Flink streaming job..."
 echo "Removing stale Node 2 containers from previous Compose project names..."
@@ -51,7 +98,7 @@ docker rm -f \
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
-docker compose \
+compose_cmd \
   --project-directory "${NODE2_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE2_COMPOSE_FILE}" \
@@ -66,7 +113,7 @@ if [ "${FLINK_MOUNT_SOURCE}" != "${PROJECT_ROOT}" ]; then
 fi
 
 echo "Node 2 services:"
-docker compose \
+compose_cmd \
   --project-directory "${NODE2_COMPOSE_DIR}" \
   --env-file "${ENV_FILE}" \
   -f "${NODE2_COMPOSE_FILE}" \

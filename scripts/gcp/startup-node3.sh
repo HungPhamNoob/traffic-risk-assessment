@@ -5,9 +5,25 @@ exec > /tmp/startup.log 2>&1
 
 echo "Node 3 batch startup script started at $(date)"
 
-echo "Installing base operating-system packages..."
-apt-get update -qq
-apt-get install -y -qq ca-certificates curl git openjdk-17-jre-headless python3 python3-pip > /dev/null 2>&1 || true
+ensure_apt_packages() {
+  local missing_packages=()
+  local package_name
+  for package_name in "$@"; do
+    if ! dpkg -s "${package_name}" >/dev/null 2>&1; then
+      missing_packages+=("${package_name}")
+    fi
+  done
+
+  if [ "${#missing_packages[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  echo "Installing missing operating-system packages: ${missing_packages[*]}"
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing_packages[@]}"
+}
+
+ensure_apt_packages ca-certificates curl git openjdk-17-jre-headless python3 python3-pip
 
 # Install Docker
 if ! command -v docker &> /dev/null; then
@@ -26,11 +42,19 @@ fi
 if ! docker compose version &> /dev/null; then
   echo "Installing Docker Compose..."
   DOCKER_CONFIG=${DOCKER_CONFIG:-/usr/local/lib/docker}
-  mkdir -p $DOCKER_CONFIG/cli-plugins
+  mkdir -p "${DOCKER_CONFIG}/cli-plugins"
   curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 \
-    -o $DOCKER_CONFIG/cli-plugins/docker-compose
-  chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+    -o "${DOCKER_CONFIG}/cli-plugins/docker-compose"
+  chmod +x "${DOCKER_CONFIG}/cli-plugins/docker-compose"
   echo "Docker Compose installed"
+fi
+
+if ! command -v gcloud &> /dev/null; then
+  echo "Installing gcloud CLI..."
+  curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-460.0.0-linux-x86_64.tar.gz
+  tar -xf google-cloud-cli-460.0.0-linux-x86_64.tar.gz
+  ./google-cloud-sdk/install.sh --quiet
+  echo 'export PATH="$PATH:$HOME/google-cloud-sdk/bin"' >> ~/.bashrc
 fi
 
 # Configure Docker for Artifact Registry
