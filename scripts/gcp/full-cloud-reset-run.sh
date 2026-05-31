@@ -38,24 +38,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
+SSH_KEY="${SSH_KEY:-~/.ssh/google_compute_engine}"
+SSH_USER="${SSH_USER:-runner}"
+
+get_node_ip() {
+  local node="$1"
+  gcloud compute instances describe "${node}" \
+    --project="${PROJECT_ID}" \
+    --zone="${ZONE}" \
+    --format='get(networkInterfaces[0].accessConfigs[0].natIP)' \
+    --quiet
+}
+
 ssh_cmd() {
   local node="$1"
   shift
-  gcloud compute ssh "${node}" \
-    --project="${PROJECT_ID}" \
-    --zone="${ZONE}" \
-    --quiet \
-    --command="$*"
+  local node_ip
+  node_ip=$(get_node_ip "${node}")
+  ssh -i "${SSH_KEY}" \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=15 \
+    "${SSH_USER}@${node_ip}" "$*"
 }
 
 scp_to_node() {
   local source_path="$1"
   local node="$2"
   local target_path="$3"
-  gcloud compute scp "${source_path}" "${node}:${target_path}" \
-    --project="${PROJECT_ID}" \
-    --zone="${ZONE}" \
-    --quiet
+  local node_ip
+  node_ip=$(get_node_ip "${node}")
+  scp -i "${SSH_KEY}" \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=15 \
+    "${source_path}" "${SSH_USER}@${node_ip}:${target_path}"
 }
 
 prepare_runtime_env() {
