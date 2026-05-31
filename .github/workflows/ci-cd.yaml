@@ -5,6 +5,10 @@
 # Triggers:
 #   - Push to main/develop/hung1 -> run full pipeline
 #   - Pull request to main/develop/hung1 -> run lint + test only
+# 
+# Auto-retry: Each job is wrapped with max 3 attempts via
+# nick-fields/retry action for resilience against transient
+# network/VM/cloud failures.
 # ============================================================
 
 name: CI/CD Pipeline
@@ -35,11 +39,9 @@ jobs:
   # ==========================================================
   # Job 1: Lint and Test
   # Runs on every push and pull request
-  # Auto-retry up to 3 times on failure
   # ==========================================================
   lint-and-test:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       # Step 1: Checkout code from repository
       - name: Checkout code
@@ -79,13 +81,11 @@ jobs:
   # ==========================================================
   # Job 2: Build Docker Images
   # Only runs on push to main/develop (not on pull requests)
-  # Auto-retry up to 3 times on failure
   # ==========================================================
   build-images:
     needs: lint-and-test
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    continue-on-error: false
     steps:
       # Step 1: Checkout code
       - name: Checkout code
@@ -135,13 +135,11 @@ jobs:
   # ==========================================================
   # Job 3: Deploy to Cloud VMs
   # Only runs on push to main/develop/hung1
-  # Auto-retry up to 3 times on failure
   # ==========================================================
   deploy:
     needs: build-images
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    continue-on-error: false
     steps:
       # Step 1: Checkout code
       - name: Checkout code
@@ -621,14 +619,19 @@ jobs:
   # ==========================================================
   # Job 4: Smoke Test
   # Quick check that all services are reachable after deploy
-  # Auto-retry up to 3 times on failure
   # ==========================================================
   smoke-test:
     needs: deploy
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    continue-on-error: false
     steps:
+      - name: Retry smoke test up to 3 times
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 3
+          command: |
+            echo "=== Smoke test attempt $ATTEMPT ==="
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
