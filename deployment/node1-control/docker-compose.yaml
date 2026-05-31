@@ -80,9 +80,9 @@ services:
       bash -c "
         set -e;
         airflow db migrate || airflow db init;
-        airflow users create --username ${AIRFLOW_USER:-admin} --password ${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true;
-        airflow webserver &
-        exec airflow scheduler
+        airflow users create --username $${AIRFLOW_USER:-admin} --password $${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true;
+        airflow scheduler &
+        exec airflow webserver -p 8080
       "
     networks:
       - capstone-net
@@ -93,7 +93,7 @@ services:
           cpus: '1.0'
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -212,7 +212,35 @@ services:
         apt-get install -y --no-install-recommends openjdk-17-jre-headless &&
         rm -rf /var/lib/apt/lists/* &&
         pip install --no-cache-dir h2o==3.46.0.6 pandas numpy scikit-learn google-auth google-cloud-storage &&
-        mlflow models serve -m models:/${ML_MODEL_NAME:-traffic-risk-model}/latest -h 0.0.0.0 -p 5001 -t ${MLFLOW_SERVING_TIMEOUT_SECONDS:-300} --env-manager local
+        MODEL_NAME=\"${ML_MODEL_NAME:-traffic-risk-model}\"
+        echo 'Waiting for MLflow tracking server to be healthy...'
+        while ! curl --max-time 5 -fsS http://mlflow:5000/health >/dev/null 2>&1; do
+          echo '  MLflow not ready yet. Sleeping 5s.'
+          sleep 5
+        done
+        echo 'MLflow is healthy. Looking for registered models...'
+        while true; do
+          FOUND=\"\"
+          if curl --max-time 10 -fsS \"http://mlflow:5000/api/2.0/mlflow/registered-models/get?name=\$MODEL_NAME\" >/dev/null 2>&1; then
+            FOUND=\"\$MODEL_NAME\"
+          else
+            REG_LIST=\$(curl -s --max-time 10 http://mlflow:5000/api/2.0/mlflow/registered-models/list 2>/dev/null)
+            FIRST_MODEL=\$(echo \"\$REG_LIST\" | python3 -c \"import json,sys; d=json.load(sys.stdin); print(d['registered_models'][0]['name']) if d.get('registered_models') else sys.exit(1)\" 2>/dev/null)
+            if [ -n \"\$FIRST_MODEL\" ]; then
+              FOUND=\"\$FIRST_MODEL\"
+            fi
+          fi
+          if [ -n \"\$FOUND\" ]; then
+            echo \"Serving model: \$FOUND\"
+            mlflow models serve -m \"models:/\$FOUND/latest\" -h 0.0.0.0 -p 5001 -t ${MLFLOW_SERVING_TIMEOUT_SECONDS:-300} --env-manager local || {
+              echo 'Model serving exited. Retrying in 10s...'
+              sleep 10
+            }
+          else
+            echo 'No registered model found in MLflow. Waiting 15s before retry...'
+            sleep 15
+          fi
+        done
       "
     depends_on:
       - mlflow
@@ -228,6 +256,9 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   fastapi:
+    build:
+      context: ../../dashboard/backend
+      dockerfile: Dockerfile
     image: us-central1-docker.pkg.dev/big-data-group-4/capstone/fastapi:latest
     container_name: node1-fastapi
     ports:

@@ -8,7 +8,16 @@ from typing import Any
 from app.core.config import get_settings
 
 
-TRACKED_METRICS = ["accuracy", "macro_f1", "weighted_f1", "logloss"]
+TRACKED_METRICS = [
+    "accuracy",
+    "macro_precision",
+    "macro_recall",
+    "macro_f1",
+    "weighted_precision",
+    "weighted_recall",
+    "weighted_f1",
+    "logloss",
+]
 
 
 def _clean_value(value: Any) -> Any:

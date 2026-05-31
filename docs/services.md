@@ -14,11 +14,20 @@ Access them from your local laptop via the external IP of each node.
 | **FastAPI Docs (Swagger)** | http://35.224.149.110:8000/docs | — |
 | **MLflow Tracking UI** | http://35.224.149.110:5000 | — |
 | **MLflow Model Serving** | http://35.224.149.110:5001/invocations | POST only |
-| **Airflow Webserver** | http://35.224.149.110:8080 | admin / 123 |
+| **Airflow Webserver** | http://35.224.149.110:8080 | admin / admin |
 | **Prometheus** | http://35.224.149.110:9090 | — |
 | **Grafana** | http://35.224.149.110:3000 | admin / 123 |
 | **Blackbox Exporter** | http://35.224.149.110:9115 | — |
 | **PostgreSQL** | 35.224.149.110:5432 | capstone / 123 / capstone_db |
+
+The cloud validation runner records live request/response previews for:
+
+- `GET /health`
+- `GET /api/v1/system/status`
+- `GET /api/v1/overview/summary?mode=full`
+- `GET /api/v1/pipeline/throughput?window=5m`
+- `GET /api/v1/pipeline/latency?metric=p95`
+- `GET /api/v1/model/retrain-history?limit=1`
 
 ---
 
@@ -106,6 +115,14 @@ Key panels:
 - PostgreSQL row insertion rate
 - H2O model version active in MLflow serving
 - Spark job duration
+
+If throughput stays low and latency stays high after a successful run, the main reasons are:
+
+1. Kafka replay currently uses **one topic partition**.
+2. The Flink streaming job currently uses **parallelism = 1**.
+3. Each US replay event performs **one synchronous MLflow HTTP call**.
+4. Each event opens **one PostgreSQL connection** for insert/upsert.
+5. Each US event writes **one GCS object** to the Silver layer.
 
 ---
 

@@ -11,6 +11,8 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
+NODE2_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node2-streaming/docker-compose.yaml"
+NODE2_COMPOSE_DIR="$(dirname "${NODE2_COMPOSE_FILE}")"
 
 echo "Node 2 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
@@ -49,9 +51,25 @@ docker rm -f \
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
-docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml up -d
+docker compose \
+  --project-directory "${NODE2_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE2_COMPOSE_FILE}" \
+  up -d --build
+
+echo "Verifying that the Flink job container is mounted from ${PROJECT_ROOT}."
+FLINK_MOUNT_SOURCE="$(docker inspect node2-flink-python-job --format '{{range .Mounts}}{{if eq .Destination "/opt/traffic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+if [ "${FLINK_MOUNT_SOURCE}" != "${PROJECT_ROOT}" ]; then
+  echo "ERROR: node2-flink-python-job is mounted from '${FLINK_MOUNT_SOURCE}', expected '${PROJECT_ROOT}'."
+  echo "ERROR: Aborting so the operator does not accidentally run an outdated checkout."
+  exit 1
+fi
 
 echo "Node 2 services:"
-docker compose --env-file "${ENV_FILE}" -f deployment/node2-streaming/docker-compose.yaml ps
+docker compose \
+  --project-directory "${NODE2_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE2_COMPOSE_FILE}" \
+  ps
 
 echo "Node 2 run script completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

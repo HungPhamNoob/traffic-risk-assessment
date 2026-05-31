@@ -17,11 +17,11 @@ function colorForRisk(score: number): [number, number, number, number] {
 }
 
 function triangleForPoint(point: PredictionPoint): [number, number][] {
-  const size = 0.018;
+  const size = 0.006;
   return [
     [point.lon, point.lat + size],
-    [point.lon - size, point.lat - size],
-    [point.lon + size, point.lat - size]
+    [point.lon - size * 0.75, point.lat - size],
+    [point.lon + size * 0.75, point.lat - size]
   ];
 }
 

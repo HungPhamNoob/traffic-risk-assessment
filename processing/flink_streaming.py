@@ -365,7 +365,6 @@ def insert_us_prediction(
     end_to_end_latency_ms: Optional[float],
 ) -> None:
     """Insert one US replay prediction into PostgreSQL/PostGIS."""
-    global SCHEMA_READY
     connection = pg_connect()
     try:
         with connection:
@@ -445,7 +444,6 @@ def insert_us_prediction(
                 )
     finally:
         connection.close()
-
 
 def process_us_message(raw_message: str) -> str:
     """Process one US replay message from Kafka."""

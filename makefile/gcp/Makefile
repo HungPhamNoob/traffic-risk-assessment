@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 PROJECT_ID ?= big-data-group-4
 ZONE ?= us-central1-a
-BRANCH ?= hung1
+BRANCH ?= main
 NODE1 ?= node1-control
 NODE2 ?= node2-streaming
 NODE3 ?= node3-batch
@@ -12,7 +12,7 @@ SSH_BASE := gcloud compute ssh --project=$(PROJECT_ID) --zone=$(ZONE) --tunnel-t
 
 .PHONY: help list ssh-node1 ssh-node2 ssh-node3 sync-env \
 	node1 node2 node3 start-node23 reset-realtime status logs-node1 logs-node2 logs-node3 \
-	validate push deploy-all full-reset-run collect-metrics backup-checkpoints kafka-topic-check docker-recover-node1 docker-recover-node2 docker-recover-node3
+	validate push deploy-all full-reset-run full-reset-run-realtime collect-metrics backup-checkpoints kafka-topic-check docker-recover-node1 docker-recover-node2 docker-recover-node3
 
 help:
 	@echo "GCP Makefile for the Traffic Risk Assessment platform"
@@ -27,6 +27,7 @@ help:
 	@echo "  make -f makefile/gcp/Makefile backup-checkpoints Back up GCP checkpoint directories"
 	@echo "  make -f makefile/gcp/Makefile deploy-all       Pull branch and start all node services"
 	@echo "  make -f makefile/gcp/Makefile full-reset-run  Reset and run the full cloud pipeline"
+	@echo "  make -f makefile/gcp/Makefile full-reset-run-realtime  Reset and run the realtime-only pipeline"
 	@echo "  make -f makefile/gcp/Makefile collect-metrics Collect measured cloud evidence"
 
 list:
@@ -89,6 +90,9 @@ deploy-all: sync-env node1 start-node23
 
 full-reset-run:
 	BRANCH=$(BRANCH) GCP_PROJECT_ID=$(PROJECT_ID) GCP_ZONE=$(ZONE) bash scripts/gcp/full-cloud-reset-run.sh
+
+full-reset-run-realtime:
+	BRANCH=$(BRANCH) GCP_PROJECT_ID=$(PROJECT_ID) GCP_ZONE=$(ZONE) bash scripts/gcp/full-cloud-realtime-reset-run.sh
 
 collect-metrics:
 	GCP_PROJECT_ID=$(PROJECT_ID) GCP_ZONE=$(ZONE) bash scripts/gcp/collect-cloud-metrics.sh

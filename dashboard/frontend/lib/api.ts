@@ -50,9 +50,12 @@ export const api = {
     request<{ hotspots: unknown[] }>("/api/v1/hotspots", { params }),
   nearby: (params: Record<string, QueryValue>) =>
     request("/api/v1/hotspots/nearby", { params }),
-  riskByHour: () => request<{ data: unknown[] }>("/api/v1/analytics/risk-by-hour"),
-  severityDistribution: () =>
-    request<{ distribution: unknown[] }>("/api/v1/analytics/severity-distribution"),
+  riskByHour: (mode: string = "full") =>
+    request<{ data: unknown[] }>("/api/v1/analytics/risk-by-hour", { params: { mode } }),
+  severityDistribution: (mode: string = "full") =>
+    request<{ distribution: unknown[] }>("/api/v1/analytics/severity-distribution", { params: { mode } }),
+  weatherHistogram: (mode: string = "full") =>
+    request<{ histogram: unknown }>("/api/v1/analytics/weather-histogram", { params: { mode } }),
   timeseries: (params: Record<string, QueryValue>) =>
     request<{ series: unknown[] }>("/api/v1/analytics/timeseries", { params }),
   scenarioPredict: (body: ScenarioInput) =>

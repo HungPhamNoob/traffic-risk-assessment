@@ -334,9 +334,9 @@ def materialize_training_csv(data_path: str) -> str:
     """
     Return a local CSV path that H2O can import reliably.
 
-    H2O can import local files consistently in both laptops and GCP VMs. When
-    the configured path is a GCS URI, this helper downloads it to /tmp first and
-    leaves the original object unchanged.
+    H2O imports local files consistently on both laptops and cloud VMs.
+    When the configured path is a GCS URI, this helper downloads it to a
+    unique temp file first and leaves the original object unchanged.
     """
     if not data_path.startswith("gs://"):
         if not os.path.exists(data_path):
@@ -348,16 +348,26 @@ def materialize_training_csv(data_path: str) -> str:
 
     import gcsfs
 
-    local_path = os.path.join(tempfile.gettempdir(), os.path.basename(data_path))
+    # Use a unique temp file to avoid permission conflicts caused by
+    # leftover files owned by root from previous sudo runs.
+    suffix = "_" + os.path.basename(data_path)
+    fd, local_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
     logger.info("Downloading GCS training CSV from %s to %s", data_path, local_path)
 
     fs = gcsfs.GCSFileSystem()
-    with fs.open(data_path, "rb") as src, open(local_path, "wb") as dst:
-        while True:
-            chunk = src.read(16 * 1024 * 1024)
-            if not chunk:
-                break
-            dst.write(chunk)
+    try:
+        with fs.open(data_path, "rb") as src, open(local_path, "wb") as dst:
+            while True:
+                chunk = src.read(16 * 1024 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+    except Exception:
+        # Clean up partial download on failure.
+        if os.path.exists(local_path):
+            os.unlink(local_path)
+        raise
 
     return ensure_feature_training_csv(local_path)
 

@@ -1,5 +1,16 @@
 export type RiskLevel = "low" | "medium" | "high";
 
+export type ModelPerformance = {
+  accuracy?: number;
+  macro_precision?: number;
+  macro_recall?: number;
+  macro_f1?: number;
+  weighted_precision?: number;
+  weighted_recall?: number;
+  weighted_f1?: number;
+  logloss?: number;
+};
+
 export type OverviewSummary = {
   total_events: number;
   high_risk_events: number;
@@ -7,6 +18,7 @@ export type OverviewSummary = {
   latest_event_time: string | null;
   latest_model_version: string;
   mode?: MapMode;
+  model_performance?: ModelPerformance;
 };
 
 export type MapMode = "replay" | "live" | "full";

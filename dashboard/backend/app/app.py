@@ -36,6 +36,8 @@ app = FastAPI(
     description="Backend API for realtime traffic risk predictions and pipeline status.",
 )
 
+# CORS middleware must be added FIRST so it handles preflight OPTIONS
+# before custom http middleware sees the request.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -46,9 +48,12 @@ app.add_middleware(
         "http://35.224.149.110:5173",
         "http://35.224.149.110:3001",
     ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|35\.224\.149\.110)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
 

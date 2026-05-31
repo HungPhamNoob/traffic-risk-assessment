@@ -17,8 +17,8 @@ import {
 import { Layers, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { fallbackHotspots, fallbackPoints, fallbackSummary } from "@/lib/fallback";
-import type { Hotspot, MapMode, OverviewSummary, PredictionPoint } from "@/lib/types";
-import { FallbackBanner, KpiCard, RiskBadge } from "@/components/DataState";
+import type { Hotspot, MapMode, ModelPerformance, OverviewSummary, PredictionPoint } from "@/lib/types";
+import { FallbackBanner, KpiCard } from "@/components/DataState";
 
 const RiskMap = dynamic(
   () => import("@/components/RiskMap").then((module) => module.RiskMap),
@@ -34,31 +34,36 @@ export default function DashboardPage() {
   const summaryQuery = useQuery({
     queryKey: ["overview", mode],
     queryFn: () => api.overview(mode),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const pointsQuery = useQuery({
     queryKey: ["points", minRisk, mode],
     queryFn: () => api.mapPoints({ limit: 5000, min_risk: minRisk, mode }),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const latestQuery = useQuery({
     queryKey: ["latest", mode],
     queryFn: () => api.latest(10, mode),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const hotspotsQuery = useQuery({
     queryKey: ["hotspots"],
     queryFn: () => api.hotspots({ limit: 10, min_events: 1 }),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const riskByHourQuery = useQuery({
-    queryKey: ["risk-by-hour"],
-    queryFn: api.riskByHour,
+    queryKey: ["risk-by-hour", mode],
+    queryFn: () => api.riskByHour(mode),
     refetchInterval: 300_000
   });
   const severityQuery = useQuery({
-    queryKey: ["severity"],
-    queryFn: api.severityDistribution,
+    queryKey: ["severity", mode],
+    queryFn: () => api.severityDistribution(mode),
+    refetchInterval: 300_000
+  });
+  const weatherQuery = useQuery({
+    queryKey: ["weather-histogram", mode],
+    queryFn: () => api.weatherHistogram(mode),
     refetchInterval: 300_000
   });
 
@@ -91,9 +96,15 @@ export default function DashboardPage() {
   const severity =
     (severityQuery.data?.distribution as Array<Record<string, number>> | undefined) ||
     [];
+  const weatherHistogram =
+    (weatherQuery.data?.histogram as Record<string, Array<{ bin: string; count: number }>> | undefined) || {};
 
-  const selectedSeverity =
-    selected?.predicted_severity ?? selected?.true_severity ?? "N/A";
+  const statusText = (point: PredictionPoint) =>
+    point.model_status === "success" || point.model_status === "failed"
+      ? point.model_status
+      : point.model_status
+        ? "success"
+        : "failed";
 
   return (
     <div className="page-stack">
@@ -104,7 +115,7 @@ export default function DashboardPage() {
         </div>
         <span className="status-pill">
           <RefreshCw size={14} />
-          Auto-refresh 30s
+          Auto-refresh 10s
         </span>
       </div>
 
@@ -128,7 +139,40 @@ export default function DashboardPage() {
           value={summary.latest_event_time ? "Online" : "No data"}
           detail={summary.latest_event_time || "Waiting for replay"}
         />
-        <KpiCard label="Model" value={summary.latest_model_version || "latest"} />
+        <KpiCard
+          label="Model"
+          value={summary.latest_model_version || "latest"}
+        />
+        {summary.model_performance?.accuracy != null && (
+          <KpiCard
+            label="Accuracy"
+            value={((summary.model_performance as ModelPerformance).accuracy! * 100).toFixed(1) + "%"}
+          />
+        )}
+        {summary.model_performance?.macro_f1 != null && (
+          <KpiCard
+            label="Macro F1"
+            value={(summary.model_performance as ModelPerformance).macro_f1!.toFixed(4)}
+          />
+        )}
+        {summary.model_performance?.weighted_f1 != null && (
+          <KpiCard
+            label="Weighted F1"
+            value={(summary.model_performance as ModelPerformance).weighted_f1!.toFixed(4)}
+          />
+        )}
+        {summary.model_performance?.weighted_precision != null && (
+          <KpiCard
+            label="Precision"
+            value={(summary.model_performance as ModelPerformance).weighted_precision!.toFixed(4)}
+          />
+        )}
+        {summary.model_performance?.weighted_recall != null && (
+          <KpiCard
+            label="Recall"
+            value={(summary.model_performance as ModelPerformance).weighted_recall!.toFixed(4)}
+          />
+        )}
       </section>
 
       <section className="grid dashboard-grid">
@@ -183,34 +227,6 @@ export default function DashboardPage() {
 
         <aside className="grid">
           <section className="card">
-            <div className="card-header">
-              <h2 className="card-title">Selected event</h2>
-              {selected ? <RiskBadge level={selected.risk_level} /> : null}
-            </div>
-            {selected ? (
-              <div className="side-list">
-                <div className="mono">{selected.event_id}</div>
-                <div className="muted">
-                  {selected.lat.toFixed(5)}, {selected.lon.toFixed(5)}
-                </div>
-                <div>
-                  {selected.data_source === "tomtom_live"
-                    ? `Severity ${selectedSeverity}`
-                    : `Risk ${selected.risk_score.toFixed(4)}`}
-                </div>
-                <div className="muted">
-                  {selected.data_source === "tomtom_live"
-                    ? `TomTom live, display risk ${selected.risk_score.toFixed(4)}`
-                    : "US replay, H2O risk score"}
-                </div>
-                <div className="muted">{selected.event_time}</div>
-              </div>
-            ) : (
-              <p className="muted">Click a risk point to inspect details.</p>
-            )}
-          </section>
-
-          <section className="card">
             <h2 className="card-title">Active hotspots</h2>
             <div className="side-list">
               {hotspots.map((hotspot) => (
@@ -255,7 +271,7 @@ export default function DashboardPage() {
 
       <section className="grid analytics-grid">
         <div className="card">
-          <h2 className="card-title">Risk by hour</h2>
+          <h2 className="card-title">Risk by hour ({mode})</h2>
           <div className="chart-box">
             <ResponsiveContainer>
               <LineChart data={riskByHour}>
@@ -269,7 +285,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="card">
-          <h2 className="card-title">Severity distribution</h2>
+          <h2 className="card-title">Severity distribution ({mode})</h2>
           <div className="chart-box">
             <ResponsiveContainer>
               <BarChart data={severity}>
@@ -282,6 +298,30 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
         </div>
+      </section>
+
+      <section className="grid analytics-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+        {["temperature", "humidity", "wind_speed"].map((metric) => {
+          const data = weatherHistogram[metric] || [];
+          return (
+            <div className="card" key={metric}>
+              <h2 className="card-title">
+                {metric.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())} ({mode})
+              </h2>
+              <div className="chart-box">
+                <ResponsiveContainer>
+                  <BarChart data={data}>
+                    <CartesianGrid stroke="rgba(148,163,184,0.14)" />
+                    <XAxis dataKey="bin" stroke="#94a3b8" fontSize={10} />
+                    <YAxis stroke="#94a3b8" fontSize={10} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          );
+        })}
       </section>
 
       <section className="card">
@@ -303,7 +343,7 @@ export default function DashboardPage() {
                 <td>{Number(point.risk_score).toFixed(4)}</td>
                 <td>{point.predicted_severity ?? "-"}</td>
                 <td>{point.event_time || "-"}</td>
-                <td>{point.model_status}</td>
+                <td>{statusText(point)}</td>
               </tr>
             ))}
           </tbody>

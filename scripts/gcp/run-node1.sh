@@ -12,6 +12,8 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
+NODE1_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node1-control/docker-compose.yaml"
+NODE1_COMPOSE_DIR="$(dirname "${NODE1_COMPOSE_FILE}")"
 
 # Capture incoming environment variables to prevent them from being overwritten by sourcing env files
 INCOMING_IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-}"
@@ -65,6 +67,13 @@ remove_matching_node1_containers() {
   docker rm -f "${stale_containers[@]}" >/dev/null
 }
 
+prepare_runtime_directories() {
+  echo "Preparing writable runtime directories for containers."
+  mkdir -p orchestration/logs/scheduler ml/mlruns
+  sudo chown -R 50000:0 orchestration/logs 2>/dev/null || true
+  sudo chmod -R 2775 orchestration/logs 2>/dev/null || true
+}
+
 echo "Checking host dependencies required for offline H2O training."
 if ! command -v java >/dev/null 2>&1; then
   echo "Java is not installed. Installing OpenJDK 17 because H2O cannot start without a JVM."
@@ -78,11 +87,8 @@ if ! python3 -m venv --help >/dev/null 2>&1; then
   sudo apt-get install -y python3-venv
 fi
 
-echo "Starting Node 1 Docker services..."
-echo "Preparing writable runtime directories for containers."
-mkdir -p orchestration/logs ml/mlruns
-chown -R 50000:0 orchestration/logs 2>/dev/null || true
-chmod -R g+rwX orchestration/logs 2>/dev/null || true
+echo "Starting Node 1 Docker services from the current workspace snapshot..."
+prepare_runtime_directories
 
 echo "Removing stale Node 1 containers from previous Compose project names..."
 remove_matching_node1_containers "${NODE1_CANONICAL_NAME_PATTERN}"
@@ -91,7 +97,18 @@ remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
 
-docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml up -d --remove-orphans
+docker compose \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE1_COMPOSE_FILE}" \
+  up -d --build --remove-orphans
+
+prepare_runtime_directories
+docker compose \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE1_COMPOSE_FILE}" \
+  restart airflow >/dev/null 2>&1 || true
 
 echo "Waiting for MLflow tracking server before checking model registry..."
 for attempt in $(seq 1 30); do
@@ -148,9 +165,17 @@ fi
 echo "Restarting MLflow model serving after model bootstrap..."
 echo "Removing any transient Node 1 containers that could block the serving restart."
 remove_matching_node1_containers "${NODE1_TRANSIENT_NAME_PATTERN}"
-docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml up -d mlflow-serving fastapi
+docker compose \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE1_COMPOSE_FILE}" \
+  up -d --build mlflow-serving fastapi
 
 echo "Node 1 services:"
-docker compose --env-file "${ENV_FILE}" -f deployment/node1-control/docker-compose.yaml ps
+docker compose \
+  --project-directory "${NODE1_COMPOSE_DIR}" \
+  --env-file "${ENV_FILE}" \
+  -f "${NODE1_COMPOSE_FILE}" \
+  ps
 
 echo "Node 1 run script completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

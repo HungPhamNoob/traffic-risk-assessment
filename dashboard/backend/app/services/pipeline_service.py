@@ -270,12 +270,7 @@ def _path_status(path_value: str | None) -> dict[str, Any]:
     if not path_value:
         return {"path": None, "status": "unavailable", "last_modified": None}
     if path_value.startswith("gs://"):
-        return {
-            "path": path_value,
-            "status": "configured_remote",
-            "last_modified": None,
-            "note": "GCS timestamp probing is not available in the backend image.",
-        }
+        return _gcs_path_status(path_value)
 
     local_path = path_value.replace("file://", "", 1)
     path = Path(local_path)
@@ -313,3 +308,65 @@ def checkpoints() -> dict[str, Any]:
 def gold_last_update() -> str | None:
     """Return the best-effort Gold dataset last modified timestamp."""
     return _path_status(get_settings().gold_retrain_path).get("last_modified")
+
+
+def _gcs_path_status(path_value: str) -> dict[str, Any]:
+    """Return best-effort freshness metadata for a GCS prefix."""
+    try:
+        from google.cloud import storage
+    except Exception as exc:
+        return {
+            "path": path_value,
+            "status": "configured_remote",
+            "last_modified": None,
+            "note": f"GCS client unavailable: {exc}",
+        }
+
+    match = re.fullmatch(r"gs://([^/]+)(?:/(.*))?", path_value.rstrip("/"))
+    if not match:
+        return {
+            "path": path_value,
+            "status": "invalid",
+            "last_modified": None,
+            "note": "Invalid GCS path format.",
+        }
+
+    bucket_name, prefix = match.group(1), (match.group(2) or "").rstrip("/")
+    prefix = f"{prefix}/" if prefix else ""
+
+    try:
+        client = storage.Client()
+        blobs = list(
+            client.list_blobs(bucket_name, prefix=prefix, max_results=2000)  # type: ignore[arg-type]
+        )
+    except Exception as exc:
+        return {
+            "path": path_value,
+            "status": "configured_remote",
+            "last_modified": None,
+            "note": f"GCS lookup failed: {exc}",
+        }
+
+    if not blobs:
+        return {
+            "path": path_value,
+            "status": "empty",
+            "last_modified": None,
+            "file_count": 0,
+        }
+
+    latest_blob = max(
+        (blob for blob in blobs if blob.updated is not None),
+        key=lambda blob: blob.updated,  # type: ignore[arg-type]
+        default=None,
+    )
+    result = {
+        "path": path_value,
+        "status": "ok",
+        "last_modified": latest_blob.updated.isoformat() if latest_blob else None,
+        "file_count": len(blobs),
+        "sample_blob": blobs[0].name,
+    }
+    if len(blobs) == 2000:
+        result["note"] = "Freshness is based on the first 2000 blobs under the prefix."
+    return result

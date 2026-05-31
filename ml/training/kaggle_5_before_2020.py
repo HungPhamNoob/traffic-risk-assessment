@@ -33,12 +33,12 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", os.getenv("KAGGLE5_MAX_CPU_THREADS
 os.environ.setdefault("MKL_NUM_THREADS", os.getenv("KAGGLE5_MAX_CPU_THREADS", "2"))
 os.environ.setdefault("NUMEXPR_NUM_THREADS", os.getenv("KAGGLE5_MAX_CPU_THREADS", "2"))
 
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import SelectFromModel
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from sklearn.ensemble import RandomForestClassifier  # noqa: E402
+from sklearn.feature_selection import SelectFromModel  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
+from sklearn.metrics import (  # noqa: E402
     accuracy_score,
     balanced_accuracy_score,
     cohen_kappa_score,
@@ -52,9 +52,9 @@ from sklearn.metrics import (
     r2_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split  # noqa: E402
+from sklearn.neighbors import KNeighborsClassifier  # noqa: E402
+from sklearn.tree import DecisionTreeClassifier  # noqa: E402
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -680,7 +680,7 @@ def parse_h2o_reference(log_path: Path) -> tuple[dict[str, Any], pd.DataFrame | 
 
     start_idx = None
     for idx, line in enumerate(lines):
-        if f"Evaluating model rank" in line and best_model_id in line:
+        if "Evaluating model rank" in line and best_model_id in line:
             start_idx = idx
             break
 
