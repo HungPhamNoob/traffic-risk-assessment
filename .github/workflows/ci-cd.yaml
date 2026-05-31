@@ -361,19 +361,19 @@ jobs:
       # Only if Spot VM is currently running
       # -------------------------------------------------------
       - name: Deploy to Node 2 (Streaming)
-        if: \${{ vars.DEPLOY_STREAMING == 'true' }}
+        if: ${{ vars.DEPLOY_STREAMING == 'true' }}
         run: |
           echo "Deploying to Node 2 (Spot VM)..."
-          BRANCH="\${{ github.ref_name }}"
+          BRANCH="${{ github.ref_name }}"
 
-          SSH_USER="\${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="\${SSH_USER:-runner}"
-          NODE2_IP=\$(gcloud compute instances describe node2-streaming \
-            --zone=\$GCP_ZONE \
-            --project=\$GCP_PROJECT_ID \
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-runner}"
+          NODE2_IP=$(gcloud compute instances describe node2-streaming \
+            --zone=$GCP_ZONE \
+            --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
-          echo "Node 2 IP: \$NODE2_IP"
-          for attempt in \$(seq 1 18); do
+          echo "Node 2 IP: $NODE2_IP"
+          for attempt in $(seq 1 18); do
             if ssh -i ~/.ssh/hung_vm_key \
               -o IdentitiesOnly=yes \
               -o PreferredAuthentications=publickey \
@@ -381,12 +381,12 @@ jobs:
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=15 \
-              "\${SSH_USER}@\${NODE2_IP}" "echo SSH_READY_NODE2"; then
+              "${SSH_USER}@${NODE2_IP}" "echo SSH_READY_NODE2"; then
               break
             fi
-            echo "Node 2 SSH is not ready yet (\${attempt}/18). Waiting for metadata propagation."
+            echo "Node 2 SSH is not ready yet (${attempt}/18). Waiting for metadata propagation."
             sleep 10
-            if [ "\${attempt}" = "18" ]; then
+            if [ "${attempt}" = "18" ]; then
               echo "ERROR: Node 2 SSH did not become ready after metadata update."
               exit 1
             fi
@@ -397,21 +397,21 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "\${SSH_USER}@\${NODE2_IP}" "sudo rm -f /tmp/.env.cloud" || true
+            "${SSH_USER}@${NODE2_IP}" "sudo rm -f /tmp/.env.cloud" || true
 
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            .env.cloud "\${SSH_USER}@\${NODE2_IP}:/tmp/.env.cloud"
+            .env.cloud "${SSH_USER}@${NODE2_IP}:/tmp/.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "\${SSH_USER}@\${NODE2_IP}" "bash -s" << EOF
+            "${SSH_USER}@${NODE2_IP}" "bash -s" << EOF
             set -e
 
             echo "=== Pulling latest code ==="
@@ -427,7 +427,7 @@ jobs:
                 sudo chown -R \$(whoami):\$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
-                git checkout \$BRANCH
+                git checkout $BRANCH
             else
                 echo "=== Repository exists: force-syncing deployment worktree ==="
                 cd /opt/traffic
@@ -436,8 +436,8 @@ jobs:
                 git fetch --prune origin
                 git reset --hard
                 git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
-                git checkout -B "\$BRANCH" "origin/\$BRANCH"
-                git reset --hard "origin/\$BRANCH"
+                git checkout -B "$BRANCH" "origin/$BRANCH"
+                git reset --hard "origin/$BRANCH"
                 git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
             fi
 
@@ -460,18 +460,18 @@ jobs:
       # Only if Spot VM is currently running
       # -------------------------------------------------------
       - name: Deploy to Node 3 (Batch)
-        if: \${{ vars.DEPLOY_BATCH == 'true' }}
+        if: ${{ vars.DEPLOY_BATCH == 'true' }}
         run: |
           echo "Deploying to Node 3 (Spot VM)..."
 
-          SSH_USER="\${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="\${SSH_USER:-runner}"
-          NODE3_IP=\$(gcloud compute instances describe node3-batch \
-            --zone=\$GCP_ZONE \
-            --project=\$GCP_PROJECT_ID \
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-runner}"
+          NODE3_IP=$(gcloud compute instances describe node3-batch \
+            --zone=$GCP_ZONE \
+            --project=$GCP_PROJECT_ID \
             --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
-          echo "Node 3 IP: \$NODE3_IP"
-          for attempt in \$(seq 1 18); do
+          echo "Node 3 IP: $NODE3_IP"
+          for attempt in $(seq 1 18); do
             if ssh -i ~/.ssh/hung_vm_key \
               -o IdentitiesOnly=yes \
               -o PreferredAuthentications=publickey \
@@ -479,12 +479,12 @@ jobs:
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=15 \
-              "\${SSH_USER}@\${NODE3_IP}" "echo SSH_READY_NODE3"; then
+              "${SSH_USER}@${NODE3_IP}" "echo SSH_READY_NODE3"; then
               break
             fi
-            echo "Node 3 SSH is not ready yet (\${attempt}/18). Waiting for metadata propagation."
+            echo "Node 3 SSH is not ready yet (${attempt}/18). Waiting for metadata propagation."
             sleep 10
-            if [ "\${attempt}" = "18" ]; then
+            if [ "${attempt}" = "18" ]; then
               echo "ERROR: Node 3 SSH did not become ready after metadata update."
               exit 1
             fi
@@ -495,25 +495,25 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "\${SSH_USER}@\${NODE3_IP}" "sudo rm -f /tmp/.env.cloud" || true
+            "${SSH_USER}@${NODE3_IP}" "sudo rm -f /tmp/.env.cloud" || true
 
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            .env.cloud "\${SSH_USER}@\${NODE3_IP}:/tmp/.env.cloud"
+            .env.cloud "${SSH_USER}@${NODE3_IP}:/tmp/.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "\${SSH_USER}@\${NODE3_IP}" "bash -s" << EOF
+            "${SSH_USER}@${NODE3_IP}" "bash -s" << EOF
             set -e
 
             echo "=== Pulling latest code ==="
-            BRANCH="\${{ github.ref_name }}"
+            BRANCH="${{ github.ref_name }}"
             # Normalize ownership and trust for the deployment checkout. Older
             # startup scripts may have created /opt/traffic with root ownership.
             sudo chown -R \$(whoami):\$(whoami) /opt/traffic 2>/dev/null || true
@@ -526,7 +526,7 @@ jobs:
                 sudo chown -R \$(whoami):\$(whoami) /opt/traffic
                 git clone https://github.com/HungPhamNoob/traffic-risk-assessment.git /opt/traffic
                 cd /opt/traffic
-                git checkout \$BRANCH
+                git checkout $BRANCH
             else
                 echo "=== Repository exists: force-syncing deployment worktree ==="
                 cd /opt/traffic
@@ -535,8 +535,8 @@ jobs:
                 git fetch --prune origin
                 git reset --hard
                 git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
-                git checkout -B "\$BRANCH" "origin/\$BRANCH"
-                git reset --hard "origin/\$BRANCH"
+                git checkout -B "$BRANCH" "origin/$BRANCH"
+                git reset --hard "origin/$BRANCH"
                 git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
             fi
 
