@@ -14,7 +14,7 @@ Access them from your local laptop via the external IP of each node.
 | **FastAPI Docs (Swagger)** | http://35.224.149.110:8000/docs | — |
 | **MLflow Tracking UI** | http://35.224.149.110:5000 | — |
 | **MLflow Model Serving** | http://35.224.149.110:5001/invocations | POST only |
-| **Airflow Webserver** | http://35.224.149.110:8080 | admin / 123 |
+| **Airflow Webserver** | http://35.224.149.110:8080 | admin / admin |
 | **Prometheus** | http://35.224.149.110:9090 | — |
 | **Grafana** | http://35.224.149.110:3000 | admin / 123 |
 | **Blackbox Exporter** | http://35.224.149.110:9115 | — |
