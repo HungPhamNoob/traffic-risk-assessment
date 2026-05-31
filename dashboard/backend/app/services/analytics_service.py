@@ -6,7 +6,6 @@ from psycopg2 import sql
 
 from app.core.database import fetch_all
 from app.services.prediction_service import (
-    _normalize_mode,
     mode_table_identifier,
     table_identifier,
 )
