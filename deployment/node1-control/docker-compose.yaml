@@ -228,6 +228,9 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   fastapi:
+    build:
+      context: ../../dashboard/backend
+      dockerfile: Dockerfile
     image: us-central1-docker.pkg.dev/big-data-group-4/capstone/fastapi:latest
     container_name: node1-fastapi
     ports:
