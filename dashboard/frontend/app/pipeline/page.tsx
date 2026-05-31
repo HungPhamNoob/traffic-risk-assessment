@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, Database, GitBranch, RadioTower, ServerCog } from "lucide-react";
+import { Activity, Database, GitBranch, RadioTower, RotateCcw, ServerCog } from "lucide-react";
 import { api } from "@/lib/api";
 import { KpiCard } from "@/components/DataState";
 
@@ -72,6 +72,17 @@ export default function PipelinePage() {
     queryFn: api.performanceTrend,
     refetchInterval: 60_000
   });
+  const resetStatus = useQuery({
+    queryKey: ["full-realtime-reset-status"],
+    queryFn: api.fullRealtimeResetStatus,
+    refetchInterval: 10_000
+  });
+  const resetMutation = useMutation({
+    mutationFn: () => api.fullRealtimeReset(false),
+    onSuccess: () => {
+      resetStatus.refetch();
+    }
+  });
 
   const throughputData = throughput.data as AnyRecord | undefined;
   const latencyData = latency.data as AnyRecord | undefined;
@@ -81,6 +92,7 @@ export default function PipelinePage() {
   const replayData = replay.data as AnyRecord | undefined;
   const retrainData = retrain.data as AnyRecord | undefined;
   const trendData = trend.data as AnyRecord | undefined;
+  const resetData = resetStatus.data as AnyRecord | undefined;
 
   const latencyChart = latencyData?.latency_ms
     ? Object.entries(latencyData.latency_ms).map(([metric, value]) => ({
@@ -110,7 +122,12 @@ export default function PipelinePage() {
         .join(" | ")
     ],
     ["MLflow", "mlflow", "configured", systemData?.mlflow?.serving_endpoint],
-    ["Airflow", "airflow", "configured", "DAG scheduler & webserver"],
+    [
+      "Airflow",
+      "airflow",
+      "configured",
+      `retrain: ${systemData?.airflow?.model_retrain_schedule || "n/a"} | stream: ${systemData?.airflow?.stream_health_schedule || "n/a"}`
+    ],
     ["FastAPI", "fastapi", "configured", "REST API & docs"],
     ["Grafana", "grafana", "configured", "Monitoring dashboards"]
   ];
@@ -131,7 +148,7 @@ export default function PipelinePage() {
       <section className="grid kpi-grid">
         <KpiCard
           label="Throughput"
-          value={Number(throughputData?.events_per_minute || 0).toFixed(2)}
+          value={`${Number(throughputData?.events_per_second || 0).toFixed(2)} msg/s`}
           detail={`${throughputData?.event_count || 0} events / ${throughputData?.window || "5m"}`}
         />
         <KpiCard
@@ -142,6 +159,15 @@ export default function PipelinePage() {
               : `${Number(latencyData.value_ms).toFixed(1)}ms`
           }
           detail={statusText(latencyData)}
+        />
+        <KpiCard
+          label="Avg latency"
+          value={
+            latencyData?.latency_ms?.avg === null || latencyData?.latency_ms?.avg === undefined
+              ? "N/A"
+              : `${Number(latencyData.latency_ms.avg).toFixed(1)}ms`
+          }
+          detail="End-to-end average"
         />
         <KpiCard
           label="Prediction rows"
@@ -158,6 +184,55 @@ export default function PipelinePage() {
           value={(retrainData?.runs as unknown[] | undefined)?.length || 0}
           detail={statusText(retrainData)}
         />
+        <KpiCard
+          label="Reset job"
+          value={String(resetData?.status || "not_started")}
+          detail={resetData?.run_id ? `Run: ${String(resetData.run_id)}` : "No active reset"}
+        />
+      </section>
+
+      <section className="card">
+        <div className="card-header">
+          <h2 className="card-title">Realtime reset control</h2>
+          <RotateCcw size={18} />
+        </div>
+        <div style={{ display: "grid", gap: 12 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            Trigger <span className="mono">scripts/gcp/full-cloud-realtime-reset-run.sh</span> from the backend host and track logs.
+          </p>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => resetMutation.mutate()}
+              disabled={resetMutation.isPending || resetData?.status === "running"}
+            >
+              {resetMutation.isPending ? "Starting..." : "Run Full Realtime Reset"}
+            </button>
+            <span className="status-pill">{String(resetData?.status || "not_started")}</span>
+          </div>
+          {resetData?.log_path && (
+            <p className="mono muted" style={{ margin: 0 }}>
+              {String(resetData.log_path)}
+            </p>
+          )}
+          {!!resetData?.last_log_lines?.length && (
+            <pre
+              className="mono"
+              style={{
+                margin: 0,
+                maxHeight: 220,
+                overflow: "auto",
+                padding: 12,
+                borderRadius: 10,
+                background: "rgba(2, 6, 23, 0.55)",
+                border: "1px solid rgba(148, 163, 184, 0.2)"
+              }}
+            >
+              {(resetData.last_log_lines as string[]).join("\n")}
+            </pre>
+          )}
+        </div>
       </section>
 
       <section className="grid pipeline-grid">

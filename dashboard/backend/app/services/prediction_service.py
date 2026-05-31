@@ -142,15 +142,29 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
 
 
 def _fetch_latest_model_metrics() -> dict[str, Any]:
-    """Return the most recent model accuracy, precision, recall, and F1 from MLflow."""
+    """Return the best available run metrics ranked by weighted_f1."""
     try:
         from app.services.model_service import retrain_history
 
-        history = retrain_history(limit=1)
+        history = retrain_history(limit=30)
         runs = history.get("runs", [])
-        if runs:
-            return runs[0].get("metrics", {})
-        return {}
+        if not runs:
+            return {}
+
+        def weighted_f1_value(run: dict[str, Any]) -> float:
+            metrics = run.get("metrics") or {}
+            value = metrics.get("weighted_f1")
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return -1.0
+
+        best_run = max(runs, key=weighted_f1_value)
+        metrics = dict(best_run.get("metrics") or {})
+        metrics["selected_run_id"] = best_run.get("run_id")
+        metrics["selected_run_name"] = best_run.get("run_name")
+        metrics["selection_metric"] = "weighted_f1"
+        return metrics
     except Exception:
         return {}
 

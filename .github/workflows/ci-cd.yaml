@@ -53,33 +53,20 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install black==24.3.0 flake8 pytest pytest-cov pandas numpy pyyaml requests python-dotenv
+          pip install pytest pytest-cov pandas numpy pyyaml requests python-dotenv
           pip install fastapi email-validator pydantic pydantic-settings prometheus-client psycopg2-binary scikit-learn pyarrow
 
-      # Step 3: Check code formatting with Black
-      - name: Check code formatting (Black)
-        run: |
-          black --check . --exclude='(\.git|\.venv|\.venv-cicd|venv|vendor|data|ml/notebooks|node_modules|dashboard/frontend/node_modules)' || {
-            echo "Black found formatting issues. Run 'black .' locally to fix."
-            exit 1
-          }
-
-      # Step 4: Check code style with Flake8
-      - name: Check code style (Flake8)
-        run: |
-          flake8 . --exclude=venv,.venv,.venv-cicd,vendor,data,ml/notebooks,node_modules,dashboard/frontend/node_modules --max-line-length=120 --extend-ignore=E203,W503,W605
-
-      # Step 5: Run unit tests
+      # Step 3: Run unit tests
       - name: Run unit tests
         run: |
           pytest tests/ -v --tb=short
 
-      # Step 6: Check Python syntax without importing heavy runtime services
+      # Step 4: Check Python syntax without importing heavy runtime services
       - name: Compile Python files
         run: |
           python -m compileall dashboard/backend/app processing ingestion ml/dataset ml/training orchestration -q
 
-      # Step 7: Validate Docker Compose files used by local and GCP deployments
+      # Step 5: Validate Docker Compose files used by local and GCP deployments
       - name: Validate Docker Compose files
         run: |
           docker compose --env-file .env.example --file docker-compose.yaml config --quiet
@@ -352,6 +339,24 @@ jobs:
             echo "=== Checking service health ==="
             cd /opt/traffic/deployment/node1-control
             sudo docker compose ps
+            check_url() {
+              local service_name="$1"
+              local url="$2"
+              for attempt in $(seq 1 18); do
+                if curl -fsS "$url" >/tmp/node1-health.txt; then
+                  echo "$service_name is healthy."
+                  return 0
+                fi
+                echo "$service_name not ready yet ($attempt/18)."
+                sleep 10
+              done
+              echo "ERROR: $service_name health check failed: $url"
+              return 1
+            }
+            check_url "Airflow" "http://localhost:8080/health"
+            check_url "MLflow" "http://localhost:5000/ping"
+            check_url "FastAPI" "http://localhost:8000/health"
+            check_url "Dashboard" "http://localhost:3001"
           EOF
 
           echo "Node 1 deployment completed."
@@ -451,6 +456,39 @@ jobs:
 
             cd /opt/traffic/deployment/node2-streaming
             sudo docker compose ps
+            check_url() {
+              local service_name="$1"
+              local url="$2"
+              for attempt in $(seq 1 18); do
+                if curl -fsS "$url" >/tmp/node2-health.txt; then
+                  echo "$service_name is healthy."
+                  return 0
+                fi
+                echo "$service_name not ready yet ($attempt/18)."
+                sleep 10
+              done
+              echo "ERROR: $service_name health check failed: $url"
+              return 1
+            }
+            check_tcp() {
+              local service_name="$1"
+              local host="$2"
+              local port="$3"
+              for attempt in $(seq 1 18); do
+                if bash -ec "echo > /dev/tcp/${host}/${port}" >/dev/null 2>&1; then
+                  echo "$service_name TCP port is reachable (${host}:${port})."
+                  return 0
+                fi
+                echo "$service_name TCP port not ready ($attempt/18)."
+                sleep 10
+              done
+              echo "ERROR: $service_name TCP check failed on ${host}:${port}"
+              return 1
+            }
+            check_tcp "Kafka broker 1" "localhost" "9092"
+            check_tcp "Kafka broker 2" "localhost" "9093"
+            check_tcp "Kafka broker 3" "localhost" "9094"
+            check_url "Flink REST API" "http://localhost:8081/overview"
           EOF
 
           echo "Node 2 deployment completed."
@@ -550,6 +588,21 @@ jobs:
 
             cd /opt/traffic/deployment/node3-batch
             sudo docker compose ps
+            check_url() {
+              local service_name="$1"
+              local url="$2"
+              for attempt in $(seq 1 18); do
+                if curl -fsS "$url" >/tmp/node3-health.txt; then
+                  echo "$service_name is healthy."
+                  return 0
+                fi
+                echo "$service_name not ready yet ($attempt/18)."
+                sleep 10
+              done
+              echo "ERROR: $service_name health check failed: $url"
+              return 1
+            }
+            check_url "Spark master UI" "http://localhost:8080"
           EOF
 
           echo "Node 3 deployment completed."

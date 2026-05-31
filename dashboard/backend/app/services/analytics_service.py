@@ -4,10 +4,12 @@ from typing import Any
 
 from psycopg2 import sql
 
-from app.core.database import fetch_all
+from app.core.config import get_settings
+from app.core.database import fetch_all, fetch_one
 from app.services.prediction_service import (
-    mode_table_identifier,
     table_identifier,
+    tomtom_table_identifier,
+    us_table_identifier,
 )
 
 
@@ -59,31 +61,126 @@ def timeseries(
     return {"series": rows, "metric": metric_key, "group_by": date_part}
 
 
+def _table_exists(table_name: str) -> bool:
+    query = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = %(table_name)s
+        ) AS exists
+    """
+    row = fetch_one(query, {"table_name": table_name.split(".")[-1]})
+    return bool(row and row.get("exists"))
+
+
+def _normalize_mode(mode: str | None) -> str:
+    if mode in {"replay", "live", "full"}:
+        return mode
+    return "full"
+
+
+def _mode_sources(mode: str | None) -> list[dict[str, sql.Composable]]:
+    settings = get_settings()
+    normalized_mode = _normalize_mode(mode)
+    sources: list[dict[str, sql.Composable]] = []
+
+    if normalized_mode in {"replay", "full"} and _table_exists(
+        settings.us_prediction_table
+    ):
+        sources.append(
+            {
+                "table": us_table_identifier(),
+                "severity_column": sql.Identifier("true_severity"),
+                "hour_column": sql.Identifier("hour"),
+                "temperature_column": sql.Identifier("temperature_f"),
+                "humidity_column": sql.Identifier("humidity"),
+                "wind_column": sql.Identifier("wind_speed_mph"),
+            }
+        )
+
+    if normalized_mode in {"live", "full"} and _table_exists(
+        settings.tomtom_events_table
+    ):
+        sources.append(
+            {
+                "table": tomtom_table_identifier(),
+                "severity_column": sql.Identifier("severity"),
+                "hour_column": sql.Identifier("hour"),
+                "temperature_column": sql.Identifier("temperature_f"),
+                "humidity_column": sql.Identifier("humidity"),
+                "wind_column": sql.Identifier("wind_speed_mph"),
+            }
+        )
+
+    return sources
+
+
 def severity_distribution(mode: str | None = None) -> dict[str, Any]:
     """Return class imbalance counts using the ground-truth severity label."""
-    tbl = mode_table_identifier(mode) if mode else table_identifier()
+    sources = _mode_sources(mode)
+    if not sources:
+        return {"distribution": []}
+
+    selects = []
+    for source in sources:
+        selects.append(
+            sql.SQL(
+                """
+                SELECT {severity_column} AS severity
+                FROM {table}
+                WHERE {severity_column} IS NOT NULL
+                """
+            ).format(
+                severity_column=source["severity_column"],
+                table=source["table"],
+            )
+        )
+
     query = sql.SQL(
         """
-        SELECT true_severity AS severity, COUNT(*)::BIGINT AS count
-        FROM {table}
-        GROUP BY true_severity
-        ORDER BY true_severity
+        SELECT severity, COUNT(*)::BIGINT AS count
+        FROM ({union_query}) AS severity_events
+        GROUP BY severity
+        ORDER BY severity
         """
-    ).format(table=tbl)
+    ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
     return {"distribution": fetch_all(query)}
 
 
 def risk_by_hour(mode: str | None = None) -> dict[str, Any]:
     """Return average risk and event count by hour of day."""
-    tbl = mode_table_identifier(mode) if mode else table_identifier()
+    sources = _mode_sources(mode)
+    if not sources:
+        return {"data": []}
+
+    selects = []
+    for source in sources:
+        selects.append(
+            sql.SQL(
+                """
+                SELECT
+                    {hour_column} AS hour,
+                    risk_score
+                FROM {table}
+                WHERE {hour_column} IS NOT NULL AND risk_score IS NOT NULL
+                """
+            ).format(
+                hour_column=source["hour_column"],
+                table=source["table"],
+            )
+        )
+
     query = sql.SQL(
         """
-        SELECT hour, AVG(risk_score)::DOUBLE PRECISION AS avg_risk_score, COUNT(*)::BIGINT AS accident_count
-        FROM {table}
+        SELECT
+            hour,
+            AVG(risk_score)::DOUBLE PRECISION AS avg_risk_score,
+            COUNT(*)::BIGINT AS accident_count
+        FROM ({union_query}) AS hourly_events
         GROUP BY hour
         ORDER BY hour
         """
-    ).format(table=tbl)
+    ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
     return {"data": fetch_all(query)}
 
 
@@ -102,33 +199,51 @@ def risk_by_weather() -> dict[str, Any]:
 
 def weather_histogram(mode: str | None = None) -> dict[str, Any]:
     """Return temperature, humidity, and wind_speed histograms."""
-    tbl = mode_table_identifier(mode) if mode else table_identifier()
+    sources = _mode_sources(mode)
+    if not sources:
+        return {"histogram": {"temperature": [], "humidity": [], "wind_speed": []}}
 
     result: dict[str, Any] = {"histogram": {}}
-    for col, bins, label in [
-        ("temperature_f", 8, "temperature"),
-        ("humidity", 8, "humidity"),
-        ("wind_speed_mph", 8, "wind_speed"),
+    for key, bins, label in [
+        ("temperature_column", 8, "temperature"),
+        ("humidity_column", 8, "humidity"),
+        ("wind_column", 8, "wind_speed"),
     ]:
-        col_ident = sql.Identifier(col)
+        selects = []
+        for source in sources:
+            selects.append(
+                sql.SQL(
+                    """
+                    SELECT {value_column} AS metric_value
+                    FROM {table}
+                    WHERE {value_column} IS NOT NULL
+                    """
+                ).format(
+                    value_column=source[key],
+                    table=source["table"],
+                )
+            )
+
         query = sql.SQL(
             """
             SELECT
-                WIDTH_BUCKET({col}, 0, {max_val}, {bins}) AS bin_idx,
-                MIN({col})::DOUBLE PRECISION AS bin_min,
-                MAX({col})::DOUBLE PRECISION AS bin_max,
+                WIDTH_BUCKET(metric_value, 0, {max_val}, {bins}) AS bin_idx,
+                MIN(metric_value)::DOUBLE PRECISION AS bin_min,
+                MAX(metric_value)::DOUBLE PRECISION AS bin_max,
                 COUNT(*)::BIGINT AS count
-            FROM {table}
-            WHERE {col} IS NOT NULL
+            FROM ({union_query}) AS weather_values
             GROUP BY bin_idx
             ORDER BY bin_idx
             """
         ).format(
-            col=col_ident,
-            table=tbl,
             bins=sql.Literal(bins),
+            union_query=sql.SQL(" UNION ALL ").join(selects),
             max_val=sql.Literal(
-                100 if col == "humidity" else 130 if col == "temperature_f" else 100
+                100
+                if key == "humidity_column"
+                else 130
+                if key == "temperature_column"
+                else 100
             ),
         )
         rows = fetch_all(query)

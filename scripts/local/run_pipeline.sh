@@ -303,11 +303,29 @@ with connection:
         cursor.execute(create_sql)
         inserted = 0
         batch = []
+
+        def compute_risk_score(row):
+            severity = int(row["true_severity"])
+            severity_map = {1: 0.00, 2: 0.25, 3: 0.55, 4: 0.85}
+            risk = severity_map.get(severity, 0.0)
+            adjustment = 0.0
+            if int(row.get("is_night", 0)) == 1:
+                adjustment += 0.03
+            if int(row.get("is_weekend", 0)) == 1:
+                adjustment += 0.02
+            if int(row.get("road_type_code", 0)) == 1:
+                adjustment += 0.03
+            if int(row.get("weather_code", 0)) in {1, 2, 4}:
+                adjustment += 0.03
+            if int(row.get("road_type_code", 0)) in {3, 4, 6} and severity <= 2:
+                adjustment -= 0.02
+            return round(max(0.0, min(1.0, risk + adjustment)), 4)
+
         with silver_path.open("r", encoding="utf-8") as input_file:
             for line in input_file:
                 row = json.loads(line)
                 predicted_severity = int(row["true_severity"])
-                risk_score = max(0.0, min(1.0, (predicted_severity - 1) / 3))
+                risk_score = compute_risk_score(row)
                 row.update(
                     {
                         "predicted_severity": predicted_severity,

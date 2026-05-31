@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import os
 import re
+import shutil
+import subprocess
 from typing import Any
+import uuid
 
 from psycopg2 import sql
 
@@ -263,6 +267,119 @@ def replay_health() -> dict[str, Any]:
         "status": "ok" if total_rows else "not_enough_data",
         "row_count": total_rows,
         "sources": source_health,
+    }
+
+
+def _reset_state_file() -> Path:
+    settings = get_settings()
+    state_dir = Path(settings.pipeline_reset_log_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "full_realtime_reset_state.json"
+
+
+def _tail_lines(path: Path, line_count: int = 20) -> list[str]:
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return lines[-line_count:]
+
+
+def _pid_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def reset_job_status() -> dict[str, Any]:
+    """Return status metadata for the most recently launched full realtime reset."""
+    state_file = _reset_state_file()
+    if not state_file.exists():
+        return {"status": "not_started"}
+
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    pid = int(payload.get("pid", 0) or 0)
+    log_path = Path(str(payload.get("log_path", "")))
+    running = pid > 0 and _pid_running(pid)
+    return {
+        "status": "running" if running else "finished",
+        "pid": pid,
+        "run_id": payload.get("run_id"),
+        "script": payload.get("script"),
+        "started_at": payload.get("started_at"),
+        "log_path": str(log_path) if log_path else None,
+        "last_log_lines": _tail_lines(log_path, line_count=20) if log_path else [],
+    }
+
+
+def trigger_full_realtime_reset(force: bool = False) -> dict[str, Any]:
+    """
+    Launch the full realtime reset shell script as a background process.
+
+    This endpoint is designed for operator-triggered restarts from the dashboard.
+    """
+    current = reset_job_status()
+    if current.get("status") == "running" and not force:
+        return {
+            "status": "already_running",
+            "message": "A reset job is already running. Set force=true to start another run.",
+            **current,
+        }
+
+    settings = get_settings()
+    script_path = Path(settings.pipeline_reset_script)
+    if not script_path.exists():
+        return {
+            "status": "script_missing",
+            "script": str(script_path),
+            "message": "Reset script path does not exist on this runtime host.",
+        }
+
+    if not shutil.which("gcloud"):
+        return {
+            "status": "missing_dependency",
+            "script": str(script_path),
+            "message": "gcloud CLI is not installed in the backend runtime. Run the reset script on the VM host shell.",
+        }
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    log_dir = Path(settings.pipeline_reset_log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"full_realtime_reset_{run_id}.log"
+
+    with log_path.open("a", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            ["bash", str(script_path)],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    state_file = _reset_state_file()
+    state_file.write_text(
+        json.dumps(
+            {
+                "pid": process.pid,
+                "run_id": run_id,
+                "script": str(script_path),
+                "log_path": str(log_path),
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "force": force,
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+
+    return {
+        "status": "started",
+        "pid": process.pid,
+        "run_id": run_id,
+        "script": str(script_path),
+        "log_path": str(log_path),
     }
 
 

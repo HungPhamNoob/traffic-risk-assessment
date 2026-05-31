@@ -203,7 +203,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
-      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
+      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.0}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
       PRODUCER_INDEX: "0"
       PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
@@ -233,7 +233,7 @@ services:
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
-      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
+      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.0}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
       PRODUCER_INDEX: "1"
       PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
@@ -262,7 +262,7 @@ services:
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
-      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.01}
+      STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.0}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
       PRODUCER_INDEX: "2"
       PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
@@ -371,7 +371,7 @@ services:
       PYTHONPATH: /opt/traffic
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 2
+        taskmanager.numberOfTaskSlots: 4
         taskmanager.memory.process.size: 1536m
         state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
     volumes:
@@ -434,13 +434,14 @@ services:
       KAFKA_TOPIC_TOMTOM_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
       FLINK_INFERENCE_GROUP: ${FLINK_INFERENCE_GROUP:-flink-us-inference}
       FLINK_TOMTOM_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
+      FLINK_PARALLELISM: ${FLINK_PARALLELISM:-4}
       FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}
       FLINK_CHECKPOINT_DIR: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
       FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_LOCAL_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/unified-traffic-streaming}
       FLINK_KAFKA_CONNECTOR_JAR: ${FLINK_KAFKA_CONNECTOR_JAR:-file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,file:///opt/flink/connectors/kafka-clients-3.6.1.jar}
       SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
       MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
-      ML_TIMEOUT_SECONDS: ${ML_TIMEOUT_SECONDS:-30}
+      ML_TIMEOUT_SECONDS: ${ML_TIMEOUT_SECONDS:-5}
       POSTGRES_HOST: ${POSTGRES_HOST:-10.128.0.4}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-capstone_db}

@@ -36,6 +36,11 @@ def get_system_status() -> dict:
             "serving_endpoint": settings.mlflow_serving_endpoint,
             "latest_version": settings.model_version or "latest",
         },
+        "airflow": {
+            "executor": "LocalExecutor",
+            "model_retrain_schedule": settings.airflow_model_retrain_schedule,
+            "stream_health_schedule": settings.airflow_stream_health_schedule,
+        },
         "postgres": {
             "us_prediction_table": settings.us_prediction_table,
             "tomtom_events_table": settings.tomtom_events_table,

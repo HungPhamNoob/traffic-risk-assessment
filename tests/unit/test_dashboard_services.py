@@ -30,6 +30,20 @@ def test_timeseries_metric_count_is_returned(monkeypatch):
     assert result["series"][0]["value"] == 12.0
 
 
+def test_analytics_empty_sources_return_empty_payload(monkeypatch):
+    monkeypatch.setattr(analytics_service, "_mode_sources", lambda mode=None: [])
+
+    severity = analytics_service.severity_distribution("full")
+    risk_by_hour = analytics_service.risk_by_hour("full")
+    weather = analytics_service.weather_histogram("full")
+
+    assert severity == {"distribution": []}
+    assert risk_by_hour == {"data": []}
+    assert weather == {
+        "histogram": {"temperature": [], "humidity": [], "wind_speed": []}
+    }
+
+
 def test_throughput_handles_missing_prediction_table(monkeypatch):
     monkeypatch.setattr(pipeline_service, "_table_columns", lambda: set())
 

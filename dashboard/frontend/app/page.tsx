@@ -131,7 +131,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           label="Average risk"
-          value={Number(summary.avg_risk_score || 0).toFixed(4)}
+          value={`${(Number(summary.avg_risk_score || 0) * 100).toFixed(1)}%`}
           tone={summary.avg_risk_score >= 0.7 ? "high" : "medium"}
         />
         <KpiCard
@@ -143,34 +143,15 @@ export default function DashboardPage() {
           label="Model"
           value={summary.latest_model_version || "latest"}
         />
-        {summary.model_performance?.accuracy != null && (
-          <KpiCard
-            label="Accuracy"
-            value={((summary.model_performance as ModelPerformance).accuracy! * 100).toFixed(1) + "%"}
-          />
-        )}
-        {summary.model_performance?.macro_f1 != null && (
-          <KpiCard
-            label="Macro F1"
-            value={(summary.model_performance as ModelPerformance).macro_f1!.toFixed(4)}
-          />
-        )}
         {summary.model_performance?.weighted_f1 != null && (
           <KpiCard
-            label="Weighted F1"
-            value={(summary.model_performance as ModelPerformance).weighted_f1!.toFixed(4)}
-          />
-        )}
-        {summary.model_performance?.weighted_precision != null && (
-          <KpiCard
-            label="Precision"
-            value={(summary.model_performance as ModelPerformance).weighted_precision!.toFixed(4)}
-          />
-        )}
-        {summary.model_performance?.weighted_recall != null && (
-          <KpiCard
-            label="Recall"
-            value={(summary.model_performance as ModelPerformance).weighted_recall!.toFixed(4)}
+            label="Best weighted F1"
+            value={`${((summary.model_performance as ModelPerformance).weighted_f1! * 100).toFixed(2)}%`}
+            detail={
+              (summary.model_performance as Record<string, unknown>).selected_run_name
+                ? `Run: ${String((summary.model_performance as Record<string, unknown>).selected_run_name)}`
+                : "Best MLflow run"
+            }
           />
         )}
       </section>

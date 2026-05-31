@@ -76,6 +76,13 @@ export const api = {
     request("/api/v1/pipeline/latency", { params: { metric } }),
   checkpoints: () => request("/api/v1/pipeline/checkpoints"),
   replayHealth: () => request("/api/v1/pipeline/replay-health"),
+  fullRealtimeReset: (force = false) =>
+    request("/api/v1/pipeline/full-realtime-reset", {
+      method: "POST",
+      params: { force }
+    }),
+  fullRealtimeResetStatus: () =>
+    request("/api/v1/pipeline/full-realtime-reset"),
   retrainHistory: () => request("/api/v1/model/retrain-history"),
   performanceTrend: () => request("/api/v1/model/performance-trend")
 };

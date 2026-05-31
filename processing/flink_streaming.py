@@ -70,7 +70,7 @@ KAFKA_TOPIC_US_RAW = os.getenv(
 KAFKA_TOPIC_TOMTOM_RAW = os.getenv("KAFKA_TOPIC_TOMTOM_RAW", "traffic.tomtom.raw")
 FLINK_INFERENCE_GROUP = os.getenv("FLINK_INFERENCE_GROUP", "flink-dual-inference")
 FLINK_TOMTOM_GROUP = os.getenv("FLINK_TOMTOM_GROUP", "flink-dual-tomtom")
-FLINK_PARALLELISM = int(os.getenv("FLINK_PARALLELISM", "1"))
+FLINK_PARALLELISM = int(os.getenv("FLINK_PARALLELISM", "2"))
 FLINK_CHECKPOINT_INTERVAL = int(os.getenv("FLINK_CHECKPOINT_INTERVAL", "30000"))
 FLINK_CHECKPOINT_DIR = os.getenv(
     "FLINK_LOCAL_CHECKPOINT_DIR",
@@ -201,7 +201,67 @@ def _severity_to_risk_score(severity: Any) -> Optional[float]:
     severity_float = _to_float(severity)
     if severity_float is None:
         return None
-    return max(0.0, min(1.0, (severity_float - 1.0) / 3.0))
+    severity_level = max(1, min(4, int(round(severity_float))))
+    return compute_risk_score(
+        severity=severity_level,
+        delay_seconds=None,
+        length_meters=None,
+        is_night=0,
+        is_weekend=0,
+        road_type_code=0,
+        weather_code=0,
+    )
+
+
+def compute_risk_score(
+    severity: Any,
+    delay_seconds: Any = None,
+    length_meters: Any = None,
+    is_night: Any = 0,
+    is_weekend: Any = 0,
+    road_type_code: Any = 0,
+    weather_code: Any = 0,
+) -> Optional[float]:
+    """
+    Compute a unified 0.0-1.0 risk score for both US replay and TomTom live.
+
+    The score is severity-first with bounded contextual adjustments so values
+    remain stable, continuous, and comparable across both data sources.
+    """
+    severity_int = _to_int(severity)
+    if severity_int is None:
+        return None
+    severity_int = max(1, min(4, severity_int))
+
+    severity_map = {1: 0.00, 2: 0.25, 3: 0.55, 4: 0.85}
+    score = severity_map.get(severity_int, 0.0)
+    adjustment = 0.0
+
+    delay_seconds_value = _to_float(delay_seconds)
+    if delay_seconds_value is not None and delay_seconds_value > 0:
+        adjustment += min((delay_seconds_value / 60.0) * 0.01, 0.10)
+
+    length_meters_value = _to_float(length_meters)
+    if length_meters_value is not None and length_meters_value > 0:
+        adjustment += min((length_meters_value / 100.0) * 0.005, 0.08)
+
+    is_night_int = 1 if _to_int(is_night) == 1 else 0
+    is_weekend_int = 1 if _to_int(is_weekend) == 1 else 0
+    road_type_int = _to_int(road_type_code) or 0
+    weather_int = _to_int(weather_code) or 0
+
+    if is_night_int == 1:
+        adjustment += 0.03
+    if is_weekend_int == 1:
+        adjustment += 0.02
+    if road_type_int == 1:
+        adjustment += 0.03
+    if weather_int in {1, 2, 4}:
+        adjustment += 0.03
+    if road_type_int in {3, 4, 6} and severity_int <= 2:
+        adjustment -= 0.02
+
+    return round(max(0.0, min(1.0, score + adjustment)), 4)
 
 
 def _class_probabilities_to_risk_score(prediction: Dict[str, Any]) -> Optional[float]:
@@ -568,7 +628,17 @@ def insert_tomtom_incident(
 ) -> None:
     """Insert one TomTom incident into its live PostgreSQL/PostGIS table."""
     severity = features.get("true_severity")
-    risk_score = _severity_to_risk_score(severity)
+    risk_score = compute_risk_score(
+        severity=severity,
+        delay_seconds=raw_row.get("delay_seconds"),
+        length_meters=raw_row.get("length_meters"),
+        is_night=features.get("is_night"),
+        is_weekend=features.get("is_weekend"),
+        road_type_code=features.get("road_type_code"),
+        weather_code=features.get("weather_code"),
+    )
+    if risk_score is None:
+        risk_score = _severity_to_risk_score(severity)
 
     connection = pg_connect()
     try:
@@ -681,9 +751,23 @@ def process_us_message(raw_message: str) -> str:
             raise ValueError("US feature engineering returned no record")
 
         write_to_gcs_silver(features)
-        predicted_severity, risk_score = call_mlflow_model(features)
-        if risk_score is None or risk_score < 0:
-            risk_score = ML_FALLBACK_RISK_SCORE
+        predicted_severity, mlflow_risk_score = call_mlflow_model(features)
+        risk_score = compute_risk_score(
+            severity=predicted_severity
+            if predicted_severity is not None
+            else features.get("true_severity"),
+            is_night=features.get("is_night"),
+            is_weekend=features.get("is_weekend"),
+            road_type_code=features.get("road_type_code"),
+            weather_code=features.get("weather_code"),
+        )
+        if risk_score is None and mlflow_risk_score is not None:
+            risk_score = round(max(0.0, min(1.0, float(mlflow_risk_score))), 4)
+        if risk_score is None:
+            if ML_FALLBACK_RISK_SCORE >= 0:
+                risk_score = round(max(0.0, min(1.0, ML_FALLBACK_RISK_SCORE)), 4)
+            else:
+                risk_score = 0.25
 
         processed_time = datetime.now(timezone.utc).isoformat()
         insert_us_prediction(

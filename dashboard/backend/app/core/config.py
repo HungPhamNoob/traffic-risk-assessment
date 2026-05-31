@@ -44,6 +44,22 @@ class Settings(BaseSettings):
         default="gs://big-data-group-4-gold/features/retrain",
         alias="GOLD_RETRAIN_PATH",
     )
+    airflow_model_retrain_schedule: str = Field(
+        default="*/15 * * * *",
+        alias="AIRFLOW_MODEL_RETRAIN_SCHEDULE",
+    )
+    airflow_stream_health_schedule: str = Field(
+        default="*/2 * * * *",
+        alias="AIRFLOW_STREAM_HEALTH_SCHEDULE",
+    )
+    pipeline_reset_script: str = Field(
+        default="/opt/traffic/scripts/gcp/full-cloud-realtime-reset-run.sh",
+        alias="PIPELINE_RESET_SCRIPT",
+    )
+    pipeline_reset_log_dir: str = Field(
+        default="/tmp/traffic-reset-jobs",
+        alias="PIPELINE_RESET_LOG_DIR",
+    )
     mlflow_tracking_uri: str = Field(
         default="http://localhost:5000", alias="MLFLOW_TRACKING_URI"
     )

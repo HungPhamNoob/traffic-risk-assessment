@@ -16,6 +16,15 @@ function colorForRisk(score: number): [number, number, number, number] {
   return [34, 197, 94, 190];
 }
 
+function colorForSeverity(point: PredictionPoint): [number, number, number, number] {
+  const severity = point.predicted_severity ?? point.true_severity ?? null;
+  if (severity === 4) return [239, 68, 68, 225];
+  if (severity === 3) return [249, 115, 22, 220];
+  if (severity === 2) return [234, 179, 8, 210];
+  if (severity === 1) return [34, 197, 94, 200];
+  return colorForRisk(point.risk_score);
+}
+
 function triangleForPoint(point: PredictionPoint): [number, number][] {
   const size = 0.006;
   return [
@@ -71,7 +80,7 @@ export function RiskMap({
       radiusMaxPixels: 18,
       getPosition: (d) => [d.lon, d.lat],
       getRadius: (d) => (d.event_id === selectedId ? 240 : 120),
-      getFillColor: (d) => colorForRisk(d.risk_score),
+      getFillColor: (d) => colorForSeverity(d),
       getLineColor: [255, 255, 255, 210],
       lineWidthMinPixels: 1,
       onClick: (info) => {
@@ -85,7 +94,7 @@ export function RiskMap({
       stroked: true,
       filled: true,
       getPolygon: triangleForPoint,
-      getFillColor: (d) => colorForRisk(d.risk_score),
+      getFillColor: (d) => colorForSeverity(d),
       getLineColor: [255, 255, 255, 230],
       lineWidthMinPixels: 1,
       onClick: (info) => {
