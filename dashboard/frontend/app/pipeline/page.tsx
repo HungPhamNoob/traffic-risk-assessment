@@ -21,7 +21,7 @@ type AnyRecord = Record<string, any>;
 const SERVICE_URLS: Record<string, string> = {
   kafka: "",
   flink: "http://35.225.231.57:8081",
-  spark: "http://34.63.78.147:4040",
+  spark: "http://34.63.78.147:8080",
   postgres: "",
   mlflow: "http://35.224.149.110:5000",
   airflow: "http://35.224.149.110:8080",
@@ -39,18 +39,18 @@ export default function PipelinePage() {
   const system = useQuery({
     queryKey: ["system"],
     queryFn: api.systemStatus,
-    refetchInterval: 60_000
+    refetchInterval: 30_000
   });
   const model = useQuery({ queryKey: ["model"], queryFn: api.modelInfo });
   const throughput = useQuery({
     queryKey: ["throughput"],
     queryFn: () => api.throughput("5m"),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const latency = useQuery({
     queryKey: ["latency"],
     queryFn: () => api.latency("p95"),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const checkpoints = useQuery({
     queryKey: ["checkpoints"],
@@ -60,17 +60,17 @@ export default function PipelinePage() {
   const replay = useQuery({
     queryKey: ["replay"],
     queryFn: api.replayHealth,
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const retrain = useQuery({
     queryKey: ["retrain"],
     queryFn: api.retrainHistory,
-    refetchInterval: 300_000
+    refetchInterval: 60_000
   });
   const trend = useQuery({
     queryKey: ["performance"],
     queryFn: api.performanceTrend,
-    refetchInterval: 300_000
+    refetchInterval: 60_000
   });
 
   const throughputData = throughput.data as AnyRecord | undefined;
@@ -91,10 +91,24 @@ export default function PipelinePage() {
   const trendSeries = (trendData?.series as AnyRecord[] | undefined) || [];
 
   const serviceRows = [
-    ["Kafka", "kafka", systemData?.kafka?.status, systemData?.kafka?.topic],
+    [
+      "Kafka",
+      "kafka",
+      systemData?.kafka?.status,
+      [systemData?.kafka?.us_topic, systemData?.kafka?.tomtom_topic]
+        .filter(Boolean)
+        .join(" | ")
+    ],
     ["Flink", "flink", systemData?.flink?.status, systemData?.flink?.checkpoint_dir],
     ["Spark", "spark", "configured", systemData?.spark?.gold_path],
-    ["Postgres", "postgres", "configured", systemData?.postgres?.prediction_table],
+    [
+      "Postgres",
+      "postgres",
+      "configured",
+      [systemData?.postgres?.us_prediction_table, systemData?.postgres?.tomtom_events_table]
+        .filter(Boolean)
+        .join(" | ")
+    ],
     ["MLflow", "mlflow", "configured", systemData?.mlflow?.serving_endpoint],
     ["Airflow", "airflow", "configured", "DAG scheduler & webserver"],
     ["FastAPI", "fastapi", "configured", "REST API & docs"],
@@ -242,6 +256,9 @@ export default function PipelinePage() {
                 <YAxis stroke="#94a3b8" />
                 <Tooltip />
                 <Line dataKey="accuracy" stroke="#22c55e" strokeWidth={2} />
+                <Line dataKey="weighted_f1" stroke="#38bdf8" strokeWidth={2} />
+                <Line dataKey="weighted_recall" stroke="#f59e0b" strokeWidth={2} />
+                <Line dataKey="weighted_precision" stroke="#ef4444" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </div>

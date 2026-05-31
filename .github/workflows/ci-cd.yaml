@@ -640,7 +640,7 @@ jobs:
             }
 
             check_url "Airflow" "http://localhost:8080/health"
-            check_url "MLflow" "http://localhost:5000/health"
+            check_url "MLflow" "http://localhost:5000/ping"
             check_url "FastAPI" "http://localhost:8000/health"
           EOF
 

@@ -43,6 +43,12 @@ If an external IP changes, regenerate the table with:
 make -f makefile/gcp/Makefile collect-metrics
 ```
 
+The end-to-end cloud runner also stores service request/response evidence in:
+
+```text
+logs/cloud_runs/<run-id>/service-checks.md
+```
+
 ## 1. Local Machine Rules
 
 Run commands from the repository root.
@@ -201,8 +207,8 @@ fi
 cd /opt/traffic
 git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 git fetch --prune origin
-git checkout -B hung1 origin/hung1
-git reset --hard origin/hung1
+git checkout -B main origin/main
+git reset --hard origin/main
 git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
 ```
 
@@ -242,7 +248,7 @@ gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group
 
 Workflow: `.github/workflows/ci-cd.yaml`.
 
-It performs these steps on every push to `hung1`:
+It performs these steps on every push to `main`:
 
 - Run Black, Flake8, unit tests, Python compile checks, and Docker Compose validation.
 - Ensure Artifact Registry repository `capstone` exists.
@@ -271,7 +277,7 @@ If CI fails with `node3-batch not found`, run:
 GCP_PROJECT_ID=big-data-group-4 GCP_ZONE=us-central1-a GCP_REGION=us-central1 bash scripts/gcp/setup_gcp.sh
 ```
 
-Then push again to `hung1`.
+Then push again to `main`.
 
 ## 7. Full Cloud Pipeline Validation
 
@@ -281,6 +287,20 @@ For a real end-to-end run from a clean state, prefer the automated command:
 BRANCH=main STREAM_MAX_RECORDS=0 STREAM_THROTTLE_SECONDS=0.0 \
 make -f makefile/gcp/Makefile full-reset-run
 ```
+
+Reset and run the realtime-only branch from the beginning:
+
+```bash
+make -f makefile/gcp/Makefile full-reset-run-realtime
+```
+
+The full reset runner automatically:
+
+1. Packages the current workspace and uploads it to all three VMs.
+2. Writes a run-specific `.env.cloud` with clean Flink, Spark, Silver, and Gold prefixes.
+3. Resets PostgreSQL realtime tables, Kafka/Flink state, Spark local state, and the run-specific GCS prefixes.
+4. Retrains the pre-2020 baseline again when `RUN_OFFLINE_TRAINING=true`.
+5. Starts replay, TomTom live ingestion, Spark, H2O retraining, metrics collection, and service request/response checks.
 
 This command:
 

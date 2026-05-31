@@ -248,10 +248,22 @@ Reset and run the full cloud pipeline from the beginning:
 BRANCH=main make -f makefile/gcp/Makefile full-reset-run
 ```
 
+Reset and run the realtime-only branch from the beginning:
+
+```bash
+BRANCH=main make -f makefile/gcp/Makefile full-reset-run-realtime
+```
+
 Collect measured evidence after a run:
 
 ```bash
 make -f makefile/gcp/Makefile collect-metrics
+```
+
+Request/response checks for the main public services are written automatically to:
+
+```text
+logs/cloud_runs/<run-id>/service-checks.md
 ```
 
 Useful operational commands:
@@ -263,6 +275,20 @@ make -f makefile/gcp/Makefile reset-realtime
 ```
 
 For the full cloud runbook, see [docs/run.md](docs/run.md).
+
+## Cloud Service URLs
+
+| Service | URL |
+| --- | --- |
+| Dashboard | `http://35.224.149.110:3001` |
+| FastAPI | `http://35.224.149.110:8000` |
+| FastAPI Docs | `http://35.224.149.110:8000/docs` |
+| Airflow | `http://35.224.149.110:8080` |
+| MLflow | `http://35.224.149.110:5000` |
+| Grafana | `http://35.224.149.110:3000` |
+| Prometheus | `http://35.224.149.110:9090` |
+| Flink JobManager | `http://35.225.231.57:8081` |
+| Spark Master | `http://34.63.78.147:8080` |
 
 ## Current Scope And Limitations
 

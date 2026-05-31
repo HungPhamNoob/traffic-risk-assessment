@@ -34,22 +34,22 @@ export default function DashboardPage() {
   const summaryQuery = useQuery({
     queryKey: ["overview", mode],
     queryFn: () => api.overview(mode),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const pointsQuery = useQuery({
     queryKey: ["points", minRisk, mode],
     queryFn: () => api.mapPoints({ limit: 5000, min_risk: minRisk, mode }),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const latestQuery = useQuery({
     queryKey: ["latest", mode],
     queryFn: () => api.latest(10, mode),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const hotspotsQuery = useQuery({
     queryKey: ["hotspots"],
     queryFn: () => api.hotspots({ limit: 10, min_events: 1 }),
-    refetchInterval: 30_000
+    refetchInterval: 10_000
   });
   const riskByHourQuery = useQuery({
     queryKey: ["risk-by-hour", mode],
