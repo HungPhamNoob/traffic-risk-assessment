@@ -16,6 +16,7 @@ NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-600}"
 NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS="${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS:-15}"
 NODE3_MIN_SILVER_OBJECTS="${NODE3_MIN_SILVER_OBJECTS:-100}"
 NODE3_GCLOUD_STORAGE_TIMEOUT_SECONDS="${NODE3_GCLOUD_STORAGE_TIMEOUT_SECONDS:-60}"
+NODE3_RESET_LOCAL_SILVER_SNAPSHOT="${NODE3_RESET_LOCAL_SILVER_SNAPSHOT:-false}"
 NODE3_LOG_DIR="${PROJECT_ROOT}/logs"
 NODE3_LOCK_DIR="${NODE3_LOG_DIR}/.node3-run.lock"
 NODE3_LOCK_PID_FILE="${NODE3_LOCK_DIR}/pid"
@@ -248,8 +249,17 @@ wait_for_silver_data
 echo "Syncing Silver data from GCS to local disk for Spark processing."
 echo "GCS Silver:   ${SILVER_FEATURES_PATH}"
 echo "Local Silver: ${LOCAL_SILVER_FEATURES_PATH}"
-echo "Removing the previous local Silver snapshot so Spark never reads stale files."
-sudo rm -rf "${LOCAL_SILVER_FEATURES_PATH}"
+
+# Silver replay data is append-only in production. Keeping the previous local
+# snapshot lets Node 3 continue from where the last sync stopped instead of
+# re-downloading the entire history on every retrain run.
+if [ "${NODE3_RESET_LOCAL_SILVER_SNAPSHOT}" = "true" ]; then
+  echo "Resetting the local Silver snapshot before sync because NODE3_RESET_LOCAL_SILVER_SNAPSHOT=true."
+  sudo rm -rf "${LOCAL_SILVER_FEATURES_PATH}"
+else
+  echo "Preserving the existing local Silver snapshot so rsync can continue incrementally."
+fi
+
 mkdir -p "${LOCAL_SILVER_FEATURES_PATH}" "${LOCAL_GOLD_RETRAIN_PATH}"
 if ! gcloud storage rsync -r "${SILVER_FEATURES_PATH}" "${LOCAL_SILVER_FEATURES_PATH}"; then
   echo "WARNING: Silver rsync reported transient copy errors while streaming was active."
