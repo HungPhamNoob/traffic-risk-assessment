@@ -13,6 +13,10 @@ from app.core.config import get_settings
 
 
 PG_POOL: SimpleConnectionPool | None = None
+RECOVERABLE_READ_ERRORS = (
+    psycopg2.InterfaceError,
+    psycopg2.OperationalError,
+)
 
 
 def get_pg_pool() -> SimpleConnectionPool:
@@ -56,35 +60,57 @@ def get_connection():
     finally:
         if borrowed_from_pool:
             try:
-                pool.putconn(connection)
+                pool.putconn(connection, close=bool(getattr(connection, "closed", False)))
             except Exception:
                 connection.close()
         else:
-            connection.close()
+            if not bool(getattr(connection, "closed", False)):
+                connection.close()
+
+
+def _run_read_query(
+    query: Any,
+    params: Iterable[Any] | dict[str, Any] | None,
+    *,
+    fetch_many: bool,
+) -> dict[str, Any] | list[dict[str, Any]] | None:
+    for attempt in range(2):
+        with get_connection() as connection:
+            with connection.cursor(
+                cursor_factory=psycopg2.extras.RealDictCursor
+            ) as cursor:
+                try:
+                    cursor.execute(query, params)
+                except psycopg2.errors.UndefinedTable:
+                    return [] if fetch_many else None
+                except RECOVERABLE_READ_ERRORS:
+                    # Drop dead pooled connections so the next attempt borrows
+                    # a fresh backend instead of surfacing transient HTTP 500s.
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+                    if attempt == 0:
+                        continue
+                    raise
+                if fetch_many:
+                    return [dict(row) for row in cursor.fetchall()]
+                row = cursor.fetchone()
+                return dict(row) if row else None
+    return [] if fetch_many else None
 
 
 def fetch_one(
     query: Any, params: Iterable[Any] | dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     """Execute a read query and return one row as a dictionary."""
-    with get_connection() as connection:
-        with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            try:
-                cursor.execute(query, params)
-            except psycopg2.errors.UndefinedTable:
-                return None
-            row = cursor.fetchone()
-            return dict(row) if row else None
+    result = _run_read_query(query, params, fetch_many=False)
+    return result if isinstance(result, dict) or result is None else None
 
 
 def fetch_all(
     query: Any, params: Iterable[Any] | dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
     """Execute a read query and return all rows as dictionaries."""
-    with get_connection() as connection:
-        with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            try:
-                cursor.execute(query, params)
-            except psycopg2.errors.UndefinedTable:
-                return []
-            return [dict(row) for row in cursor.fetchall()]
+    result = _run_read_query(query, params, fetch_many=True)
+    return result if isinstance(result, list) else []
