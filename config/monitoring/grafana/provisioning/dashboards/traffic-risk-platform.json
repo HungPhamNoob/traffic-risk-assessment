@@ -162,7 +162,7 @@
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
-  "timezone": "UTC",
+  "timezone": "Asia/Ho_Chi_Minh",
   "title": "Traffic Risk Platform",
   "uid": "traffic-risk-platform",
   "version": 2,

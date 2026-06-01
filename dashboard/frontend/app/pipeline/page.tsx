@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { Activity, Database, GitBranch, RadioTower, ServerCog } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatVietnamTimestamp, formatVietnamTimestampLabel } from "@/lib/time";
 import { KpiCard } from "@/components/DataState";
 
 type AnyRecord = Record<string, any>;
@@ -130,7 +131,7 @@ export default function PipelinePage() {
   ];
   const throughputDetail =
     throughputData?.status === "stale" && throughputData?.window_anchor
-      ? `Latest active window ended ${String(throughputData.window_anchor)}`
+      ? formatVietnamTimestampLabel("Latest active window ended", throughputData.window_anchor)
       : `${throughputData?.event_count || 0} events / ${throughputData?.window || "5m"}`;
   const flowState =
     throughputData?.status === "ok"
@@ -146,15 +147,15 @@ export default function PipelinePage() {
       .join(" | ") || "No recent source activity";
   const latencyDetail =
     latencyData?.status === "stale" && latencyData?.window_anchor
-      ? `Latest active window ended ${String(latencyData.window_anchor)}`
+      ? formatVietnamTimestampLabel("Latest active window ended", latencyData.window_anchor)
       : statusText(latencyData);
   const avgLatencyDetail =
     latencyData?.status === "stale" && latencyData?.window_anchor
-      ? `Latest active window ended ${String(latencyData.window_anchor)}`
+      ? formatVietnamTimestampLabel("Latest active window ended", latencyData.window_anchor)
       : `Recent window: ${String(latencyData?.window || "5m")}`;
   const retrainState = String(latestRetrainRun?.status || "unavailable");
   const retrainDetail = latestRetrainRun?.start_time
-    ? `Last run: ${String(latestRetrainRun.start_time)}`
+    ? formatVietnamTimestampLabel("Last run", latestRetrainRun.start_time)
     : "No retrain run metadata yet";
 
   return (
@@ -271,10 +272,10 @@ export default function PipelinePage() {
                       <span className="status-pill">{String(item.status || "unavailable")}</span>
                     </div>
                     <span className="muted">
-                      rows: {Number(item.row_count || 0).toLocaleString()} | latest event: {String(item.latest_event_time || "n/a")}
+                      rows: {Number(item.row_count || 0).toLocaleString()} | latest event: {formatVietnamTimestamp(item.latest_event_time, "n/a")}
                     </span>
                     <span className="muted">
-                      latest insert: {String(item.latest_created_at || "n/a")}
+                      latest insert: {formatVietnamTimestamp(item.latest_created_at, "n/a")}
                     </span>
                   </div>
                 ))
@@ -355,7 +356,7 @@ export default function PipelinePage() {
               <tr key={run.run_id}>
                 <td className="mono">{run.run_name || run.run_id}</td>
                 <td>{run.status}</td>
-                <td>{run.start_time || "-"}</td>
+                <td>{formatVietnamTimestamp(run.start_time, "-")}</td>
                 <td>{formatPercent(run.metrics?.accuracy)}</td>
                 <td>{formatPercent(run.metrics?.weighted_f1 ?? run.metrics?.f1)}</td>
                 <td>{formatPercent(run.metrics?.weighted_recall ?? run.metrics?.recall)}</td>

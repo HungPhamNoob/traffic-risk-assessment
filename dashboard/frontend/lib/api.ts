@@ -3,12 +3,17 @@ import type { MapMode, ScenarioInput } from "./types";
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.VITE_API_BASE_URL ||
-  "http://localhost:8000";
+  "/api-proxy";
 
 type QueryValue = string | number | boolean | null | undefined;
 
 function buildUrl(path: string, params?: Record<string, QueryValue>) {
-  const url = new URL(path, API_BASE_URL);
+  const baseUrl = API_BASE_URL.startsWith("http")
+    ? API_BASE_URL
+    : typeof window !== "undefined"
+      ? `${window.location.origin}${API_BASE_URL}`
+      : `http://localhost:3001${API_BASE_URL}`;
+  const url = new URL(path, baseUrl);
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, String(value));

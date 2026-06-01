@@ -18,6 +18,7 @@ import {
 import { Layers, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { fallbackHotspots, fallbackPoints, fallbackSummary } from "@/lib/fallback";
+import { formatVietnamTimestamp } from "@/lib/time";
 import type { Hotspot, MapMode, ModelPerformance, OverviewSummary, PredictionPoint } from "@/lib/types";
 import { FallbackBanner, KpiCard } from "@/components/DataState";
 
@@ -170,7 +171,11 @@ export default function DashboardPage() {
         <KpiCard
           label="Latest event"
           value={summary.latest_event_time ? "Online" : "No data"}
-          detail={summary.latest_event_time || "Waiting for replay"}
+          detail={
+            summary.latest_event_time
+              ? formatVietnamTimestamp(summary.latest_event_time, "Waiting for replay")
+              : "Waiting for replay"
+          }
         />
         <KpiCard
           label="Active model"
@@ -353,7 +358,7 @@ export default function DashboardPage() {
                 <td className="mono">{point.event_id}</td>
                 <td>{Number(point.risk_score).toFixed(4)}</td>
                 <td>{point.predicted_severity ?? point.true_severity ?? "-"}</td>
-                <td>{point.event_time || "-"}</td>
+                <td>{formatVietnamTimestamp(point.event_time, "-")}</td>
                 <td>{statusText(point)}</td>
               </tr>
             ))}

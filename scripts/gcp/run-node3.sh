@@ -21,6 +21,7 @@ NODE3_LOG_DIR="${PROJECT_ROOT}/logs"
 NODE3_LOCK_DIR="${NODE3_LOG_DIR}/.node3-run.lock"
 NODE3_LOCK_PID_FILE="${NODE3_LOCK_DIR}/pid"
 NODE3_LOCK_OWNED=0
+NODE3_LOCK_BUSY_EXIT_CODE="${NODE3_LOCK_BUSY_EXIT_CODE:-75}"
 APT_CACHE_UPDATED=0
 NODE3_TEMP_DIR="$(mktemp -d /tmp/node3-run-XXXXXX)"
 NODE3_SILVER_LS_STDOUT="${NODE3_TEMP_DIR}/silver-ls.txt"
@@ -50,7 +51,7 @@ acquire_node3_lock() {
     existing_pid="$(cat "${NODE3_LOCK_PID_FILE}" 2>/dev/null || true)"
     if [ -n "${existing_pid}" ] && kill -0 "${existing_pid}" 2>/dev/null; then
       echo "Another Node 3 batch/retraining run is already active (PID ${existing_pid}). Exiting without interrupting it."
-      exit 0
+      exit "${NODE3_LOCK_BUSY_EXIT_CODE}"
     fi
   fi
 
@@ -63,7 +64,7 @@ acquire_node3_lock() {
   fi
 
   echo "Another Node 3 batch/retraining run acquired the lock first. Exiting cleanly."
-  exit 0
+  exit "${NODE3_LOCK_BUSY_EXIT_CODE}"
 }
 
 trap 'cleanup_node3_temp; release_node3_lock' EXIT

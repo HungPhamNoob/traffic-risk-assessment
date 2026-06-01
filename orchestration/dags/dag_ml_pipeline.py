@@ -48,7 +48,7 @@ with DAG(
     dag_id="model_retrain_hourly",
     default_args=default_args,
     description="Periodic H2O AutoML retraining from the latest Flink-generated Silver features",
-    schedule_interval=os.getenv("AIRFLOW_MODEL_RETRAIN_SCHEDULE", "*/15 * * * *"),
+    schedule_interval=os.getenv("AIRFLOW_MODEL_RETRAIN_SCHEDULE", "0 * * * *"),
     start_date=datetime(2026, 5, 1),
     catchup=False,
     max_active_runs=1,
@@ -61,26 +61,45 @@ with DAG(
     spark_silver_to_gold = BashOperator(
         task_id="spark_silver_to_gold",
         bash_command=r"""
+            set -euo pipefail
             echo "=== [Airflow] Spark Silver -> Gold ==="
             SSH_KEY_PATH="${SSH_KEY:-/run/secrets/google_compute_engine}"
             SSH_TARGET="${HUNG_SSH_USER:-runner}@${NODE3_INTERNAL_IP:-10.128.0.8}"
+            NODE3_LOCK_BUSY_EXIT_CODE="${NODE3_LOCK_BUSY_EXIT_CODE:-75}"
+            NODE3_LOCK_WAIT_SECONDS="${NODE3_LOCK_WAIT_SECONDS:-10800}"
+            NODE3_LOCK_POLL_SECONDS="${NODE3_LOCK_POLL_SECONDS:-60}"
+            waited_seconds=0
             if [ ! -f "${SSH_KEY_PATH}" ]; then
                 echo "ERROR: SSH key not found at ${SSH_KEY_PATH}"
                 exit 1
             fi
-            ssh -i "${SSH_KEY_PATH}" \
-                -o IdentitiesOnly=yes \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                -o ConnectTimeout=15 \
-                "${SSH_TARGET}" "
-                cd /opt/traffic &&
-                bash scripts/gcp/run-node3.sh
-            " || {
-                echo "ERROR: Spark Silver -> Gold failed. Attempting Node 2/3 recovery before retry."
-                exit 1
-            }
+            while true; do
+                set +e
+                ssh -i "${SSH_KEY_PATH}" \
+                    -o IdentitiesOnly=yes \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    -o ConnectTimeout=15 \
+                    "${SSH_TARGET}" "
+                    cd /opt/traffic &&
+                    bash scripts/gcp/run-node3.sh
+                "
+                exit_code=$?
+                set -e
+                if [ "${exit_code}" -eq 0 ]; then
+                    break
+                fi
+                if [ "${exit_code}" -eq "${NODE3_LOCK_BUSY_EXIT_CODE}" ] && [ "${waited_seconds}" -lt "${NODE3_LOCK_WAIT_SECONDS}" ]; then
+                    echo "Node 3 retraining is busy. Waiting ${NODE3_LOCK_POLL_SECONDS}s before retrying (${waited_seconds}/${NODE3_LOCK_WAIT_SECONDS}s)."
+                    sleep "${NODE3_LOCK_POLL_SECONDS}"
+                    waited_seconds=$((waited_seconds + NODE3_LOCK_POLL_SECONDS))
+                    continue
+                fi
+                echo "ERROR: Spark Silver -> Gold failed with exit code ${exit_code}."
+                exit "${exit_code}"
+            done
         """,
+        execution_timeout=timedelta(hours=6),
     )
 
     # ------------------------------------------------------------------
@@ -89,9 +108,11 @@ with DAG(
     h2o_retrain = BashOperator(
         task_id="h2o_retrain",
         bash_command="""
+            set -euo pipefail
             echo "=== [Airflow] H2O AutoML Retrain ==="
-            echo "Node 3 retraining already ran inside scripts/gcp/run-node3.sh."
+            echo "Node 3 retraining completed inside scripts/gcp/run-node3.sh."
         """,
+        execution_timeout=timedelta(hours=1),
     )
 
     # ------------------------------------------------------------------

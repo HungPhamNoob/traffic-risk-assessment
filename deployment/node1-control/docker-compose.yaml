@@ -187,12 +187,15 @@ services:
       - ../../ml/mlruns:/mlruns
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
     command: >
-      mlflow server 
-      --host 0.0.0.0 --port 5000 
-      -w ${MLFLOW_GUNICORN_WORKERS:-2}
-      --backend-store-uri sqlite:////mlruns/mlflow.db 
-      --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-gs://capstone-data-lake/mlflow-artifacts}/
-      --gunicorn-opts "--timeout ${MLFLOW_GUNICORN_TIMEOUT_SECONDS:-300}"
+      bash -lc "
+        python -m pip install --no-cache-dir --disable-pip-version-check google-auth google-cloud-storage &&
+        exec mlflow server
+          --host 0.0.0.0 --port 5000
+          -w ${MLFLOW_GUNICORN_WORKERS:-2}
+          --backend-store-uri sqlite:////mlruns/mlflow.db
+          --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-gs://capstone-data-lake/mlflow-artifacts}/
+          --gunicorn-opts \"--timeout ${MLFLOW_GUNICORN_TIMEOUT_SECONDS:-300}\"
+      "
     networks:
       - capstone-net
     deploy:
@@ -217,7 +220,10 @@ services:
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
       - ../../scripts/gcp/mlflow-serving-entrypoint.sh:/app/mlflow-serving-entrypoint.sh:ro
     command: >
-      bash /app/mlflow-serving-entrypoint.sh
+      bash -lc "
+        python -m pip install --no-cache-dir --disable-pip-version-check google-auth google-cloud-storage &&
+        exec bash /app/mlflow-serving-entrypoint.sh
+      "
     depends_on:
       - mlflow
     networks:
@@ -296,7 +302,8 @@ services:
     ports:
       - "${DASHBOARD_PORT:-3001}:3000"
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://35.224.149.110:8000}
+      - NEXT_PUBLIC_API_BASE_URL=/api-proxy
+      - DASHBOARD_PROXY_TARGET=${DASHBOARD_PROXY_TARGET:-http://fastapi:8000}
     volumes:
       - ../../dashboard/frontend:/app
       - dashboard_next_cache:/tmp/next-cache
