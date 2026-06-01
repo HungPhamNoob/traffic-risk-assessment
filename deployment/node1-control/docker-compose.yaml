@@ -20,8 +20,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: "2.0"
+          memory: 2G
           cpus: '1.0'
     restart: unless-stopped
     logging:
@@ -226,7 +225,7 @@ services:
       resources:
         limits:
           memory: 4G
-          cpus: "2.0"
+          cpus: '2.0'
     restart: on-failure
     logging:
       driver: json-file
