@@ -8,7 +8,7 @@ Data flows:
         Kafka traffic.us.raw
         -> feature engineering  (processing.feature_engineering.build_features)
         -> Silver GCS write     (batched JSONL per partition)
-        -> MLflow / H2O inference
+        -> MLflow / H2O inference  (micro-batch: ML_BATCH_SIZE events per HTTP call)
         -> PostgreSQL table:    traffic_risk_predictions
 
     TomTom live flow (rule-based, no H2O):
@@ -92,6 +92,7 @@ MLFLOW_SERVING_ENDPOINT = os.getenv(
 )
 ML_TIMEOUT_SECONDS = float(os.getenv("ML_TIMEOUT_SECONDS", "5"))
 ML_FALLBACK_RISK_SCORE = float(os.getenv("ML_FALLBACK_RISK_SCORE", "-1"))
+ML_BATCH_SIZE = int(os.getenv("ML_BATCH_SIZE", "100"))
 
 SILVER_FEATURES_PATH = os.getenv(
     "SILVER_FEATURES_PATH",
@@ -154,6 +155,9 @@ PG_POOL: Optional[SimpleConnectionPool] = None
 US_BATCH_BUFFER: List[Dict[str, Any]] = []
 TOMTOM_BATCH_BUFFER: List[Dict[str, Any]] = []
 _SCHEMA_INITIALIZED = False
+
+# Micro-batch MLflow inference buffer
+_ML_INFERENCE_BUFFER: List[Tuple[Dict[str, Any], str, float]] = []
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +513,7 @@ def compute_risk_score(
 
 
 # ---------------------------------------------------------------------------
-# MLflow inference helpers
+# MLflow micro-batch inference helpers
 # ---------------------------------------------------------------------------
 
 
@@ -522,33 +526,153 @@ def _extract_prediction(prediction: Any) -> Tuple[Optional[int], Optional[float]
     return severity, risk
 
 
-def call_mlflow_model(
-    features: Dict[str, Any]
-) -> Tuple[Optional[int], Optional[float]]:
-    """Call MLflow Serving for US replay events and return (severity, risk_score)."""
-    row = []
-    for column in MODEL_FEATURE_COLUMNS:
-        if column not in features:
-            raise ValueError(f"Missing feature column: {column}")
-        row.append(features[column])
+def _call_mlflow_batch(
+    batch: List[Tuple[Dict[str, Any], str, float]]
+) -> List[Tuple[Optional[int], Optional[float]]]:
+    """Call MLflow Serving with a micro-batch of features for throughput.
 
-    payload = {"dataframe_split": {"columns": MODEL_FEATURE_COLUMNS, "data": [row]}}
+    Args:
+        batch: List of tuples (features_dict, ingestion_time_str, start_ts).
+
+    Returns:
+        List of (severity, risk_score) tuples, one per input row.
+    """
+    rows_data = []
+    valid_indices = []
+    for i, (features, _ingestion, _start) in enumerate(batch):
+        row = []
+        try:
+            for column in MODEL_FEATURE_COLUMNS:
+                if column not in features:
+                    raise ValueError(f"Missing feature column: {column}")
+                row.append(features[column])
+            rows_data.append(row)
+            valid_indices.append(i)
+        except Exception:
+            logger.warning(
+                "Skipping row %s in micro-batch — missing feature columns",
+                features.get("event_id", "?"),
+            )
+
+    if not rows_data:
+        return [(None, None)] * len(batch)
+
+    payload = {
+        "dataframe_split": {
+            "columns": MODEL_FEATURE_COLUMNS,
+            "data": rows_data,
+        }
+    }
 
     try:
         response = requests.post(
             MLFLOW_SERVING_ENDPOINT,
             json=payload,
-            timeout=ML_TIMEOUT_SECONDS,
+            timeout=max(ML_TIMEOUT_SECONDS, len(rows_data) * 0.1 + 2),
             headers={"Content-Type": "application/json"},
         )
         response.raise_for_status()
         predictions = response.json().get("predictions", [])
-        if not predictions:
-            return None, None
-        return _extract_prediction(predictions[0])
     except Exception:
-        logger.exception("MLflow inference failed for US replay event")
-        return None, None
+        logger.exception(
+            "MLflow micro-batch inference failed for %d rows", len(rows_data)
+        )
+        return [(None, None)] * len(batch)
+
+    # Map predictions back to original batch indices
+    results = [(None, None)] * len(batch)
+    for pred_idx, idx in enumerate(valid_indices):
+        if pred_idx < len(predictions):
+            results[idx] = _extract_prediction(predictions[pred_idx])
+
+    return results
+
+
+def flush_ml_batch() -> None:
+    """Flush the buffered MLflow inference micro-batch."""
+    global _ML_INFERENCE_BUFFER
+    if not _ML_INFERENCE_BUFFER:
+        return
+
+    batch = _ML_INFERENCE_BUFFER
+    _ML_INFERENCE_BUFFER = []
+
+    batch_start = time.time()
+    predictions = _call_mlflow_batch(batch)
+    batch_elapsed_ms = (time.time() - batch_start) * 1000
+
+    batch_size = len(batch)
+    per_event_ms = batch_elapsed_ms / batch_size if batch_size > 0 else 0
+
+    logger.info(
+        "MLflow micro-batch flush: %d events in %.1f ms (%.2f ms/event)",
+        batch_size,
+        batch_elapsed_ms,
+        per_event_ms,
+    )
+
+    for (features, ingestion_time, start_ts), (predicted_severity, _ml_risk_score) in zip(
+        batch, predictions
+    ):
+        inference_latency_ms = (time.time() - start_ts) * 1000
+
+        if predicted_severity is not None:
+            risk_score = compute_risk_score(
+                severity=predicted_severity,
+                is_night=features.get("is_night"),
+                is_weekend=features.get("is_weekend"),
+                road_type_code=features.get("road_type_code"),
+                weather_code=features.get("weather_code"),
+            )
+        else:
+            fallback_severity = features.get("true_severity")
+            if fallback_severity is not None:
+                risk_score = compute_risk_score(
+                    severity=fallback_severity,
+                    is_night=features.get("is_night"),
+                    is_weekend=features.get("is_weekend"),
+                    road_type_code=features.get("road_type_code"),
+                    weather_code=features.get("weather_code"),
+                )
+            elif ML_FALLBACK_RISK_SCORE >= 0:
+                risk_score = round(max(0.0, min(1.0, ML_FALLBACK_RISK_SCORE)), 4)
+            else:
+                risk_score = 0.25
+
+        processed_time = datetime.now(timezone.utc).isoformat()
+        e2e_latency = parse_latency_ms(ingestion_time, processed_time)
+
+        row = {
+            **features,
+            "predicted_severity": predicted_severity,
+            "risk_score": risk_score,
+            "model_status": "ok" if predicted_severity is not None else "failed",
+            "inference_latency_ms": inference_latency_ms,
+            "ingestion_time": ingestion_time,
+            "processed_time": processed_time,
+            "end_to_end_latency_ms": e2e_latency,
+        }
+        buffer_us_row(row)
+
+
+def call_mlflow_model(
+    features: Dict[str, Any]
+) -> Tuple[Optional[int], Optional[float]]:
+    """Buffer a single event into micro-batch for MLflow inference.
+
+    When the buffer reaches ML_BATCH_SIZE, the batch is flushed to the
+    MLflow Serving endpoint as a single HTTP request with multiple rows.
+    """
+    start = time.time()
+    ingestion_time = str(features.get("ingestion_time", features.get("_ingested_at_utc", "")))
+
+    _ML_INFERENCE_BUFFER.append((features, ingestion_time, start))
+
+    if len(_ML_INFERENCE_BUFFER) >= ML_BATCH_SIZE:
+        flush_ml_batch()
+
+    # Return a placeholder — actual values are filled by flush_ml_batch
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -711,10 +835,10 @@ def buffer_tomtom_row(row: Dict[str, Any]) -> None:
 def process_us_message(raw_message: str) -> str:
     """Process one US replay message from Kafka.
 
-    Steps: parse JSON -> feature engineering -> Silver GCS write -> MLflow inference
-           -> unified risk score -> buffer for batch PostgreSQL insert.
+    Steps: parse JSON -> feature engineering -> Silver GCS write
+           -> buffer for micro-batch MLflow inference
+           -> unified risk score -> batch PostgreSQL insert.
     """
-    start = time.time()
     try:
         raw_row = json.loads(raw_message)
         ingestion_time = raw_row.get("_ingested_at_utc")
@@ -725,52 +849,12 @@ def process_us_message(raw_message: str) -> str:
         # Silver layer write (optional, can be disabled for throughput testing)
         write_to_gcs_silver(features)
 
-        # MLflow inference
-        predicted_severity, _ml_risk_score = call_mlflow_model(features)
-        inference_latency_ms = (time.time() - start) * 1000
+        # Buffer for micro-batch MLflow inference.
+        # call_mlflow_model stores the event; when buffer hits ML_BATCH_SIZE
+        # it flushes all events to MLflow in a single HTTP request.
+        call_mlflow_model(features)
 
-        # Compute unified risk score using all available context features.
-        # If MLflow returns a valid severity, use it; otherwise fall back to
-        # true_severity from the original record with full context bonuses.
-        if predicted_severity is not None:
-            risk_score = compute_risk_score(
-                severity=predicted_severity,
-                is_night=features.get("is_night"),
-                is_weekend=features.get("is_weekend"),
-                road_type_code=features.get("road_type_code"),
-                weather_code=features.get("weather_code"),
-            )
-        else:
-            # MLflow failed — use true severity with context features
-            fallback_severity = features.get("true_severity")
-            if fallback_severity is not None:
-                risk_score = compute_risk_score(
-                    severity=fallback_severity,
-                    is_night=features.get("is_night"),
-                    is_weekend=features.get("is_weekend"),
-                    road_type_code=features.get("road_type_code"),
-                    weather_code=features.get("weather_code"),
-                )
-            elif ML_FALLBACK_RISK_SCORE >= 0:
-                risk_score = round(max(0.0, min(1.0, ML_FALLBACK_RISK_SCORE)), 4)
-            else:
-                risk_score = 0.25
-
-        processed_time = datetime.now(timezone.utc).isoformat()
-        e2e_latency = parse_latency_ms(ingestion_time, processed_time)
-
-        row = {
-            **features,
-            "predicted_severity": predicted_severity,
-            "risk_score": risk_score,
-            "model_status": "ok" if predicted_severity is not None else "failed",
-            "inference_latency_ms": inference_latency_ms,
-            "ingestion_time": ingestion_time,
-            "processed_time": processed_time,
-            "end_to_end_latency_ms": e2e_latency,
-        }
-        buffer_us_row(row)
-        return f"US_OK: {features.get('event_id')}"
+        return f"US_BUFFERED: {features.get('event_id')}"
     except Exception as exc:
         logger.exception("US message processing failed: %s", str(raw_message)[:200])
         return f"US_FAIL: {exc}"
@@ -874,6 +958,7 @@ def main() -> None:
         PG_TOMTOM_TABLE,
     )
     logger.info("US MLflow endpoint: %s", MLFLOW_SERVING_ENDPOINT)
+    logger.info("ML micro-batch size: %d events per HTTP call", ML_BATCH_SIZE)
     logger.info("US Silver path: %s", SILVER_FEATURES_PATH)
     logger.info(
         "PG pool: min=%d max=%d batch_size=%d",
@@ -938,6 +1023,7 @@ def main() -> None:
     # Flush any remaining buffered rows before the job exits.
     import atexit
     atexit.register(flush_all_silver_batches)
+    atexit.register(flush_ml_batch)
     atexit.register(flush_us_batch)
     atexit.register(flush_tomtom_batch)
 

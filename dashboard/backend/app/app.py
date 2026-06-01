@@ -48,7 +48,7 @@ app.add_middleware(
         "http://35.224.149.110:5173",
         "http://35.224.149.110:3001",
     ],
-    allow_origin_regex=r"http://.*",
+    allow_origin_regex=r"https?://.*",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

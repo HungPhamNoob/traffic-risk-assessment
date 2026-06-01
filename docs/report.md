@@ -1,516 +1,717 @@
-# Traffic Risk Assessment Platform Report
-
-## 1. Purpose
-
-This project is a cloud-based traffic risk assessment platform with two main goals:
-
-1. Replay a large US accidents dataset as a realtime stream.
-2. Combine that replay stream with live TomTom traffic incidents to drive a dashboard, model inference, retraining, and monitoring workflow.
-
-The platform is split across three Google Compute Engine VMs so streaming, control-plane services, and batch/retraining work can run independently.
-
-## 2. High-Level Architecture
-
-### Node 1: Control Plane
-
-Responsibilities:
-
-- PostgreSQL/PostGIS storage
-- FastAPI backend for dashboard APIs
-- Next.js frontend dashboard
-- MLflow tracking server
-- MLflow model serving endpoint
-- Airflow scheduler and web UI
-- Prometheus and Grafana
-
-Main services:
-
-- `node1-postgres`
-- `node1-fastapi`
-- `node1-dashboard-frontend`
-- `node1-mlflow`
-- `node1-mlflow-serving`
-- `node1-airflow`
-- `node1-prometheus`
-- `node1-grafana`
-
-### Node 2: Streaming Plane
-
-Responsibilities:
-
-- Zookeeper
-- 3 Kafka brokers
-- Kafka topic bootstrap
-- 3 US replay producers
-- 1 TomTom live producer
-- 1 unified PyFlink job
-- Redis
-
-Main services:
-
-- `node2-zookeeper`
-- `node2-kafka-1`
-- `node2-kafka-2`
-- `node2-kafka-3`
-- `node2-kafka-topic-init`
-- `node2-producer-0`
-- `node2-producer-1`
-- `node2-producer-2`
-- `node2-tomtom-producer`
-- `node2-flink-jm`
-- `node2-flink-tm`
-- `node2-flink-python-job`
-
-### Node 3: Batch / Retraining Plane
-
-Responsibilities:
-
-- Spark master and workers
-- Silver-to-Gold batch processing
-- Gold dataset materialization
-- H2O AutoML retraining from latest replay features
-
-Main services:
-
-- `node3-spark-master`
-- `node3-spark-worker-1`
-- `node3-spark-worker-2`
-- `node3-spark-worker-3`
-
-## 3. End-to-End Data Flow
-
-### 3.1 US Replay Flow
-
-1. Source file:
-   `gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv`
-2. Three Kafka producers split the CSV by `row_index % TOTAL_PRODUCERS`.
-3. Each row is published to Kafka topic `traffic.us.raw`.
-4. PyFlink reads raw rows from Kafka.
-5. `processing.feature_engineering.build_features` normalizes and engineers model features.
-6. Feature rows are buffered and written to Silver storage in GCS.
-7. Features are sent to MLflow Serving for severity inference.
-8. Risk score is computed from predicted severity plus context features.
-9. Results are batch-upserted into PostgreSQL table `traffic_risk_predictions`.
-10. FastAPI reads this table for the dashboard map, overview cards, pipeline metrics, hotspots, and analytics.
-
-### 3.2 TomTom Live Flow
-
-1. TomTom producer polls the incident API on a schedule.
-2. Incidents are written to Kafka topic `traffic.tomtom.raw`.
-3. PyFlink reads live incident messages.
-4. `processing.streaming_enrichment.enrich_tomtom_event` expands the payload.
-5. Shared feature engineering runs again.
-6. Severity is derived with rule-based logic instead of the US H2O model.
-7. Unified risk score is computed from delay, severity, weather, road context, and time context.
-8. Results are batch-upserted into PostgreSQL table `traffic_tomtom_incidents`.
-9. The dashboard renders TomTom rows as live triangle markers on the map.
-
-### 3.3 Retraining Flow
-
-1. Flink writes replay features into Silver storage:
-   `gs://big-data-group-4-silver/process/flink_features`
-2. Airflow triggers Node 3 retraining work.
-3. Node 3 syncs Silver data from GCS to local disk.
-4. Spark reads the Silver snapshot and produces Gold retraining data.
-5. Gold outputs are written locally, then synced back to GCS:
-   - `GOLD_RETRAIN_PARQUET_PATH`
-   - `GOLD_RETRAIN_CSV_PATH`
-6. H2O AutoML trains a refreshed model from the Gold data.
-7. The best model is logged and registered in MLflow.
-8. Node 1 MLflow Serving can then serve the refreshed model version.
-
-## 4. Backend API Structure
-
-### Overview
-
-Route: `dashboard/backend/app/routes/overview.py`
-
-Main endpoint:
-
-- `GET /api/v1/overview/summary`
-
-Returns:
-
-- total events
-- high-risk event count
-- average risk score
-- latest event timestamp
-- current mode (`replay`, `live`, `full`)
-- latest selected model metrics from MLflow history
-
-### Predictions
-
-Route: `dashboard/backend/app/routes/predictions.py`
-
-Main endpoints:
-
-- `GET /api/v1/predictions/map`
-- `GET /api/v1/predictions/latest`
-- `GET /api/v1/predictions/{event_id}`
-
-Purpose:
-
-- Provide map markers for replay and live sources
-- Return latest rows for the predictions table
-- Return full detail for one event
-
-Important behavior:
-
-- Replay rows come from `traffic_risk_predictions`
-- Live rows come from `traffic_tomtom_incidents`
-- `mode=full` balances both sources so TomTom rows do not crowd out replay rows
-- US replay rows now expose severity consistently to the dashboard tooltip path
-
-### Analytics
-
-Route: `dashboard/backend/app/routes/analytics.py`
-
-Main endpoints:
-
-- `GET /api/v1/analytics/severity-distribution`
-- `GET /api/v1/analytics/risk-by-hour`
-- `GET /api/v1/analytics/weather-histogram`
-- `GET /api/v1/analytics/timeseries`
-
-Purpose:
-
-- Power dashboard charts
-- Support replay-only, live-only, or combined views
-
-### Pipeline
-
-Route: `dashboard/backend/app/routes/pipeline.py`
-
-Main endpoints:
-
-- `GET /api/v1/pipeline/throughput`
-- `GET /api/v1/pipeline/latency`
-- `GET /api/v1/pipeline/checkpoints`
-- `GET /api/v1/pipeline/replay-health`
-
-Purpose:
-
-- Show whether data is flowing
-- Show recent latency
-- Show freshness for checkpoint and Gold outputs
-- Show source-level row counts, latest event time, latest insert time, and model statuses
-
-### System
-
-Route: `dashboard/backend/app/routes/system.py`
-
-Purpose:
-
-- Return the active runtime config that the dashboard needs to explain topology and service endpoints
-
-## 5. Frontend Dashboard Structure
-
-### Dashboard Page
-
-File:
-`dashboard/frontend/app/page.tsx`
-
-Main sections:
-
-- Overview KPI cards
-- Replay / live / full map switcher
-- Risk heatmap and point overlay
-- Hotspot list
-- Hourly risk chart
-- Severity distribution chart
-- Weather histograms
-- Latest prediction table
-
-Map semantics:
-
-- Replay points: circles
-- TomTom live points: triangles
-- Replay tooltip now shows predicted severity, true severity, and risk
-- Live tooltip shows severity and display risk
-
-### Pipeline Page
-
-File:
-`dashboard/frontend/app/pipeline/page.tsx`
-
-Main sections:
-
-- Throughput and latency KPIs
-- Stream flow KPI
-- Retrain loop KPI
-- System topology
-- Source freshness panel
-- Latency chart
-- Model performance trend
-- Retrain history table
-
-Important UX change:
-
-- The destructive reset card/button should not be the main operator control path.
-- The page now focuses on whether data is flowing, whether inserts are fresh, and whether retraining is healthy.
-
-## 6. Airflow Workflows
-
-### `model_retrain_hourly`
-
-File:
-`orchestration/dags/dag_ml_pipeline.py`
-
-Current workflow:
-
-1. Airflow uses the mounted VM SSH key and internal IP for Node 3.
-2. It runs `scripts/gcp/run-node3.sh`.
-3. That Node 3 script:
-   - ensures Spark services are running
-   - waits for Silver data
-   - syncs Silver from GCS to local disk
-   - runs Spark Silver-to-Gold
-   - syncs Gold back to GCS
-   - runs H2O online retraining
-4. Airflow then records completion.
-
-Operational guardrail:
-
-- `max_active_runs=1` prevents overlapping retrain runs from piling up.
-
-### `streaming_health_check`
-
-File:
-`orchestration/dags/dag_stream_replay_monitor.py`
-
-Current workflow:
-
-1. Check Kafka broker ports directly over the internal network.
-2. Check Flink JobManager HTTP on Node 2.
-3. Check that at least one Flink job is in `RUNNING` state.
-4. Check Spark UI HTTP on Node 3.
-5. Always emit a summary task result.
-
-Operational guardrail:
-
-- The DAG is intentionally read-only.
-- It should not restart or reset the pipeline just because a health check failed.
-- `max_active_runs=1` and `retries=0` prevent the health DAG from stacking up many overlapping runs.
-
-## 7. Critical Runtime Scripts
-
-### `scripts/gcp/run-node1.sh`
-
-Purpose:
-
-- Start or reconcile Node 1 services
-- Bootstrap offline model training only when needed
-- Restart MLflow serving after the model is available
-
-### `scripts/gcp/run-node2.sh`
-
-Purpose:
-
-- Start Kafka, producers, Redis, and Flink services on Node 2
-
-Important behavior:
-
-- Removes stale Node 2 containers first
-- Rebuilds and starts the Node 2 compose stack
-- Verifies the mounted project root
-
-### `scripts/gcp/run-node3.sh`
-
-Purpose:
-
-- Start Spark services
-- Sync Silver data locally
-- Run Spark batch
-- Sync Gold outputs back to GCS
-- Execute H2O retraining
-
-### `scripts/gcp/dashboard-full-realtime-reset-run.sh`
-
-Purpose:
-
-- Previously used as a dashboard reset entrypoint
-
-Operator note:
-
-- This path should be treated carefully because reset-style workflows are disruptive.
-- The dashboard should prefer health visibility and targeted restarts over destructive resets.
-
-## 8. Key Configuration Values
-
-### Storage and Data Paths
-
-- `US_PIPELINE_REPLAY_PATH`
-- `SILVER_FEATURES_PATH`
-- `GOLD_RETRAIN_PATH`
-- `GOLD_RETRAIN_PARQUET_PATH`
-- `GOLD_RETRAIN_CSV_PATH`
-- `FLINK_CHECKPOINT_DIR`
-- `SPARK_CHECKPOINT_DIR`
-
-### PostgreSQL
-
-- `POSTGRES_HOST`
-- `POSTGRES_DB`
-- `POSTGRES_PREDICTION_TABLE`
-- `POSTGRES_US_PREDICTION_TABLE`
-- `POSTGRES_TOMTOM_TABLE`
-- `PG_BATCH_SIZE`
-- `PG_POOL_MAX_CONN`
-
-Why they matter:
-
-- Table names must match the dashboard/backend query layer.
-- Batch size and pool size materially affect ingest throughput.
-
-### Streaming
-
-- `KAFKA_BOOTSTRAP_SERVERS`
-- `KAFKA_TOPIC_RAW`
-- `KAFKA_TOPIC_TOMTOM_RAW`
-- `FLINK_PARALLELISM`
-- `STREAM_MAX_RECORDS`
-- `STREAM_THROTTLE_SECONDS`
-- `STREAM_LOOP_FOREVER`
-- `PRODUCER_FLUSH_EVERY_N_RECORDS`
-
-Why they matter:
-
-- `STREAM_THROTTLE_SECONDS` caps producer rate if nonzero.
-- `STREAM_LOOP_FOREVER=true` keeps replay production alive after a full CSV pass.
-- `FLINK_PARALLELISM`, `PG_BATCH_SIZE`, and `PG_POOL_MAX_CONN` together shape end-to-end throughput.
-
-### MLflow / Model Serving
-
-- `MLFLOW_TRACKING_URI`
-- `MLFLOW_SERVING_ENDPOINT`
-- `ML_MODEL_NAME`
-- `ML_TIMEOUT_SECONDS`
-- `MLFLOW_GUNICORN_WORKERS`
-
-Why they matter:
-
-- The Flink US replay path calls the serving endpoint for inference.
-- More serving workers can improve concurrent inference throughput.
-
-### Airflow
-
-- `AIRFLOW_MODEL_RETRAIN_SCHEDULE`
-- `AIRFLOW_STREAM_HEALTH_SCHEDULE`
-- `HUNG_SSH_USER`
-- `NODE2_INTERNAL_IP`
-- `NODE3_INTERNAL_IP`
-
-Why they matter:
-
-- The retrain DAG needs a working path from Airflow to Node 3.
-- The health DAG needs stable internal service addresses.
-
-## 9. Observed Operational Issues and Fix Themes
-
-### Replay appeared frozen
-
-Observed behavior:
-
-- Dashboard totals stopped moving.
-- US replay producers had already exited after finishing one full CSV pass.
-
-Fix direction:
-
-- Keep replay producers alive with looped playback when desired.
-
-### Throughput looked too low
-
-Observed behavior:
-
-- Only a small number of rows were reaching PostgreSQL relative to the input volume.
-
-Likely contributors:
-
-- Per-event HTTP inference to MLflow
-- Conservative PostgreSQL batch settings
-- Limited MLflow serving workers
-
-Fix direction:
-
-- Increase `PG_BATCH_SIZE`
-- Increase `PG_POOL_MAX_CONN`
-- Increase `MLFLOW_GUNICORN_WORKERS`
-- Keep replay generation continuous so throughput is visible on the dashboard
-
-### Retraining was not visible in the dashboard
-
-Observed behavior:
-
-- Airflow retrain runs were failing immediately.
-
-Root cause:
-
-- Airflow tried to SSH as `airflow@node3-batch` without a usable key.
-
-Fix direction:
-
-- Mount the VM SSH key into the Airflow container
-- Use explicit VM user and internal IP
-- Prevent overlapping retrain runs
-
-### Stream health DAG caused noise
-
-Observed behavior:
-
-- Many `up_for_retry` runs accumulated
-- Health checks failed because of the same SSH issue
-
-Fix direction:
-
-- Replace SSH checks with direct internal network probes
-- Make the DAG read-only
-- Prevent overlapping health runs
-
-## 10. Recommended Operator Workflow
-
-1. Check dashboard `/pipeline` first.
-2. Confirm `Throughput`, `Stream flow`, and `Source freshness`.
-3. If replay rows stop updating:
-   - inspect Node 2 producers
-   - inspect Kafka lag
-   - inspect Flink logs
-4. If retraining stops:
-   - inspect `model_retrain_hourly` in Airflow
-   - inspect Node 3 Spark/H2O logs
-   - confirm Gold output freshness
-5. Avoid destructive resets unless there is no safer recovery path.
-
-## 11. Files Most Important for Maintenance
-
-- `dashboard/backend/app/services/prediction_service.py`
-- `dashboard/backend/app/services/pipeline_service.py`
-- `dashboard/backend/app/services/analytics_service.py`
-- `dashboard/frontend/app/page.tsx`
-- `dashboard/frontend/app/pipeline/page.tsx`
-- `dashboard/frontend/components/RiskMap.tsx`
-- `processing/flink_streaming.py`
-- `ingestion/kafka/us_producer.py`
-- `orchestration/dags/dag_ml_pipeline.py`
-- `orchestration/dags/dag_stream_replay_monitor.py`
-- `scripts/gcp/run-node1.sh`
-- `scripts/gcp/run-node2.sh`
-- `scripts/gcp/run-node3.sh`
-- `.env.cloud`
-
-## 12. Summary
-
-The platform is a multi-node streaming, inference, monitoring, and retraining system centered on:
-
-- Kafka for ingest
-- PyFlink for realtime processing
-- PostgreSQL/PostGIS for serving data to the dashboard
-- Spark + H2O + MLflow for retraining
-- FastAPI + Next.js for presentation
-- Airflow for orchestration
-
-The most important operational principle is to prefer continuous, observable reconciliation over destructive reset behavior. In practice, that means:
-
-- keep replay producers alive
-- expose freshness clearly in the dashboard
-- avoid health checks that mutate the system
-- use retraining automation that can actually reach Node 3
+# Traffic Risk Assessment Platform — Comprehensive System Report
+
+**Repository:** `github.com/HungPhamNoob/traffic-risk-assessment`  
+**Date:** 2026-06-01  
+**Environment:** Google Cloud Platform (GCP) — 3 VMs  
+
+---
+
+## Table of Contents
+
+1. [System Overview](#1-system-overview)
+2. [Architecture & Data Flow](#2-architecture--data-flow)
+3. [Infrastructure & Node Topology](#3-infrastructure--node-topology)
+4. [Google Cloud Storage (GCS) Bucket Strategy](#4-google-cloud-storage-gcs-bucket-strategy)
+5. [Component Deep Dive](#5-component-deep-dive)
+    - [5.1 Data Ingestion (Kafka Producers)](#51-data-ingestion-kafka-producers)
+    - [5.2 Apache Kafka](#52-apache-kafka)
+    - [5.3 Apache Flink Streaming](#53-apache-flink-streaming)
+    - [5.4 MLflow & H2O Model Serving](#54-mlflow--h2o-model-serving)
+    - [5.5 Apache Spark Batch](#55-apache-spark-batch)
+    - [5.6 PostgreSQL / PostGIS](#56-postgresql--postgis)
+    - [5.7 Apache Airflow](#57-apache-airflow)
+    - [5.8 FastAPI Dashboard Backend](#58-fastapi-dashboard-backend)
+    - [5.9 Next.js Dashboard Frontend](#59-nextjs-dashboard-frontend)
+    - [5.10 Monitoring Stack (Prometheus + Grafana + Blackbox)](#510-monitoring-stack)
+6. [Dashboard Pages & Features](#6-dashboard-pages--features)
+7. [Throughput & Latency Optimization](#7-throughput--latency-optimization)
+8. [CI/CD Pipeline](#8-cicd-pipeline)
+9. [Key Configuration Parameters](#9-key-configuration-parameters)
+10. [Setup Guide](#10-setup-guide)
+
+---
+
+## 1. System Overview
+
+The Traffic Risk Assessment Platform is a **real-time streaming analytics system** that ingests traffic accident data from two sources:
+
+| Source | Type | Description |
+|--------|------|-------------|
+| **US Accidents (Kaggle)** | Replay / Historical | A ~7 million-row CSV from Kaggle (2016–2023) replayed through Kafka via 3 parallel producers |
+| **TomTom Traffic API** | Live / Streaming | Real-time NYC traffic incident data polled every 60 seconds |
+
+**End-to-end pipeline:**  
+`Producer → Kafka → Flink (enrich + feature engineering + ML inference) → PostgreSQL → FastAPI → Next.js Dashboard`
+
+The system performs:
+- Feature engineering (20+ features per event)
+- H2O AutoML-based severity prediction (4-class: 1–4)
+- Unified risk scoring (0.0–1.0 continuous scale)
+- Geospatial hotspot analysis via PostGIS
+- Real-time dashboard with map, charts, and pipeline monitoring
+
+---
+
+## 2. Architecture & Data Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           Node 2 — Streaming (Spot VM)                   │
+│                                                                          │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                 │
+│  │ US Producer 0 │   │ US Producer 1 │   │ US Producer 2 │   (3 shards) │
+│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘                 │
+│         │                  │                  │                          │
+│  ┌──────┴──────────────────┴──────────────────┴───────┐                 │
+│  │            TomTom Producer (NYC live API)           │                 │
+│  └──────────────────────┬─────────────────────────────┘                 │
+│                         │                                                │
+│  ┌──────────────────────┴─────────────────────────────┐                 │
+│  │   Kafka Cluster (3 brokers, 3 partitions, RF=3)    │                 │
+│  │   Topics: traffic.us.raw / traffic.tomtom.raw      │                 │
+│  └──────────────────────┬─────────────────────────────┘                 │
+│                         │                                                │
+│  ┌──────────────────────┴─────────────────────────────┐                 │
+│  │           Flink Streaming Job (Python)              │                 │
+│  │  • Feature engineering (build_features)             │                 │
+│  │  • Silver GCS JSONL writes                          │                 │
+│  │  • Micro-batch MLflow inference (100 evt/req)       │                 │
+│  │  • Unified risk scoring                             │                 │
+│  └──────────────────────┬─────────────────────────────┘                 │
+└─────────────────────────┼────────────────────────────────────────────────┘
+                          │
+         ┌────────────────┼────────────────┐
+         │                │                │
+         ▼                ▼                ▼
+┌────────────────┐ ┌──────────────┐ ┌────────────────────────────┐
+│   Node 1       │ │   GCS Silver │ │        Node 3 — Batch       │
+│   (Standard)   │ │  (JSONL)     │ │         (Spot VM)           │
+│                │ │              │ │                             │
+│  • PostgreSQL  │ └──────┬───────┘ │  • Spark feature generation │
+│  • MLflow      │        │         │  • H2O after-2020 training  │
+│  • MLflow Serve│        ▼         │  • Parquet exports          │
+│  • FastAPI     │ ┌──────────────┐ │                             │
+│  • Dashboard   │ │  GCS Gold    │ └────────────────────────────┘
+│  • Airflow     │ │ (Retrain)    │
+│  • Prometheus  │ └──────────────┘
+│  • Grafana     │
+└────────────────┘
+```
+
+### Data Flow Summary
+
+| Stage | Technology | Input | Output |
+|-------|-----------|-------|--------|
+| Ingestion | Python (confluent-kafka) | GCS CSV / TomTom API | Kafka `traffic.us.raw` / `traffic.tomtom.raw` |
+| Streaming Enrichment | Flink + Python UDF | Kafka messages | Enriched features |
+| Feature Engineering | `processing/feature_engineering.py` | Raw JSON | 20-dim feature vector |
+| Silver Storage | GCS (gcsfs) | Features dict | GCS JSONL (date-partitioned) |
+| ML Inference | MLflow Serving + H2O | Feature rows (batch) | Severity prediction 1-4 |
+| Risk Scoring | `shared/risk_scoring.py` | Severity + context | 0.0-1.0 risk score |
+| Sink | psycopg2 (batch insert) | Prediction rows | PostgreSQL (ON CONFLICT upsert) |
+| API | FastAPI | SQL queries | JSON responses |
+| Frontend | Next.js + MapLibre | API responses | Dashboard UI |
+
+---
+
+## 3. Infrastructure & Node Topology
+
+| VM Name | Zone | Machine Type | IP (Internal / External) | Spot/Standard | CPU/Mem |
+|---------|------|-------------|--------------------------|---------------|---------|
+| `node1-control` | us-central1-a | e2-standard-2 | 10.128.0.4 / 35.224.149.110 | Standard | 2 vCPUs / 8 GB |
+| `node2-streaming` | us-central1-a | e2-standard-2 | 10.128.0.5 / 35.225.231.57 | Spot | 2 vCPUs / 8 GB |
+| `node3-batch` | us-central1-a | e2-standard-2 | 10.128.0.8 / 34.63.78.147 | Spot | 2 vCPUs / 8 GB |
+
+### Node Roles
+
+| Node | Responsibilities | Services |
+|------|-----------------|----------|
+| **node1-control** | Control plane, dashboard, model registry | PostgreSQL/PostGIS, MLflow, MLflow Serving, FastAPI, Next.js, Airflow, Prometheus, Grafana, Blackbox Exporter |
+| **node2-streaming** | Real-time data pipeline | ZooKeeper, 3× Kafka brokers, 3× US Producers, TomTom Producer, Flink JobManager, Flink TaskManager, Redis |
+| **node3-batch** | Batch model retraining | Spark Master, Spark Worker |
+
+### Networking
+
+- All nodes share a Docker overlay network named `capstone-net`
+- Internal communication uses 10.128.0.x IPs over VPC
+- External access:
+  - Dashboard: `http://35.224.149.110:3001`
+  - FastAPI: `http://35.224.149.110:8000`
+  - Flink UI: `http://35.225.231.57:8081`
+  - Airflow: `http://35.224.149.110:8080`
+  - Grafana: `http://35.224.149.110:3000`
+
+---
+
+## 4. Google Cloud Storage (GCS) Bucket Strategy
+
+| Bucket | Layer | Purpose |
+|--------|-------|---------|
+| `big-data-group-4-bronze` | Bronze | Raw ingested data, US pipeline CSV, TomTom raw, env configs |
+| `big-data-group-4-silver` | Silver | Flink feature JSONL batches (date-partitioned), Spark feature outputs |
+| `big-data-group-4-gold` | Gold | Retraining datasets (CSV and Parquet), model-ready features |
+| `big-data-group-4-backups` | Operational | Flink checkpoints, system backups |
+| `big-data-group-4-ml-artifacts` | ML-specific | MLflow model artifacts, trained H2O models |
+
+### Key Paths
+
+```
+gs://big-data-group-4-bronze/
+├── process/
+│   ├── us_pipeline_from_2020.csv      ← US replay source (post-2020 data)
+│   └── us_train_offline_before_2020.csv ← H2O training data (pre-2020)
+├── raw/
+│   └── tomtom/                        ← Archived TomTom API responses
+└── env/
+    └── .env.cloud                     ← Deployed environment config
+
+gs://big-data-group-4-silver/
+└── process/
+    └── flink_features/
+        └── YYYY/MM/DD/batches/        ← Flink JSONL output (date-partitioned)
+
+gs://big-data-group-4-gold/
+└── features/
+    └── retrain/
+        ├── csv/                       ← H2O retraining CSV
+        └── parquet/                   ← Spark Parquet output
+
+gs://big-data-group-4-backups/
+└── checkpoints/
+    └── flink/                         ← Flink checkpoint storage
+```
+
+---
+
+## 5. Component Deep Dive
+
+### 5.1 Data Ingestion (Kafka Producers)
+
+**Files:** `ingestion/kafka/us_producer.py`, `ingestion/kafka/tomtom_producer.py`
+
+#### US Accidents Producer (3 replicas × row_index modulo)
+```python
+# Key env vars:
+STREAM_LOOP_FOREVER=false   # Single-pass replay, no infinite loops
+TOTAL_PRODUCERS=3           # 3 parallel producers
+PRODUCER_INDEX=0/1/2        # Each produces rows where row_index % 3 == index
+STREAM_THROTTLE_SECONDS=0.0  # No artificial delay
+PRODUCER_FLUSH_EVERY_N_RECORDS=5000
+```
+
+- Reads `us_pipeline_from_2020.csv` (post-2020 events) from GCS
+- Produces ~7,200 rows/sec across 3 producers
+- Kafka message format: JSON with `_ingested_at_utc` timestamp
+
+#### TomTom Producer (Live API)
+```python
+TOMTOM_POLL_SECONDS=60      # Poll every 60 seconds
+TOMTOM_BBOXES=US:New_York:-74.25909,40.477399,-73.700181,40.917577
+TOMTOM_RUN_ONCE=false       # Continuous polling
+```
+
+- Polls TomTom Traffic Incident Details API v5
+- Extracts: incident_id, severity, icon_category, delay_seconds, geometry
+- Skips unchanged incidents to reduce load
+- Typically produces ~10–30 new/updated events per poll cycle
+
+### 5.2 Apache Kafka
+
+- **3 brokers** (kafka-1:29092, kafka-2:29092, kafka-3:29092)
+- **Topics:**
+  - `traffic.us.raw` — 3 partitions, RF=3, min ISR=2
+  - `traffic.tomtom.raw` — 3 partitions, RF=3, min ISR=2
+- **ZooKeeper:** Single-node (adequate for 3-broker cluster)
+- **Heap:** 256 MB–768 MB per broker
+
+### 5.3 Apache Flink Streaming
+
+**File:** `processing/flink_streaming.py`  
+**Parallelism:** 4 task slots  
+**Checkpoint interval:** 30 seconds
+
+#### Processing Pipeline (per event):
+
+```
+Kafka message → JSON parse → Feature Engineering → MLflow Inference → Risk Scoring → PostgreSQL
+```
+
+#### Micro-batch MLflow Inference (Throughput Optimization)
+
+The system implements **micro-batch inference** to dramatically increase throughput:
+
+- Events are buffered into `_ML_INFERENCE_BUFFER` (size controlled by `ML_BATCH_SIZE=100`)
+- When buffer reaches batch size, **all 100 events** are sent to MLflow Serving in **one HTTP request**
+- MLflow `/invocations` endpoint supports `dataframe_split` format with multiple rows
+- This reduces HTTP round-trips from 1000 → 10 for 1000 events (~100× reduction)
+
+```python
+# Payload format for batch inference:
+{
+  "dataframe_split": {
+    "columns": ["lat", "lon", "hour", ...],
+    "data": [
+      [40.7, -73.9, 14, 3, ...],
+      [40.8, -73.8, 15, 4, ...],
+      ...  # up to ML_BATCH_SIZE rows
+    ]
+  }
+}
+```
+
+#### PostgreSQL Batch Insert
+
+- Uses `psycopg2.extras.execute_values` for batch inserts
+- Batch size: `PG_BATCH_SIZE=200`
+- Connection pooling: 1–4 connections
+- ON CONFLICT (event_id) DO UPDATE for upserts
+
+#### Silver GCS Writes
+
+- Writes JSONL batches to `gs://big-data-group-4-silver/process/flink_features/YYYY/MM/DD/batches/`
+- Batch size: `SILVER_FLUSH_EVERY_N=250`
+
+### 5.4 MLflow & H2O Model Serving
+
+**Deployment:** node1-control  
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| MLflow Tracking | 5000 | Experiment tracking, model registry |
+| MLflow Serving | 5001 | Model inference (H2O MOJO) |
+
+#### Model Training
+
+**Files:** `ml/training/h2o_before_2020.py` (offline), `ml/training/h2o_after_2020.py` (batch retrain)
+
+- **Pre-2020 model:** Trained once at system startup on ~3,000,000 events (2016–2019)
+- **Post-2020 model:** Retrained periodically via Airflow DAG on streaming data
+- Uses H2O AutoML with max runtime 600 seconds
+- 4-class classification: severity levels 1, 2, 3, 4
+- Model artifacts stored in GCS bucket `big-data-group-4-ml-artifacts`
+
+#### Inference Flow
+
+```
+Flink → MLflow Serving (port 5001) → H2O MOJO model → prediction
+POST /invocations
+Content-Type: application/json
+{
+  "dataframe_split": {
+    "columns": [...20 features...],
+    "data": [[...row1...], [...row2...]]
+  }
+}
+```
+
+#### Resource Optimization
+
+- MLflow Serving: **4 GB RAM, 2 CPUs** (upgraded from 2 GB)
+- MLflow Tracking: 1 GB RAM
+- Timeout: 300 seconds via Gunicorn `--timeout`
+
+### 5.5 Apache Spark Batch
+
+**File:** `processing/spark_batch.py`  
+**Deployment:** node3-batch (Spot VM)
+
+- Reads Silver JSONL features from GCS
+- Generates gold-layer retraining datasets
+- Writes Parquet to `gs://big-data-group-4-gold/features/retrain/parquet/`
+- Triggered via Airflow DAG `dag_ml_pipeline.py`
+
+### 5.6 PostgreSQL / PostGIS
+
+**Deployment:** node1-control (Docker: `postgis/postgis:16-3.4-alpine`)  
+
+| Table | Purpose | Key | Rows (approx) |
+|-------|---------|-----|---------------|
+| `traffic_risk_predictions` | US Accidents predictions | event_id | ~73,788 |
+| `traffic_tomtom_incidents` | TomTom live incidents | event_id | ~628 |
+
+#### Upsert Strategy
+```sql
+INSERT INTO traffic_risk_predictions (...) VALUES (...)
+ON CONFLICT (event_id) DO UPDATE SET
+  predicted_severity = EXCLUDED.predicted_severity,
+  risk_score = EXCLUDED.risk_score,
+  ...
+  geom = EXCLUDED.geom,
+  created_at = NOW();
+```
+
+#### PostGIS
+- Geometry column: `geom GEOMETRY(Point, 4326)` (EPSG:4326 = WGS 84)
+- Enables spatial queries: nearest-N, bounding box, distance calculations
+- Used for: Hotspot clustering, map visualization, risk heatmaps
+
+### 5.7 Apache Airflow
+
+**Deployment:** node1-control  
+**Version:** 2.9.0 (LocalExecutor)  
+
+#### DAGs
+
+| DAG | Schedule | Purpose |
+|-----|---------|---------|
+| `dag_ml_pipeline.py` | `@daily` | Trigger Spark batch + H2O retraining |
+| `dag_stream_replay_monitor.py` | `@hourly` | Monitor streaming pipeline health |
+
+#### Airflow Tasks
+
+1. **Retrain H2O Model:** Reads Gold features, runs `h2o_after_2020.py`, registers to MLflow
+2. **Spark Feature Generation:** Runs `spark_batch.py` on node3
+3. **Model Promotion:** Updates MLflow model alias to point to latest version
+
+### 5.8 FastAPI Dashboard Backend
+
+**File:** `dashboard/backend/app/app.py`  
+**Port:** 8000  
+
+#### CORS Configuration
+```python
+allow_origins=[
+    "http://localhost:3000", "http://localhost:3001",
+    "http://35.224.149.110:3001",   # Cloud dashboard
+],
+allow_origin_regex=r"https?://.*",   # Allow both HTTP and HTTPS
+allow_methods=["*"],
+allow_headers=["*"],
+```
+
+#### Route Structure
+
+| Prefix | Purpose | Key Endpoints |
+|--------|---------|---------------|
+| `/api/v1/overview` | Dashboard overview metrics | Total events, risk distribution, latest predictions |
+| `/api/v1/predictions` | Prediction CRUD | Paginated predictions, filtering by severity/date |
+| `/api/v1/hotspots` | Geospatial hotspots | Top-N high-risk locations, cluster analysis |
+| `/api/v1/scenarios` | Scenario simulation | What-if analysis for weather/time conditions |
+| `/api/v1/analytics` | Analytics/charts | Weather histogram, severity trends, time-series |
+| `/api/v1/pipeline` | Pipeline health | Producer status, Kafka lag, Flink checkpointing |
+| `/api/v1/system` | System monitoring | Disk, CPU, memory metrics |
+| `/api/v1/model` | Model management | Current model version, performance metrics |
+
+#### Middleware
+- **CORS:** Handles preflight OPTIONS requests
+- **Prometheus metrics:** `/metrics` endpoint exposes HTTP request counts and latencies
+- **Health check:** `/health` endpoint for load balancer probes
+
+### 5.9 Next.js Dashboard Frontend
+
+**File:** `dashboard/frontend/app/page.tsx`  
+**Port:** 3001 (mapped from container port 3000)  
+
+#### Key Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Risk Map** | `components/RiskMap.tsx` | MapLibre GL JS map with PostGIS risk markers |
+| **Data State** | `components/DataState.tsx` | Real-time pipeline throughput indicators |
+| **Providers** | `app/providers.tsx` | React context for API base URL |
+
+#### Configuration
+```env
+NEXT_PUBLIC_API_BASE_URL=http://35.224.149.110:8000
+```
+
+#### Build Process
+- `npm ci && npm run build && npm run start` (production mode)
+
+### 5.10 Monitoring Stack
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **Prometheus** | 9090 | Metrics collection (30-day retention in cloud) |
+| **Grafana** | 3000 | Pre-built dashboards for pipeline health |
+| **Blackbox Exporter** | 9115 | HTTP/TCP endpoint probing |
+
+#### Prometheus Metrics (Custom)
+```python
+# FastAPI custom metrics:
+traffic_api_requests_total{method, path, status_code}
+traffic_api_request_latency_seconds{method, path}
+```
+
+#### Grafana Dashboards
+- Pre-provisioned via `config/monitoring/grafana/provisioning/`
+- Datasource: Prometheus at `http://prometheus:9090`
+- Dashboards: Pipeline Health, System Infrastructure, ML Model Performance
+
+---
+
+## 6. Dashboard Pages & Features
+
+| Page | Route | Features |
+|------|-------|----------|
+| **Live Risk Map** | `/` | Interactive MapLibre map with PostGIS risk markers, color-coded severity, TomTom incident overlay, real-time data flow animation |
+| **Risk Analytics** | `/` (tabs) | Weather histogram, severity distribution pie, time-series charts, risk trend analysis |
+| **Hotspot Analysis** | `/` (tabs) | Top-10 highest risk locations, cluster density heatmap, temporal hotspot patterns |
+| **Pipeline Health** | `/pipeline` | Producer throughput (msg/s), Kafka consumer lag, Flink checkpoint status, model retraining history, Postgres insert rate |
+| **Scenario Simulation** | `/scenario` | What-if weather/time/road condition analysis, risk score prediction without DB write |
+| **System Infrastructure** | `/` (tabs) | CPU/Memory/Disk per node, Kafka broker health, service uptime |
+
+---
+
+## 7. Throughput & Latency Optimization
+
+### Optimizations Applied
+
+| Optimization | Before | After | Impact |
+|-------------|--------|-------|--------|
+| **Micro-batch MLflow inference** | 1000 events = 1000 HTTP calls | 1000 events = 10 HTTP calls (100 rows each) | ~100× fewer HTTP round-trips |
+| **PostgreSQL batch insert** | 1 row per INSERT | 200 rows per execute_values | ~200× fewer SQL transactions |
+| **MLflow Serving resources** | 2 GB memory | 4 GB memory + 2 CPUs | Higher inference throughput |
+| **US Producer loop** | `STREAM_LOOP_FOREVER=true` | `STREAM_LOOP_FOREVER=false` | Single-pass replay avoids duplicate processing |
+| **Connection pooling** | New PG connection per batch | Pool (1–4 connections, reused) | Lower connection overhead |
+| **Flink parallelism** | Default | 4 task slots | Parallel processing across partitions |
+
+### Bottleneck Analysis
+
+| Component | CPU Usage | Status |
+|-----------|-----------|--------|
+| MLflow Serving (H2O) | ~141% | **Bottleneck** — single-threaded H2O frame conversion |
+| Flink JobManager | ~121% | Moderate — checkpointing overhead |
+| PostgreSQL | ~0.12% | Not bottlenecked |
+| FastAPI | ~0.20% | Not bottlenecked |
+
+**Primary bottleneck:** H2O model inference (`H2ODependencyWarning: Converting H2O frame to pandas dataframe using single-thread`). Mitigated by micro-batch inference reducing HTTP overhead but core H2O limitation remains.
+
+### Future Optimization Opportunities
+
+1. **H2O multi-threading:** Configure `h2o.init(nthreads=-1)` in serving environment
+2. **Model quantization:** Convert H2O model to ONNX for faster inference
+3. **Redis caching:** Cache frequent prediction results for identical feature sets
+4. **Flink operator chaining:** Optimize Flink job graph for lower serialization overhead
+
+---
+
+## 8. CI/CD Pipeline
+
+**File:** `.github/workflows/ci-cd.yaml`  
+**Triggers:** Push to `main`, `develop`, `hung1` (PRs run lint+test only)
+
+### Job Flow
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌──────────────────────┐
+│ Lint & Test │ ──▶ │ Build & Push     │ ──▶ │ Deploy to 3 GCP VMs  │
+│ (always)    │     │ Docker Images    │     │ (push only)          │
+│             │     │ (push only)      │     │                      │
+│ - pytest    │     │ - FastAPI image  │     │ - SSH into each VM   │
+│ - compile   │     │ - Push to GAR    │     │ - git pull latest    │
+│ - compose   │     │                  │     │ - docker compose up  │
+│   validate  │     │                  │     │ - verify containers  │
+└─────────────┘     └──────────────────┘     └──────────────────────┘
+```
+
+### Key Features
+
+- **Non-destructive deployment:** Uses `git pull --ff-only` to update code; runs `docker compose up -d --build` which restarts only changed services
+- **Safe Node 1 restart:** Skips restart if active H2O training process is detected (PID file check)
+- **No full reset:** Preserves Kafka topics, Flink checkpoints, PostgreSQL data, and MLflow models
+- **Concurrency:** `cancel-in-progress: true` prevents overlapping deployments
+
+### Deployment Commands (per Node)
+
+```bash
+# Node 1 (Control Plane)
+sudo -E bash scripts/gcp/run-node1.sh
+
+# Node 2 (Streaming)  
+sudo -E bash scripts/gcp/run-node2.sh
+
+# Node 3 (Batch)
+sudo -E bash scripts/gcp/run-node3.sh
+```
+
+### GCP Artifact Registry
+
+- Registry: `us-central1-docker.pkg.dev/big-data-group-4/capstone`
+- Image: `fastapi:latest` (tagged with git SHA and `latest`)
+
+---
+
+## 9. Key Configuration Parameters
+
+### Environment Variables (`.env.cloud`)
+
+```bash
+# Google Cloud
+GCP_PROJECT_ID=big-data-group-4
+GCP_REGION=us-central1
+GCP_ZONE=us-central1-a
+
+# GCS Buckets
+GCS_BUCKET_BRONZE=big-data-group-4-bronze
+GCS_BUCKET_SILVER=big-data-group-4-silver
+GCS_BUCKET_GOLD=big-data-group-4-gold
+
+# Node IPs
+POSTGRES_HOST=10.128.0.4
+NODE1_INTERNAL_IP=10.128.0.4
+NODE2_INTERNAL_IP=10.128.0.5
+NODE3_INTERNAL_IP=10.128.0.8
+
+# Streaming
+STREAM_LOOP_FOREVER=false          # Single-pass US replay
+STREAM_MAX_RECORDS=0               # All records
+STREAM_THROTTLE_SECONDS=0.0        # No throttling
+TOTAL_PRODUCERS=3                  # 3 US producers
+FLINK_PARALLELISM=4                # 4 task slots
+FLINK_CHECKPOINT_INTERVAL=30000    # 30 seconds
+ML_BATCH_SIZE=100                  # Micro-batch 100 events per inference call
+PG_BATCH_SIZE=200                  # Batch insert 200 rows
+SILVER_FLUSH_EVERY_N=250           # GCS flush every 250 features
+
+# MLflow
+MLFLOW_TRACKING_URI=http://10.128.0.4:5000
+MLFLOW_SERVING_ENDPOINT=http://10.128.0.4:5001/invocations
+ML_MODEL_NAME=traffic-risk-model
+ML_TIMEOUT_SECONDS=5
+
+# TomTom
+TOMTOM_POLL_SECONDS=60
+TOMTOM_BBOXES=US:New_York:-74.25909,40.477399,-73.700181,40.917577
+
+# Dashboard
+DASHBOARD_PORT=3001
+NEXT_PUBLIC_API_BASE_URL=http://35.224.149.110:8000
+```
+
+---
+
+## 10. Setup Guide
+
+### Prerequisites
+
+- Google Cloud Platform project with billing enabled
+- 3 VM instances (e2-standard-2) in us-central1-a
+- Service account with Storage Admin + Compute Admin roles
+- GitHub repository with secrets configured
+
+### Step 1: GCP Infrastructure
+
+```bash
+# Run the setup script (creates VMs, firewall rules, GCS buckets)
+bash scripts/gcp/setup_gcp.sh
+```
+
+### Step 2: SSH Key Setup
+
+```bash
+# Check existing keys
+ls -la ~/.ssh
+
+# Generate if needed
+ssh-keygen -t rsa -b 4096 -C "your-email@example.com" -f ~/.ssh/google_compute_engine
+
+# Add to GCP metadata
+gcloud compute instances add-metadata node1-control \
+  --zone=us-central1-a \
+  --metadata="ssh-keys=hung:$(cat ~/.ssh/google_compute_engine.pub)"
+```
+
+### Step 3: GitHub Secrets
+
+Configure the following in GitHub repository settings:
+
+| Secret | Description |
+|--------|-------------|
+| `GCP_SA_KEY` | Service account JSON key |
+| `GCP_PROJECT_ID` | GCP project ID |
+| `HUNG_SSH_PRIVATE_KEY` | Private SSH key for VM access |
+| `ENV_CLOUD` | Full `.env.cloud` content |
+
+### Step 4: Trigger Deployment
+
+```bash
+# Push to main/develop/hung1 to trigger CI/CD
+git add -A
+git commit -m "feat: deploy traffic risk platform"
+git push origin main
+```
+
+### Step 5: Verify Deployment
+
+```bash
+# Check Node 1 services
+ssh hung@35.224.149.110 "docker ps --format 'table {{.Names}}\t{{.Status}}'"
+
+# Check Node 2 services
+ssh hung@35.225.231.57 "docker ps --format 'table {{.Names}}\t{{.Status}}'"
+
+# Open dashboard
+open http://35.224.149.110:3001
+```
+
+### Step 6: Verify Data Flow
+
+```bash
+# Check Postgres row counts
+curl -s http://35.224.149.110:8000/api/v1/overview/summary | jq .
+
+# Check Kafka topic sizes
+ssh hung@35.225.231.57 "docker exec node2-kafka-1 kafka-run-class kafka.tools.GetOffsetShell --broker-list localhost:9092 --topic traffic.us.raw"
+
+# Check Flink job status
+curl -s http://35.225.231.57:8081/jobs | jq .
+```
+
+---
+
+## Appendix A: File Structure (Key Files)
+
+```
+.
+├── .github/workflows/ci-cd.yaml          ← CI/CD pipeline
+├── deployment/
+│   ├── node1-control/docker-compose.yaml  ← Node 1 services
+│   ├── node2-streaming/docker-compose.yaml ← Node 2 services
+│   └── node3-batch/docker-compose.yaml    ← Node 3 services
+├── ingestion/kafka/
+│   ├── us_producer.py                     ← US Accidents producer
+│   └── tomtom_producer.py                 ← TomTom live producer
+├── processing/
+│   ├── flink_streaming.py                 ← Unified Flink job
+│   ├── feature_engineering.py             ← Feature extraction
+│   ├── spark_batch.py                     ← Spark batch processing
+│   └── streaming_enrichment.py            ← TomTom event enrichment
+├── dashboard/
+│   ├── backend/app/app.py                 ← FastAPI entrypoint
+│   └── frontend/app/page.tsx              ← Next.js dashboard page
+├── ml/training/
+│   ├── h2o_before_2020.py                 ← Initial model training
+│   └── h2o_after_2020.py                  ← Retraining script
+├── orchestration/dags/
+│   ├── dag_ml_pipeline.py                 ← ML retraining DAG
+│   └── dag_stream_replay_monitor.py       ← Pipeline monitor DAG
+├── scripts/gcp/
+│   ├── run-node1.sh                       ← Node 1 launch script
+│   ├── run-node2.sh                       ← Node 2 launch script
+│   ├── run-node3.sh                       ← Node 3 launch script
+│   └── setup_gcp.sh                       ← GCP infrastructure setup
+└── shared/
+    └── risk_scoring.py                    ← Unified risk score formula
+```
+
+## Appendix B: Port Map
+
+| Port | Node | Service |
+|------|------|---------|
+| 3001 | node1 | Dashboard Frontend (Next.js) |
+| 8000 | node1 | FastAPI Backend |
+| 5000 | node1 | MLflow Tracking |
+| 5001 | node1 | MLflow Model Serving |
+| 5432 | node1 | PostgreSQL |
+| 8080 | node1 | Airflow Web UI |
+| 3000 | node1 | Grafana |
+| 9090 | node1 | Prometheus |
+| 9092 | node2 | Kafka Broker 1 |
+| 9093 | node2 | Kafka Broker 2 |
+| 9094 | node2 | Kafka Broker 3 |
+| 2181 | node2 | ZooKeeper |
+| 8081 | node2 | Flink Web UI |
+| 6379 | node2 | Redis |
+| 7077 | node3 | Spark Master |
+| 8080 | node3 | Spark Web UI |
