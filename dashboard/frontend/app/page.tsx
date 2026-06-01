@@ -43,37 +43,44 @@ export default function DashboardPage() {
   const summaryQuery = useQuery({
     queryKey: ["overview", mode],
     queryFn: () => api.overview(mode),
-    refetchInterval: 10_000
+    refetchInterval: 15_000,
+    placeholderData: (previousData) => previousData
   });
   const pointsQuery = useQuery({
     queryKey: ["points", minRisk, mode],
     queryFn: () => api.mapPoints({ limit: 5000, min_risk: minRisk, mode }),
-    refetchInterval: 10_000
+    refetchInterval: 15_000,
+    placeholderData: (previousData) => previousData
   });
   const latestQuery = useQuery({
     queryKey: ["latest", mode],
     queryFn: () => api.latest(10, mode),
-    refetchInterval: 10_000
+    refetchInterval: 15_000,
+    placeholderData: (previousData) => previousData
   });
   const hotspotsQuery = useQuery({
     queryKey: ["hotspots", mode],
     queryFn: () => api.hotspots({ limit: 10, min_events: 1, mode }),
-    refetchInterval: 10_000
+    refetchInterval: 30_000,
+    placeholderData: (previousData) => previousData
   });
   const riskByHourQuery = useQuery({
     queryKey: ["risk-by-hour", mode],
     queryFn: () => api.riskByHour(mode),
-    refetchInterval: 300_000
+    refetchInterval: 600_000,
+    placeholderData: (previousData) => previousData
   });
   const severityQuery = useQuery({
     queryKey: ["severity", mode],
     queryFn: () => api.severityDistribution(mode),
-    refetchInterval: 300_000
+    refetchInterval: 600_000,
+    placeholderData: (previousData) => previousData
   });
   const weatherQuery = useQuery({
     queryKey: ["weather-histogram", mode],
     queryFn: () => api.weatherHistogram(mode),
-    refetchInterval: 300_000
+    refetchInterval: 600_000,
+    placeholderData: (previousData) => previousData
   });
 
   const summary =

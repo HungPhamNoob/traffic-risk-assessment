@@ -4,21 +4,48 @@ import DeckGL from "@deck.gl/react";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import type { StyleSpecification } from "maplibre-gl";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Map from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot, PredictionPoint } from "@/lib/types";
 
+/**
+ * Dark basemap using CARTO dark raster tiles.
+ *
+ * Using raster tiles directly (instead of loading an external style.json)
+ * avoids the console timeout errors that occurred with the previous
+ * vector style approach. Individual tile PNGs load progressively and
+ * never block the initial map render.
+ */
 const MAP_STYLE: StyleSpecification = {
   version: 8,
   name: "traffic-risk-dark",
-  sources: {},
+  sources: {
+    "carto-dark": {
+      type: "raster",
+      tiles: [
+        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+        "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"
+      ],
+      tileSize: 256,
+      attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OSM</a> &copy; <a href='https://carto.com/'>CARTO</a>",
+      minzoom: 0,
+      maxzoom: 20
+    }
+  },
   layers: [
     {
-      id: "background",
-      type: "background",
+      id: "carto-dark-tiles",
+      type: "raster",
+      source: "carto-dark",
+      minzoom: 0,
+      maxzoom: 20,
       paint: {
-        "background-color": "#08111f"
+        "raster-brightness-min": 0,
+        "raster-brightness-max": 1,
+        "raster-saturation": -0.2,
+        "raster-contrast": 0.1
       }
     }
   ]
@@ -64,7 +91,7 @@ function triangleForPoint(point: PredictionPoint): [number, number][] {
   ];
 }
 
-export function RiskMap({
+const RiskMapInner = memo(function RiskMapInner({
   points,
   hotspots,
   selectedId,
@@ -78,8 +105,19 @@ export function RiskMap({
   showHeatmap: boolean;
 }) {
   const first = points[0];
-  const replayPoints = points.filter((point) => point.data_source !== "tomtom_live");
-  const livePoints = points.filter((point) => point.data_source === "tomtom_live");
+
+  /* Split points once using useMemo so the arrays are referentially
+     stable across renders unless the actual point list changes. */
+  const { replayPoints, livePoints } = useMemo(() => {
+    const replay: PredictionPoint[] = [];
+    const live: PredictionPoint[] = [];
+    for (const p of points) {
+      if (p.data_source === "tomtom_live") live.push(p);
+      else replay.push(p);
+    }
+    return { replayPoints: replay, livePoints: live };
+  }, [points]);
+
   const [initialViewState, setInitialViewState] =
     useState<RiskMapViewState>(DEFAULT_VIEW_STATE);
   const hasUserAdjustedView = useRef(false);
@@ -98,7 +136,9 @@ export function RiskMap({
     }));
   }, [first]);
 
-  const layers = [
+  /* Memoize DeckGL layers so they are only recreated when their data
+     or configuration actually changes – not on every parent re-render. */
+  const layers = useMemo(() => [
     showHeatmap &&
       new HeatmapLayer<PredictionPoint>({
         id: "risk-heatmap",
@@ -156,7 +196,7 @@ export function RiskMap({
           lineWidthMinPixels: 2
         })
       : null
-  ].filter(Boolean);
+  ].filter(Boolean), [points, replayPoints, livePoints, hotspots, selectedId, showHeatmap, onSelect]);
 
   return (
     <DeckGL
@@ -194,4 +234,14 @@ export function RiskMap({
       <Map reuseMaps mapStyle={MAP_STYLE} attributionControl={false} />
     </DeckGL>
   );
+});
+
+export function RiskMap(props: {
+  points: PredictionPoint[];
+  hotspots?: Hotspot[];
+  selectedId?: string;
+  onSelect?: (point: PredictionPoint) => void;
+  showHeatmap: boolean;
+}) {
+  return <RiskMapInner {...props} />;
 }

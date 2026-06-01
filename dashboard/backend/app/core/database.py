@@ -68,6 +68,12 @@ def get_connection():
         )
         borrowed_from_pool = False
     try:
+        # Set per-statement timeout to prevent runaway queries from
+        # blocking the connection pool. The default is 30 seconds.
+        settings = get_settings()
+        timeout_ms = getattr(settings, "postgres_statement_timeout_ms", 30_000)
+        with connection.cursor() as guard:
+            guard.execute("SET statement_timeout = %s", (f"{timeout_ms}ms",))
         yield connection
     finally:
         if borrowed_from_pool:

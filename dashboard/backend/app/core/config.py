@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
     postgres_pool_min_conn: int = Field(default=1, alias="PG_POOL_MIN_CONN")
     postgres_pool_max_conn: int = Field(default=8, alias="PG_POOL_MAX_CONN")
+    postgres_statement_timeout_ms: int = Field(
+        default=30_000, alias="PG_STATEMENT_TIMEOUT_MS"
+    )
     prediction_table: str = Field(
         default="traffic_risk_predictions",
         alias="POSTGRES_PREDICTION_TABLE",

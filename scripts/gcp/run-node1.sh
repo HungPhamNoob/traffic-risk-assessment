@@ -167,6 +167,20 @@ ensure_prediction_indexes() {
   echo "Ensuring dashboard query indexes exist on traffic_risk_predictions."
   ensure_index "idx_traffic_risk_predictions_event_time" "event_time DESC NULLS LAST"
   ensure_index "idx_traffic_risk_predictions_processed_time" "processed_time DESC NULLS LAST"
+
+  # Also ensure indexes on the TomTom incidents table used by live/full mode queries.
+  local tomtom_table
+  tomtom_table="$(
+    docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" -At \
+      -c "SELECT to_regclass('public.traffic_tomtom_incidents');" 2>/dev/null || true
+  )"
+  if [ "${tomtom_table}" = "traffic_tomtom_incidents" ]; then
+    echo "Ensuring dashboard query indexes exist on traffic_tomtom_incidents."
+    ensure_index "idx_traffic_tomtom_incidents_event_time" "event_time DESC NULLS LAST"
+    ensure_index "idx_traffic_tomtom_incidents_severity" "severity"
+  else
+    echo "TomTom incidents table does not exist yet; skipping its index guards."
+  fi
 }
 
 prepare_runtime_directories() {
