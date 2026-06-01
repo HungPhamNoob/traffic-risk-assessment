@@ -111,6 +111,42 @@ compose_cmd() {
   docker compose "$@"
 }
 
+wait_for_postgres() {
+  echo "Waiting for PostgreSQL before applying runtime index guards..."
+  for attempt in $(seq 1 30); do
+    if docker exec node1-postgres pg_isready -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" >/dev/null 2>&1; then
+      echo "PostgreSQL is reachable."
+      return 0
+    fi
+    echo "PostgreSQL is not ready yet (${attempt}/30)."
+    sleep 2
+  done
+  echo "WARNING: PostgreSQL did not become ready in time; skipping runtime index guards."
+  return 1
+}
+
+ensure_prediction_indexes() {
+  if ! wait_for_postgres; then
+    return 0
+  fi
+
+  local prediction_table
+  prediction_table="$(
+    docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" -At \
+      -c "SELECT to_regclass('public.traffic_risk_predictions');" 2>/dev/null || true
+  )"
+  if [ "${prediction_table}" != "traffic_risk_predictions" ]; then
+    echo "Prediction table does not exist yet; skipping runtime index guards."
+    return 0
+  fi
+
+  echo "Ensuring dashboard query indexes exist on traffic_risk_predictions."
+  docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" \
+    -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_traffic_risk_predictions_event_time ON public.traffic_risk_predictions (event_time DESC NULLS LAST);" >/dev/null
+  docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" \
+    -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_traffic_risk_predictions_processed_time ON public.traffic_risk_predictions (processed_time DESC NULLS LAST);" >/dev/null
+}
+
 prepare_runtime_directories() {
   echo "Preparing writable runtime directories for containers."
   mkdir -p orchestration/logs/scheduler ml/mlruns
@@ -156,6 +192,8 @@ compose_cmd \
   --env-file "${ENV_FILE}" \
   -f "${NODE1_COMPOSE_FILE}" \
   up -d --build --remove-orphans
+
+ensure_prediction_indexes
 
 prepare_runtime_directories
 compose_cmd \

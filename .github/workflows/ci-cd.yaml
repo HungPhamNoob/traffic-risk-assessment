@@ -226,6 +226,9 @@ jobs:
             printf 'GCS_BUCKET_BRONZE=big-data-group-4-bronze\n'
             printf 'GCS_BUCKET_SILVER=big-data-group-4-silver\n'
             printf 'GCS_BUCKET_GOLD=big-data-group-4-gold\n'
+            printf 'GCS_BUCKET_BACKUPS=big-data-group-4-backups\n'
+            printf 'GCS_BUCKET_ML=big-data-group-4-ml-artifacts\n'
+            printf 'GCS_ENV_PATH=gs://big-data-group-4-bronze/env/.env.cloud\n'
             printf 'NODE1_INTERNAL_IP=%s\n' "$NODE1_INTERNAL_IP"
             printf 'NODE2_INTERNAL_IP=%s\n' "$NODE2_INTERNAL_IP"
             printf 'NODE3_INTERNAL_IP=%s\n' "$NODE3_INTERNAL_IP"
@@ -235,6 +238,8 @@ jobs:
             printf 'POSTGRES_TOMTOM_TABLE=traffic_tomtom_incidents\n'
             printf 'US_TRAIN_OFFLINE_PATH=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv\n'
             printf 'US_PIPELINE_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv\n'
+            printf 'OFFLINE_TRAIN_INPUT=gs://big-data-group-4-bronze/process/us_train_offline_before_2020.csv\n'
+            printf 'SIMULATED_REPLAY_PATH=gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv\n'
             printf 'SILVER_FEATURES_PATH=gs://big-data-group-4-silver/process/flink_features\n'
             printf 'GOLD_RETRAIN_PATH=gs://big-data-group-4-gold/features/retrain\n'
             printf 'GOLD_RETRAIN_PARQUET_PATH=gs://big-data-group-4-gold/features/retrain/parquet\n'
@@ -244,7 +249,9 @@ jobs:
             printf 'MLFLOW_SERVING_ENDPOINT=http://%s:5001/invocations\n' "$NODE1_INTERNAL_IP"
             printf 'MLFLOW_GUNICORN_TIMEOUT_SECONDS=300\n'
             printf 'MLFLOW_GUNICORN_WORKERS=2\n'
+            printf 'SPARK_CHECKPOINT_DIR=gs://big-data-group-4-backups/checkpoints/spark\n'
             printf 'FLINK_LOCAL_CHECKPOINT_DIR=file:///opt/flink/checkpoints/unified-traffic-streaming\n'
+            printf 'FLINK_CHECKPOINT_DIR=gs://big-data-group-4-backups/checkpoints/flink\n'
             printf 'FLINK_CHECKPOINT_TIMEOUT=1800000\n'
             printf 'FLINK_CHECKPOINT_MIN_PAUSE=120000\n'
             printf 'FLINK_TOLERABLE_FAILED_CHECKPOINTS=10\n'
