@@ -13,7 +13,9 @@ PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE2_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node2-streaming/docker-compose.yaml"
 NODE2_COMPOSE_DIR="$(dirname "${NODE2_COMPOSE_FILE}")"
+NODE2_COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME:-node2-streaming}"
 NODE2_REFRESH_US_PRODUCERS="${NODE2_REFRESH_US_PRODUCERS:-false}"
+NODE2_MANAGED_NAME_PATTERN='^node2-(zookeeper|kafka-1|kafka-2|kafka-3|kafka-topic-init|producer-0|producer-1|producer-2|tomtom-producer|tomtom-live-consumer|flink-jm|flink-tm|redis|flink-python-job)$'
 APT_CACHE_UPDATED=0
 
 echo "Node 2 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -62,15 +64,43 @@ ensure_docker_compose() {
 
 compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
-    docker compose "$@"
+    COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME}" docker compose "$@"
     return
   fi
   if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose "$@"
+    COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME}" docker-compose "$@"
     return
   fi
   ensure_docker_compose
-  docker compose "$@"
+  COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME}" docker compose "$@"
+}
+
+remove_conflicting_node2_containers() {
+  local conflicting_containers=()
+
+  while IFS= read -r container_name; do
+    if [ -z "${container_name}" ]; then
+      continue
+    fi
+
+    local project_label
+    local workdir_label
+    project_label="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "${container_name}" 2>/dev/null || true)"
+    workdir_label="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "${container_name}" 2>/dev/null || true)"
+
+    if [ "${project_label}" != "${NODE2_COMPOSE_PROJECT_NAME}" ] || [ "${workdir_label}" != "${NODE2_COMPOSE_DIR}" ]; then
+      conflicting_containers+=("${container_name}")
+    fi
+  done < <(docker ps -a --format '{{.Names}}' | grep -E "${NODE2_MANAGED_NAME_PATTERN}" || true)
+
+  if [ "${#conflicting_containers[@]}" -eq 0 ]; then
+    echo "No conflicting Node 2 containers were found."
+    return 0
+  fi
+
+  echo "Removing Node 2 containers whose Compose labels do not match project '${NODE2_COMPOSE_PROJECT_NAME}':"
+  printf '  - %s\n' "${conflicting_containers[@]}"
+  docker rm -f "${conflicting_containers[@]}" >/dev/null
 }
 
 echo "Checking host dependencies required for Node 2 services."
@@ -81,6 +111,9 @@ echo "Starting Kafka, Redis, TomTom, and Flink streaming services..."
 
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null
+
+echo "Removing conflicting Node 2 containers from previous Compose project names..."
+remove_conflicting_node2_containers
 
 compose_cmd \
   --project-directory "${NODE2_COMPOSE_DIR}" \
