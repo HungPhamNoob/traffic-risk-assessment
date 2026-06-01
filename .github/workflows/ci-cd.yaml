@@ -487,6 +487,16 @@ jobs:
             fi
           done
 
+          if ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE2_IP}" 'for svc in node2-kafka-1 node2-kafka-2 node2-kafka-3 node2-flink-python-job node2-tomtom-live-consumer; do docker ps --format "{{.Names}}" | grep -q "^${svc}$" || exit 1; done; curl -sf http://localhost:8081/jobs >/dev/null'; then
+            echo "Node 2 streaming services are already active. Skipping deploy restart to preserve in-flight replay."
+            exit 0
+          fi
+
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
