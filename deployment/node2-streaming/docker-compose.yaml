@@ -204,7 +204,7 @@ services:
       KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-traffic.us.raw}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.0}
-      STREAM_LOOP_FOREVER: ${STREAM_LOOP_FOREVER:-false}
+      STREAM_LOOP_FOREVER: ${STREAM_LOOP_FOREVER:-true}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
       PRODUCER_INDEX: "0"
       PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
@@ -218,7 +218,7 @@ services:
     depends_on:
       kafka-topic-init:
         condition: service_healthy
-    restart: "no"
+    restart: unless-stopped
 
   producer-2:
     image: python:3.10-slim
@@ -235,7 +235,7 @@ services:
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.0}
-      STREAM_LOOP_FOREVER: ${STREAM_LOOP_FOREVER:-false}
+      STREAM_LOOP_FOREVER: ${STREAM_LOOP_FOREVER:-true}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
       PRODUCER_INDEX: "1"
       PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
@@ -248,7 +248,7 @@ services:
     depends_on:
       kafka-topic-init:
         condition: service_healthy
-    restart: "no"
+    restart: unless-stopped
 
   producer-3:
     image: python:3.10-slim
@@ -265,7 +265,7 @@ services:
       US_PIPELINE_REPLAY_PATH: ${US_PIPELINE_REPLAY_PATH:-gs://big-data-group-4-bronze/process/us_pipeline_from_2020.csv}
       STREAM_MAX_RECORDS: ${STREAM_MAX_RECORDS:-0}
       STREAM_THROTTLE_SECONDS: ${STREAM_THROTTLE_SECONDS:-0.0}
-      STREAM_LOOP_FOREVER: ${STREAM_LOOP_FOREVER:-false}
+      STREAM_LOOP_FOREVER: ${STREAM_LOOP_FOREVER:-true}
       TOTAL_PRODUCERS: ${TOTAL_PRODUCERS:-3}
       PRODUCER_INDEX: "2"
       PRODUCER_FLUSH_EVERY_N_RECORDS: ${PRODUCER_FLUSH_EVERY_N_RECORDS:-5000}
@@ -278,7 +278,7 @@ services:
     depends_on:
       kafka-topic-init:
         condition: service_healthy
-    restart: "no"
+    restart: unless-stopped
 
   tomtom-producer:
     image: python:3.10-slim

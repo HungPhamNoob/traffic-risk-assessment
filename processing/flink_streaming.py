@@ -265,6 +265,7 @@ def ensure_us_schema(cursor) -> None:
             processed_time TIMESTAMP,
             end_to_end_latency_ms DOUBLE PRECISION,
             geom GEOMETRY(Point, 4326),
+            updated_at TIMESTAMP DEFAULT NOW(),
             created_at TIMESTAMP DEFAULT NOW()
         );
         """
@@ -301,6 +302,7 @@ def ensure_us_schema(cursor) -> None:
         "processed_time TIMESTAMP",
         "end_to_end_latency_ms DOUBLE PRECISION",
         "geom GEOMETRY(Point, 4326)",
+        "updated_at TIMESTAMP DEFAULT NOW()",
         "created_at TIMESTAMP DEFAULT NOW()",
     ]:
         cursor.execute(
@@ -353,6 +355,7 @@ def ensure_tomtom_schema(cursor) -> None:
             processed_time TIMESTAMP,
             end_to_end_latency_ms DOUBLE PRECISION,
             geom GEOMETRY(Point, 4326),
+            updated_at TIMESTAMP DEFAULT NOW(),
             created_at TIMESTAMP DEFAULT NOW()
         );
         """
@@ -396,6 +399,7 @@ def ensure_tomtom_schema(cursor) -> None:
         "processed_time TIMESTAMP",
         "end_to_end_latency_ms DOUBLE PRECISION",
         "geom GEOMETRY(Point, 4326)",
+        "updated_at TIMESTAMP DEFAULT NOW()",
         "created_at TIMESTAMP DEFAULT NOW()",
     ]:
         cursor.execute(
@@ -793,7 +797,7 @@ def _batch_insert_us(rows: List[Dict[str, Any]]) -> None:
                     f"INSERT INTO {PG_US_TABLE} ({', '.join(US_COLUMNS)}, geom) VALUES %s "
                     f"ON CONFLICT (event_id) DO UPDATE SET "
                     + ", ".join(f"{col} = EXCLUDED.{col}" for col in US_COLUMNS)
-                    + f", geom = EXCLUDED.geom, created_at = NOW()",
+                    + f", geom = EXCLUDED.geom, updated_at = NOW()",
                     values,
                     template=template,
                 )
@@ -836,7 +840,7 @@ def _batch_insert_tomtom(rows: List[Dict[str, Any]]) -> None:
                     f"INSERT INTO {PG_TOMTOM_TABLE} ({', '.join(all_columns)}) VALUES %s "
                     f"ON CONFLICT (event_id) DO UPDATE SET "
                     + ", ".join(f"{col} = EXCLUDED.{col}" for col in TOMTOM_COLUMNS)
-                    + f", geom = EXCLUDED.geom, created_at = NOW()",
+                    + f", geom = EXCLUDED.geom, updated_at = NOW()",
                     values,
                     template=template,
                 )

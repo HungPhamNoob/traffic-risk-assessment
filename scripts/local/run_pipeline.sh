@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS {table_name} (
     processed_time TIMESTAMP,
     end_to_end_latency_ms DOUBLE PRECISION,
     geom GEOMETRY(Point, 4326),
+    updated_at TIMESTAMP DEFAULT NOW(),
     created_at TIMESTAMP DEFAULT NOW()
 );
 ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS ingestion_time TIMESTAMP;
@@ -295,7 +296,7 @@ INSERT INTO {table_name} (
     predicted_severity = EXCLUDED.predicted_severity,
     model_status = EXCLUDED.model_status,
     end_to_end_latency_ms = EXCLUDED.end_to_end_latency_ms,
-    created_at = NOW();
+    updated_at = NOW();
 """
 
 with connection:

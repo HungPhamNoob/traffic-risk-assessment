@@ -75,6 +75,47 @@ compose_cmd() {
   COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME}" docker compose "$@"
 }
 
+ensure_us_replay_producers() {
+  local missing_services=()
+  local service_name
+  local container_name
+
+  for service_name in producer-1 producer-2 producer-3; do
+    case "${service_name}" in
+      producer-1) container_name="node2-producer-0" ;;
+      producer-2) container_name="node2-producer-1" ;;
+      producer-3) container_name="node2-producer-2" ;;
+      *) continue ;;
+    esac
+    if ! docker ps --format '{{.Names}}' | grep -Fx "${container_name}" >/dev/null 2>&1; then
+      missing_services+=("${service_name}")
+    fi
+  done
+
+  if [ "${NODE2_REFRESH_US_PRODUCERS}" = "true" ]; then
+    echo "Refreshing US replay producers because NODE2_REFRESH_US_PRODUCERS=true."
+    compose_cmd \
+      --project-directory "${NODE2_COMPOSE_DIR}" \
+      --env-file "${ENV_FILE}" \
+      -f "${NODE2_COMPOSE_FILE}" \
+      up -d --build producer-1 producer-2 producer-3
+    return 0
+  fi
+
+  if [ "${#missing_services[@]}" -eq 0 ]; then
+    echo "Leaving existing US replay producers untouched to preserve in-flight replay progress."
+    return 0
+  fi
+
+  echo "Starting missing US replay producers without resetting the healthy ones:"
+  printf '  - %s\n' "${missing_services[@]}"
+  compose_cmd \
+    --project-directory "${NODE2_COMPOSE_DIR}" \
+    --env-file "${ENV_FILE}" \
+    -f "${NODE2_COMPOSE_FILE}" \
+    up -d --build "${missing_services[@]}"
+}
+
 remove_conflicting_node2_containers() {
   local conflicting_containers=()
 
@@ -123,16 +164,7 @@ compose_cmd \
   zookeeper kafka-1 kafka-2 kafka-3 kafka-topic-init redis \
   flink-jobmanager flink-taskmanager flink-python-job tomtom-producer tomtom-live-consumer
 
-if [ "${NODE2_REFRESH_US_PRODUCERS}" = "true" ]; then
-  echo "Refreshing US replay producers because NODE2_REFRESH_US_PRODUCERS=true."
-  compose_cmd \
-    --project-directory "${NODE2_COMPOSE_DIR}" \
-    --env-file "${ENV_FILE}" \
-    -f "${NODE2_COMPOSE_FILE}" \
-    up -d --build producer-1 producer-2 producer-3
-else
-  echo "Leaving existing US replay producers untouched to preserve in-flight replay progress."
-fi
+ensure_us_replay_producers
 
 echo "Verifying that the Flink job container is mounted from ${PROJECT_ROOT}."
 FLINK_MOUNT_SOURCE="$(docker inspect node2-flink-python-job --format '{{range .Mounts}}{{if eq .Destination "/opt/traffic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
