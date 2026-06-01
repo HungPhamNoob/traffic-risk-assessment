@@ -20,6 +20,7 @@ NODE3_RESET_LOCAL_SILVER_SNAPSHOT="${NODE3_RESET_LOCAL_SILVER_SNAPSHOT:-false}"
 NODE3_LOG_DIR="${PROJECT_ROOT}/logs"
 NODE3_LOCK_DIR="${NODE3_LOG_DIR}/.node3-run.lock"
 NODE3_LOCK_PID_FILE="${NODE3_LOCK_DIR}/pid"
+NODE3_LOCK_OWNED=0
 APT_CACHE_UPDATED=0
 NODE3_TEMP_DIR="$(mktemp -d /tmp/node3-run-XXXXXX)"
 NODE3_SILVER_LS_STDOUT="${NODE3_TEMP_DIR}/silver-ls.txt"
@@ -30,7 +31,9 @@ cleanup_node3_temp() {
 }
 
 release_node3_lock() {
-  rm -rf "${NODE3_LOCK_DIR}" 2>/dev/null || true
+  if [ "${NODE3_LOCK_OWNED}" -eq 1 ]; then
+    rm -rf "${NODE3_LOCK_DIR}" 2>/dev/null || true
+  fi
 }
 
 acquire_node3_lock() {
@@ -38,6 +41,7 @@ acquire_node3_lock() {
 
   if mkdir "${NODE3_LOCK_DIR}" 2>/dev/null; then
     echo "$$" > "${NODE3_LOCK_PID_FILE}"
+    NODE3_LOCK_OWNED=1
     return 0
   fi
 
@@ -54,6 +58,7 @@ acquire_node3_lock() {
   rm -rf "${NODE3_LOCK_DIR}"
   if mkdir "${NODE3_LOCK_DIR}" 2>/dev/null; then
     echo "$$" > "${NODE3_LOCK_PID_FILE}"
+    NODE3_LOCK_OWNED=1
     return 0
   fi
 
