@@ -9,7 +9,7 @@ import Map from "react-map-gl/maplibre";
 import { feature } from "topojson-client";
 import countriesTopology from "world-atlas/countries-110m.json";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { Hotspot, PredictionPoint } from "@/lib/types";
+import type { Hotspot, MapMode, PredictionPoint } from "@/lib/types";
 
 const COUNTRY_FEATURES = feature(
   countriesTopology as any,
@@ -25,7 +25,7 @@ const MAP_STYLE: StyleSpecification = {
       id: "background",
       type: "background",
       paint: {
-        "background-color": "#020617"
+        "background-color": "#081423"
       }
     }
   ]
@@ -42,10 +42,68 @@ type RiskMapViewState = {
 const DEFAULT_VIEW_STATE: RiskMapViewState = {
   longitude: -96,
   latitude: 38,
-  zoom: 3.1,
-  pitch: 35,
+  zoom: 3.25,
+  pitch: 0,
   bearing: 0
 };
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function fitPoints(points: PredictionPoint[]): RiskMapViewState {
+  if (!points.length) {
+    return DEFAULT_VIEW_STATE;
+  }
+
+  let minLon = points[0].lon;
+  let maxLon = points[0].lon;
+  let minLat = points[0].lat;
+  let maxLat = points[0].lat;
+
+  for (const point of points) {
+    minLon = Math.min(minLon, point.lon);
+    maxLon = Math.max(maxLon, point.lon);
+    minLat = Math.min(minLat, point.lat);
+    maxLat = Math.max(maxLat, point.lat);
+  }
+
+  const lonSpan = Math.max(8, maxLon - minLon);
+  const latSpan = Math.max(6, maxLat - minLat);
+  const zoomFromLon = Math.log2(360 / lonSpan) - 0.8;
+  const zoomFromLat = Math.log2(170 / latSpan) - 0.8;
+
+  return {
+    longitude: (minLon + maxLon) / 2,
+    latitude: (minLat + maxLat) / 2,
+    zoom: clamp(Math.min(zoomFromLon, zoomFromLat), 2.2, 5.3),
+    pitch: 0,
+    bearing: 0
+  };
+}
+
+function defaultViewForMode(
+  mode: MapMode,
+  replayPoints: PredictionPoint[],
+  livePoints: PredictionPoint[]
+): RiskMapViewState {
+  if (mode === "live") {
+    return fitPoints(livePoints);
+  }
+
+  if (mode === "replay") {
+    return DEFAULT_VIEW_STATE;
+  }
+
+  if (livePoints.length === 0) {
+    return DEFAULT_VIEW_STATE;
+  }
+
+  return {
+    ...DEFAULT_VIEW_STATE,
+    zoom: 3
+  };
+}
 
 function colorForRisk(score: number): [number, number, number, number] {
   if (score >= 0.7) return [239, 68, 68, 220];
@@ -76,16 +134,16 @@ const RiskMapInner = memo(function RiskMapInner({
   hotspots,
   selectedId,
   onSelect,
-  showHeatmap
+  showHeatmap,
+  mode
 }: {
   points: PredictionPoint[];
   hotspots?: Hotspot[];
   selectedId?: string;
   onSelect?: (point: PredictionPoint) => void;
   showHeatmap: boolean;
+  mode: MapMode;
 }) {
-  const first = points[0];
-
   /* Split points once using useMemo so the arrays are referentially
      stable across renders unless the actual point list changes. */
   const { replayPoints, livePoints } = useMemo(() => {
@@ -101,33 +159,40 @@ const RiskMapInner = memo(function RiskMapInner({
   const [initialViewState, setInitialViewState] =
     useState<RiskMapViewState>(DEFAULT_VIEW_STATE);
   const hasUserAdjustedView = useRef(false);
-  const initialPositionDone = useRef(false);
+  const lastModeRef = useRef<MapMode | null>(null);
 
   useEffect(() => {
-    if (!first || initialPositionDone.current || hasUserAdjustedView.current) {
+    if (lastModeRef.current === mode) {
       return;
     }
-    initialPositionDone.current = true;
-    setInitialViewState((current) => ({
-      ...current,
-      longitude: first.lon,
-      latitude: first.lat,
-      zoom: 7
-    }));
-  }, [first]);
+
+    lastModeRef.current = mode;
+    hasUserAdjustedView.current = false;
+    setInitialViewState(defaultViewForMode(mode, replayPoints, livePoints));
+  }, [livePoints, mode, replayPoints]);
 
   /* Memoize DeckGL layers so they are only recreated when their data
      or configuration actually changes – not on every parent re-render. */
   const layers = useMemo(() => [
     new GeoJsonLayer({
-      id: "country-basemap",
+      id: "country-fill",
+      data: COUNTRY_FEATURES,
+      pickable: false,
+      stroked: false,
+      filled: true,
+      opacity: 0.98,
+      getFillColor: [19, 42, 66, 240],
+      getLineColor: [0, 0, 0, 0],
+      lineWidthMinPixels: 0
+    }),
+    new GeoJsonLayer({
+      id: "country-outline",
       data: COUNTRY_FEATURES,
       pickable: false,
       stroked: true,
-      filled: true,
-      opacity: 0.92,
-      getFillColor: [9, 20, 36, 230],
-      getLineColor: [71, 85, 105, 235],
+      filled: false,
+      opacity: 1,
+      getLineColor: [125, 211, 252, 230],
       lineWidthMinPixels: 1
     }),
     showHeatmap &&
@@ -191,7 +256,10 @@ const RiskMapInner = memo(function RiskMapInner({
 
   return (
     <DeckGL
-      controller
+      controller={{
+        dragRotate: false,
+        touchRotate: false
+      }}
       layers={layers}
       initialViewState={initialViewState}
       onViewStateChange={({ interactionState }) => {
@@ -233,6 +301,7 @@ export function RiskMap(props: {
   selectedId?: string;
   onSelect?: (point: PredictionPoint) => void;
   showHeatmap: boolean;
+  mode: MapMode;
 }) {
   return <RiskMapInner {...props} />;
 }

@@ -27,7 +27,11 @@ const RiskMap = dynamic(
   { ssr: false }
 );
 
-const DASHBOARD_MAP_POINT_LIMIT = 2000;
+const DASHBOARD_MAP_POINT_LIMITS: Record<MapMode, number> = {
+  replay: 1500,
+  live: 1000,
+  full: 1500
+};
 
 function formatMetricPercent(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -41,6 +45,7 @@ export default function DashboardPage() {
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [selected, setSelected] = useState<PredictionPoint | null>(null);
   const [mode, setMode] = useState<MapMode>("full");
+  const mapPointLimit = DASHBOARD_MAP_POINT_LIMITS[mode];
 
   const summaryQuery = useQuery({
     queryKey: ["overview", mode],
@@ -50,9 +55,9 @@ export default function DashboardPage() {
     placeholderData: (previousData) => previousData
   });
   const pointsQuery = useQuery({
-    queryKey: ["points", minRisk, mode],
+    queryKey: ["points", minRisk, mode, mapPointLimit],
     queryFn: () =>
-      api.mapPoints({ limit: DASHBOARD_MAP_POINT_LIMIT, min_risk: minRisk, mode }),
+      api.mapPoints({ limit: mapPointLimit, min_risk: minRisk, mode }),
     refetchInterval: 15_000,
     staleTime: 15_000,
     placeholderData: (previousData) => previousData
@@ -217,6 +222,7 @@ export default function DashboardPage() {
               selectedId={selected?.event_id}
               showHeatmap={showHeatmap}
               onSelect={setSelected}
+              mode={mode}
             />
           </div>
           <div className="map-overlay">
