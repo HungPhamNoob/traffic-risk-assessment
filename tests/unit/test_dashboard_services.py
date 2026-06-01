@@ -109,3 +109,11 @@ def test_throughput_uses_latest_active_window_when_stream_is_stale(monkeypatch):
     assert result["status"] == "stale"
     assert result["event_count"] == 25
     assert result["is_live_window"] is False
+
+
+def test_time_column_prefers_processed_time_over_created_at():
+    result = pipeline_service._time_column(
+        {"created_at", "processed_time", "event_time"}
+    )
+
+    assert result == "processed_time"

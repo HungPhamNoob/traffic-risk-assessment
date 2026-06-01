@@ -63,10 +63,12 @@ def _parse_window_seconds(window: str) -> int:
 
 
 def _time_column(columns: set[str]) -> str | None:
-    if "created_at" in columns:
-        return "created_at"
     if "processed_time" in columns:
         return "processed_time"
+    if "updated_at" in columns:
+        return "updated_at"
+    if "created_at" in columns:
+        return "created_at"
     if "ingestion_time" in columns:
         return "ingestion_time"
     if "event_time" in columns:

@@ -193,7 +193,7 @@ gcloud projects add-iam-policy-binding big-data-group-4 \
 
 Use this when GitHub Actions is unavailable or when debugging a VM directly. Deploy Node 1 first, then Node 2, then Node 3.
 
-Use the same safe Git sync pattern on every VM. It handles first-time clone, old startup-script copies that do not contain `.git`, and dirty deployment worktrees:
+Use the same safe Git sync pattern on every VM. It handles first-time clone and old startup-script copies that do not contain `.git`, but it avoids destructive resets when the deployment worktree is already dirty:
 
 ```bash
 cd /opt
@@ -207,9 +207,8 @@ fi
 cd /opt/traffic
 git config --global --add safe.directory /opt/traffic 2>/dev/null || true
 git fetch --prune origin
-git checkout -B main origin/main
-git reset --hard origin/main
-git clean -fd -e data/ -e logs/ -e .venv-node1/ -e .venv-node3/
+git status --short
+git pull --ff-only origin main
 ```
 
 Then run the node-specific command.
@@ -263,11 +262,11 @@ Required GitHub secrets:
 - `GCP_PROJECT_ID=big-data-group-4`
 - `GCP_SA_KEY`: JSON key for a service account that can manage Compute Engine, Storage, Artifact Registry, and existing VM metadata. API enabling should be done once by a project owner; CI treats API enable as best-effort.
 - `ENV_CLOUD`: complete `.env.cloud` content.
-- `HUNG_SSH_PRIVATE_KEY`: private key matching the `runner` public key installed on VMs.
+- `HUNG_SSH_PRIVATE_KEY`: private key matching the inter-node deploy key installed on the VMs.
 
 Optional GitHub variables:
 
-- `HUNG_SSH_USER=runner`
+- `HUNG_SSH_USER=hung`
 - `DEPLOY_STREAMING=true`
 - `DEPLOY_BATCH=true`
 

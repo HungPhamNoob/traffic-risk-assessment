@@ -240,8 +240,8 @@ Kafka message → JSON parse → Feature Engineering → MLflow Inference → Ri
 
 The system implements **micro-batch inference** to dramatically increase throughput:
 
-- Events are buffered into `_ML_INFERENCE_BUFFER` (size controlled by `ML_BATCH_SIZE=100`)
-- When buffer reaches batch size, **all 100 events** are sent to MLflow Serving in **one HTTP request**
+- Events are buffered into `_ML_INFERENCE_BUFFER` (size controlled by `ML_BATCH_SIZE=250`)
+- When buffer reaches batch size, **all 250 events** are sent to MLflow Serving in **one HTTP request**
 - MLflow `/invocations` endpoint supports `dataframe_split` format with multiple rows
 - This reduces HTTP round-trips from 1000 → 10 for 1000 events (~100× reduction)
 
@@ -269,7 +269,7 @@ The system implements **micro-batch inference** to dramatically increase through
 #### Silver GCS Writes
 
 - Writes JSONL batches to `gs://big-data-group-4-silver/process/flink_features/YYYY/MM/DD/batches/`
-- Batch size: `SILVER_FLUSH_EVERY_N=250`
+- Batch size: `SILVER_FLUSH_EVERY_N=2000`
 
 ### 5.4 MLflow & H2O Model Serving
 
@@ -326,8 +326,8 @@ Content-Type: application/json
 
 | Table | Purpose | Key | Rows (approx) |
 |-------|---------|-----|---------------|
-| `traffic_risk_predictions` | US Accidents predictions | event_id | ~73,788 |
-| `traffic_tomtom_incidents` | TomTom live incidents | event_id | ~628 |
+| `traffic_risk_predictions` | US Accidents predictions | event_id | ~1.1M rows |
+| `traffic_tomtom_incidents` | TomTom live incidents | event_id | ~6k rows |
 
 #### Upsert Strategy
 ```sql
@@ -337,7 +337,7 @@ ON CONFLICT (event_id) DO UPDATE SET
   risk_score = EXCLUDED.risk_score,
   ...
   geom = EXCLUDED.geom,
-  created_at = NOW();
+  updated_at = NOW();
 ```
 
 #### PostGIS
@@ -354,14 +354,14 @@ ON CONFLICT (event_id) DO UPDATE SET
 
 | DAG | Schedule | Purpose |
 |-----|---------|---------|
-| `dag_ml_pipeline.py` | `@daily` | Trigger Spark batch + H2O retraining |
-| `dag_stream_replay_monitor.py` | `@hourly` | Monitor streaming pipeline health |
+| `dag_ml_pipeline.py` | `*/5 * * * *` | Trigger Spark batch + H2O retraining from the latest Silver data |
+| `dag_stream_replay_monitor.py` | `*/2 * * * *` | Monitor streaming health and replay freshness |
 
 #### Airflow Tasks
 
-1. **Retrain H2O Model:** Reads Gold features, runs `h2o_after_2020.py`, registers to MLflow
-2. **Spark Feature Generation:** Runs `spark_batch.py` on node3
-3. **Model Promotion:** Updates MLflow model alias to point to latest version
+1. **Spark Silver -> Gold:** SSH from Airflow on Node 1 to Node 3, then run `scripts/gcp/run-node3.sh`
+2. **H2O Retrain:** Train the after-2020 model from the Gold dataset and register fresh runs in MLflow
+3. **Notify Success:** Mark the batch/retrain cycle complete so the dashboard can display it in retrain history
 
 ### 5.8 FastAPI Dashboard Backend
 
@@ -459,7 +459,7 @@ traffic_api_request_latency_seconds{method, path}
 
 | Optimization | Before | After | Impact |
 |-------------|--------|-------|--------|
-| **Micro-batch MLflow inference** | 1000 events = 1000 HTTP calls | 1000 events = 10 HTTP calls (100 rows each) | ~100× fewer HTTP round-trips |
+| **Micro-batch MLflow inference** | 1000 events = 1000 HTTP calls | 1000 events = 4 HTTP calls (250 rows each) | ~250× fewer HTTP round-trips |
 | **PostgreSQL batch insert** | 1 row per INSERT | 200 rows per execute_values | ~200× fewer SQL transactions |
 | **MLflow Serving resources** | 2 GB memory | 4 GB memory + 2 CPUs | Higher inference throughput |
 | **US Producer loop** | `STREAM_LOOP_FOREVER=true` | `STREAM_LOOP_FOREVER=false` | Single-pass replay avoids duplicate processing |
@@ -483,6 +483,14 @@ traffic_api_request_latency_seconds{method, path}
 2. **Model quantization:** Convert H2O model to ONNX for faster inference
 3. **Redis caching:** Cache frequent prediction results for identical feature sets
 4. **Flink operator chaining:** Optimize Flink job graph for lower serialization overhead
+
+### How Core Metrics Are Calculated
+
+- **Unified risk score:** `shared/risk_scoring.py` uses a severity-first base score of `{1: 0.00, 2: 0.25, 3: 0.55, 4: 0.85}` and then applies bounded adjustments for delay, incident length, night driving, weekend, highway roads, and bad weather. The final score is clamped to `[0.0, 1.0]`.
+- **Throughput (`events_per_second`):** FastAPI counts rows in the selected serving tables whose `processed_time` falls inside the requested lookback window, then divides by `window_seconds`.
+- **Latency (`p50`, `p95`, `p99`, `avg`):** FastAPI unions recent latency samples from the serving tables and computes SQL percentiles with `percentile_cont(...) WITHIN GROUP (ORDER BY latency_ms)`.
+- **End-to-end latency:** `processing/flink_streaming.py` calculates `end_to_end_latency_ms = processed_time - ingestion_time` in milliseconds for each row written to PostgreSQL.
+- **Replay freshness:** the dashboard pipeline page should anchor to `processed_time`, not `created_at`, because replay rows are upserted and can stay active long after the first insert timestamp.
 
 ---
 
