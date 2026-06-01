@@ -260,6 +260,32 @@ Collect measured evidence after a run:
 make -f makefile/gcp/Makefile collect-metrics
 ```
 
+## Cloud Operations
+
+Start or repair the running cloud stack in the safe order:
+
+```bash
+gcloud compute ssh node1-control --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && git pull --ff-only origin main && bash scripts/gcp/run-node1.sh'
+gcloud compute ssh node2-streaming --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && git pull --ff-only origin main && bash scripts/gcp/run-node2.sh'
+gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 --command='cd /opt/traffic && git pull --ff-only origin main && NODE3_WAIT_FOR_SILVER_SECONDS=600 bash scripts/gcp/run-node3.sh'
+```
+
+Public services:
+
+- Dashboard: `http://35.224.149.110:3001`
+- FastAPI docs: `http://35.224.149.110:8000/docs`
+- Airflow: `http://35.224.149.110:8080`
+- MLflow: `http://35.224.149.110:5000`
+- Grafana: `http://35.224.149.110:3000`
+
+Replay the US dataset again from row `0` of the `from_2020` split:
+
+```bash
+BRANCH=main make -f makefile/gcp/Makefile full-reset-run-realtime
+```
+
+That command resets realtime PostgreSQL tables, Kafka/Flink replay state, local Spark state, Silver/Gold retrain outputs, and then restarts Node 2 plus Node 3 so the replay starts again from the beginning of `us_pipeline_from_2020.csv`.
+
 Request/response checks for the main public services are written automatically to:
 
 ```text

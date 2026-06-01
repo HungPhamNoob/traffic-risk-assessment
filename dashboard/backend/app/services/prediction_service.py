@@ -119,7 +119,11 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
         selects.append(
             sql.SQL(
                 """
-                SELECT {risk_score} AS risk_score, event_time
+                SELECT
+                    COUNT(*)::BIGINT AS total_events,
+                    COALESCE(SUM(CASE WHEN {risk_score} >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_events,
+                    COALESCE(SUM({risk_score}), 0)::DOUBLE PRECISION AS risk_score_sum,
+                    MAX(event_time) AS latest_event_time
                 FROM {table}
                 """
             ).format(
@@ -133,7 +137,11 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
         selects.append(
             sql.SQL(
                 """
-                SELECT {risk_score} AS risk_score, event_time
+                SELECT
+                    COUNT(*)::BIGINT AS total_events,
+                    COALESCE(SUM(CASE WHEN {risk_score} >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_events,
+                    COALESCE(SUM({risk_score}), 0)::DOUBLE PRECISION AS risk_score_sum,
+                    MAX(event_time) AS latest_event_time
                 FROM {table}
                 """
             ).format(
@@ -147,10 +155,14 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
         query = sql.SQL(
             """
             SELECT
-                COUNT(*)::BIGINT AS total_events,
-                COALESCE(SUM(CASE WHEN risk_score >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_events,
-                COALESCE(AVG(risk_score), 0)::DOUBLE PRECISION AS avg_risk_score,
-                MAX(event_time) AS latest_event_time
+                COALESCE(SUM(total_events), 0)::BIGINT AS total_events,
+                COALESCE(SUM(high_risk_events), 0)::BIGINT AS high_risk_events,
+                CASE
+                    WHEN COALESCE(SUM(total_events), 0) = 0 THEN 0::DOUBLE PRECISION
+                    ELSE COALESCE(SUM(risk_score_sum), 0)::DOUBLE PRECISION
+                        / SUM(total_events)::DOUBLE PRECISION
+                END AS avg_risk_score,
+                MAX(latest_event_time) AS latest_event_time
             FROM ({union_query}) AS overview_events
             """
         ).format(union_query=sql.SQL(" UNION ALL ").join(selects))

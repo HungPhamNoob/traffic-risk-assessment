@@ -3,13 +3,26 @@
 import DeckGL from "@deck.gl/react";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import type { StyleSpecification } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import Map from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot, PredictionPoint } from "@/lib/types";
 
-const MAP_STYLE =
-  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const MAP_STYLE: StyleSpecification = {
+  version: 8,
+  name: "traffic-risk-dark",
+  sources: {},
+  layers: [
+    {
+      id: "background",
+      type: "background",
+      paint: {
+        "background-color": "#08111f"
+      }
+    }
+  ]
+};
 
 type RiskMapViewState = {
   longitude: number;
@@ -178,7 +191,7 @@ export function RiskMap({
         return `${point.event_id}\nPredicted severity ${predictedSeverity}\nTrue severity ${trueSeverity}\nRisk ${riskText}`;
       }}
     >
-      <Map reuseMaps mapStyle={MAP_STYLE} />
+      <Map reuseMaps mapStyle={MAP_STYLE} attributionControl={false} />
     </DeckGL>
   );
 }

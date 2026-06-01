@@ -142,9 +142,12 @@ def severity_distribution(mode: str | None = None) -> dict[str, Any]:
         selects.append(
             sql.SQL(
                 """
-                SELECT {severity_column} AS severity
+                SELECT
+                    {severity_column} AS severity,
+                    COUNT(*)::BIGINT AS event_count
                 FROM {table}
                 WHERE {severity_column} IS NOT NULL
+                GROUP BY {severity_column}
                 """
             ).format(
                 severity_column=source["severity_column"],
@@ -154,7 +157,7 @@ def severity_distribution(mode: str | None = None) -> dict[str, Any]:
 
     query = sql.SQL(
         """
-        SELECT severity, COUNT(*)::BIGINT AS count
+        SELECT severity, SUM(event_count)::BIGINT AS count
         FROM ({union_query}) AS severity_events
         GROUP BY severity
         ORDER BY severity
@@ -180,9 +183,11 @@ def risk_by_hour(mode: str | None = None) -> dict[str, Any]:
                 """
                 SELECT
                     {hour_column} AS hour,
-                    {risk_score} AS risk_score
+                    COALESCE(SUM({risk_score}), 0)::DOUBLE PRECISION AS risk_score_sum,
+                    COUNT(*)::BIGINT AS event_count
                 FROM {table}
                 WHERE {hour_column} IS NOT NULL AND {risk_score} IS NOT NULL
+                GROUP BY {hour_column}
                 """
             ).format(
                 hour_column=source["hour_column"],
@@ -195,8 +200,12 @@ def risk_by_hour(mode: str | None = None) -> dict[str, Any]:
         """
         SELECT
             hour,
-            AVG(risk_score)::DOUBLE PRECISION AS avg_risk_score,
-            COUNT(*)::BIGINT AS accident_count
+            CASE
+                WHEN COALESCE(SUM(event_count), 0) = 0 THEN 0::DOUBLE PRECISION
+                ELSE COALESCE(SUM(risk_score_sum), 0)::DOUBLE PRECISION
+                    / SUM(event_count)::DOUBLE PRECISION
+            END AS avg_risk_score,
+            COALESCE(SUM(event_count), 0)::BIGINT AS accident_count
         FROM ({union_query}) AS hourly_events
         GROUP BY hour
         ORDER BY hour
@@ -247,11 +256,24 @@ def weather_histogram(mode: str | None = None) -> dict[str, Any]:
             selects.append(
                 sql.SQL(
                     """
-                    SELECT {value_column} AS metric_value
+                    SELECT
+                        WIDTH_BUCKET({value_column}, 0, {max_val}, {bins}) AS bin_idx,
+                        MIN({value_column})::DOUBLE PRECISION AS bin_min,
+                        MAX({value_column})::DOUBLE PRECISION AS bin_max,
+                        COUNT(*)::BIGINT AS event_count
                     FROM {table}
                     WHERE {value_column} IS NOT NULL
+                    GROUP BY WIDTH_BUCKET({value_column}, 0, {max_val}, {bins})
                     """
                 ).format(
+                    bins=sql.Literal(bins),
+                    max_val=sql.Literal(
+                        100
+                        if key == "humidity_column"
+                        else 130
+                        if key == "temperature_column"
+                        else 100
+                    ),
                     value_column=source[key],
                     table=source["table"],
                 )
@@ -260,24 +282,16 @@ def weather_histogram(mode: str | None = None) -> dict[str, Any]:
         query = sql.SQL(
             """
             SELECT
-                WIDTH_BUCKET(metric_value, 0, {max_val}, {bins}) AS bin_idx,
-                MIN(metric_value)::DOUBLE PRECISION AS bin_min,
-                MAX(metric_value)::DOUBLE PRECISION AS bin_max,
-                COUNT(*)::BIGINT AS count
+                bin_idx,
+                MIN(bin_min)::DOUBLE PRECISION AS bin_min,
+                MAX(bin_max)::DOUBLE PRECISION AS bin_max,
+                SUM(event_count)::BIGINT AS count
             FROM ({union_query}) AS weather_values
             GROUP BY bin_idx
             ORDER BY bin_idx
             """
         ).format(
-            bins=sql.Literal(bins),
             union_query=sql.SQL(" UNION ALL ").join(selects),
-            max_val=sql.Literal(
-                100
-                if key == "humidity_column"
-                else 130
-                if key == "temperature_column"
-                else 100
-            ),
         )
         try:
             rows = fetch_all(query)

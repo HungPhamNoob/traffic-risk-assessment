@@ -465,6 +465,8 @@ gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 -
 - Node 1 disk 100%: resize boot disk, then run `sudo growpart /dev/sda 1 && sudo resize2fs /dev/sda1` on the VM.
 - Docker pull from Artifact Registry fails: grant `roles/artifactregistry.reader` to `team4-sa@big-data-group-4.iam.gserviceaccount.com`.
 - Airflow unhealthy after restart: the compose command uses `airflow db migrate || airflow db init`; check `docker logs node1-airflow`.
+- Airflow UI unreachable on `:8080` while scheduler still runs: check both `node1-airflow` and `node1-airflow-scheduler`. The webserver now runs in `node1-airflow`; the scheduler runs separately in `node1-airflow-scheduler`.
+- MLflow experiment history disappears after a repo refresh: verify that Node 1 is using the persistent Docker volume `mlflow_data` instead of a bind mount inside `/opt/traffic`.
 - Flink import fails: verify `PYTHONPATH=/opt/traffic` and that `processing.feature_engineering` exists on the VM.
 - Backend returns empty JSON: this is valid if `traffic_risk_predictions` has no rows yet. Run streaming replay first.
 - Retraining stays `queued`, `up_for_retry`, or `failed`: verify that `HUNG_SSH_USER` matches the private key mounted at `/run/secrets/google_compute_engine` inside `node1-airflow`, then test `ssh -i /run/secrets/google_compute_engine ${HUNG_SSH_USER}@${NODE3_INTERNAL_IP} hostname` from the container.

@@ -69,6 +69,7 @@ services:
       - AIRFLOW__WEBSERVER__WORKERS=1
       - AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT=300
       - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
+      - PATH=/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin
       - PROJECT_ROOT=/opt/traffic
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
@@ -90,20 +91,10 @@ services:
     command: >
       bash -c "
         set -euo pipefail;
+        export PATH=/home/airflow/.local/bin:$$PATH;
         airflow db migrate || airflow db init;
         airflow users create --username $${AIRFLOW_USER:-admin} --password $${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true;
-        while true; do
-          airflow scheduler &
-          scheduler_pid=$$!;
-          airflow webserver -p 8080 &
-          webserver_pid=$$!;
-          wait -n $$scheduler_pid $$webserver_pid || true;
-          kill $$scheduler_pid $$webserver_pid 2>/dev/null || true;
-          wait $$scheduler_pid 2>/dev/null || true;
-          wait $$webserver_pid 2>/dev/null || true;
-          echo 'Airflow process exited. Restarting both scheduler and webserver in 5s.';
-          sleep 5;
-        done
+        exec airflow webserver -p 8080
       "
     networks:
       - capstone-net
@@ -115,6 +106,63 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.0-python3.10
+    container_name: node1-airflow-scheduler
+    user: root
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow123@airflow-db/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - _AIRFLOW_WWW_USER_USERNAME=${AIRFLOW_USER:-admin}
+      - _AIRFLOW_WWW_USER_PASSWORD=${AIRFLOW_PASSWORD:-admin}
+      - PATH=/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin
+      - PROJECT_ROOT=/opt/traffic
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - AIRFLOW_MODEL_RETRAIN_SCHEDULE=${AIRFLOW_MODEL_RETRAIN_SCHEDULE:-0 * * * *}
+      - AIRFLOW_STREAM_HEALTH_SCHEDULE=${AIRFLOW_STREAM_HEALTH_SCHEDULE:-*/2 * * * *}
+      - SSH_KEY=/run/secrets/google_compute_engine
+      - HUNG_SSH_USER=${HUNG_SSH_USER:-runner}
+      - NODE2_INTERNAL_IP=${NODE2_INTERNAL_IP:-10.128.0.5}
+      - NODE3_INTERNAL_IP=${NODE3_INTERNAL_IP:-10.128.0.8}
+    volumes:
+      - ../../orchestration/dags:/opt/airflow/dags:ro
+      - ../../orchestration/logs:/opt/airflow/logs
+      - ../..:/opt/traffic:ro
+      - ../../data:/data:ro
+      - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+      - ${FASTAPI_SSH_KEY_PATH:-/home/runner/.ssh/google_compute_engine}:/run/secrets/google_compute_engine:ro
+    command: >
+      bash -c "
+        set -euo pipefail;
+        export PATH=/home/airflow/.local/bin:$$PATH;
+        airflow db migrate || airflow db init;
+        airflow users create --username $${AIRFLOW_USER:-admin} --password $${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true;
+        exec airflow scheduler
+      "
+    networks:
+      - capstone-net
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G
+          cpus: '1.0'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "pgrep -f 'airflow scheduler' >/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -189,17 +237,20 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.12.1
+    build:
+      context: ../..
+      dockerfile: deployment/node1-control/mlflow.Dockerfile
+    image: us-central1-docker.pkg.dev/big-data-group-4/capstone/mlflow-gcs:latest
     container_name: node1-mlflow
     ports:
       - "5000:5000"
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
-      - ../../ml/mlruns:/mlruns
+      - mlflow_data:/mlruns
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
     command: >
-      bash -lc "python -m pip install --no-cache-dir --disable-pip-version-check google-auth google-cloud-storage && exec mlflow server --host 0.0.0.0 --port 5000 -w ${MLFLOW_GUNICORN_WORKERS:-2} --backend-store-uri sqlite:////mlruns/mlflow.db --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-gs://capstone-data-lake/mlflow-artifacts}/ --gunicorn-opts \"--timeout ${MLFLOW_GUNICORN_TIMEOUT_SECONDS:-300}\""
+      bash -lc "exec mlflow server --host 0.0.0.0 --port 5000 -w ${MLFLOW_GUNICORN_WORKERS:-2} --backend-store-uri sqlite:////mlruns/mlflow.db --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-gs://capstone-data-lake/mlflow-artifacts}/ --gunicorn-opts \"--timeout ${MLFLOW_GUNICORN_TIMEOUT_SECONDS:-300}\""
     networks:
       - capstone-net
     deploy:
@@ -212,7 +263,10 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   mlflow-serving:
-    image: ghcr.io/mlflow/mlflow:v2.12.1
+    build:
+      context: ../..
+      dockerfile: deployment/node1-control/mlflow.Dockerfile
+    image: us-central1-docker.pkg.dev/big-data-group-4/capstone/mlflow-gcs:latest
     container_name: node1-mlflow-serving
     ports:
       - "5001:5001"
@@ -220,12 +274,11 @@ services:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
-      - ../../ml/mlruns:/mlruns
+      - mlflow_data:/mlruns
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
       - ../../scripts/gcp/mlflow-serving-entrypoint.sh:/app/mlflow-serving-entrypoint.sh:ro
     command: >
       bash -lc "
-        python -m pip install --no-cache-dir --disable-pip-version-check google-auth google-cloud-storage &&
         exec bash /app/mlflow-serving-entrypoint.sh
       "
     depends_on:
@@ -306,7 +359,7 @@ services:
     ports:
       - "${DASHBOARD_PORT:-3001}:3000"
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=/api-proxy
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-}
       - DASHBOARD_PROXY_TARGET=${DASHBOARD_PROXY_TARGET:-http://fastapi:8000}
     volumes:
       - ../../dashboard/frontend:/app
@@ -337,3 +390,4 @@ volumes:
   prometheus_data:
   grafana_data:
   dashboard_next_cache:
+  mlflow_data:

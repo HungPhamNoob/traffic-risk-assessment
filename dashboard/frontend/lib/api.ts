@@ -3,17 +3,27 @@ import type { MapMode, ScenarioInput } from "./types";
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.VITE_API_BASE_URL ||
-  "/api-proxy";
+  "";
 
 type QueryValue = string | number | boolean | null | undefined;
 
 function buildUrl(path: string, params?: Record<string, QueryValue>) {
-  const baseUrl = API_BASE_URL.startsWith("http")
-    ? API_BASE_URL
+  const baseUrl =
+    API_BASE_URL ||
+    (typeof window !== "undefined"
+      ? (window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1"
+          ? "/api-proxy"
+          : `${window.location.protocol}//${window.location.hostname}:8000`)
+      : "http://localhost:3001/api-proxy");
+  const resolvedBaseUrl = baseUrl.startsWith("http")
+    ? baseUrl
     : typeof window !== "undefined"
-      ? `${window.location.origin}${API_BASE_URL}`
-      : `http://localhost:3001${API_BASE_URL}`;
-  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+      ? `${window.location.origin}${baseUrl}`
+      : `http://localhost:3001${baseUrl}`;
+  const normalizedBaseUrl = resolvedBaseUrl.endsWith("/")
+    ? resolvedBaseUrl
+    : `${resolvedBaseUrl}/`;
   const normalizedPath = path.replace(/^\/+/, "");
   const url = new URL(normalizedPath, normalizedBaseUrl);
   Object.entries(params || {}).forEach(([key, value]) => {

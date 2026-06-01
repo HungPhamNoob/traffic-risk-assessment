@@ -65,39 +65,19 @@ with DAG(
             echo "=== [Airflow] Spark Silver -> Gold ==="
             SSH_KEY_PATH="${SSH_KEY:-/run/secrets/google_compute_engine}"
             SSH_TARGET="${HUNG_SSH_USER:-runner}@${NODE3_INTERNAL_IP:-10.128.0.8}"
-            NODE3_LOCK_BUSY_EXIT_CODE="${NODE3_LOCK_BUSY_EXIT_CODE:-75}"
-            NODE3_LOCK_WAIT_SECONDS="${NODE3_LOCK_WAIT_SECONDS:-10800}"
-            NODE3_LOCK_POLL_SECONDS="${NODE3_LOCK_POLL_SECONDS:-60}"
-            waited_seconds=0
             if [ ! -f "${SSH_KEY_PATH}" ]; then
                 echo "ERROR: SSH key not found at ${SSH_KEY_PATH}"
                 exit 1
             fi
-            while true; do
-                set +e
-                ssh -i "${SSH_KEY_PATH}" \
-                    -o IdentitiesOnly=yes \
-                    -o StrictHostKeyChecking=no \
-                    -o UserKnownHostsFile=/dev/null \
-                    -o ConnectTimeout=15 \
-                    "${SSH_TARGET}" "
-                    cd /opt/traffic &&
-                    bash scripts/gcp/run-node3.sh
-                "
-                exit_code=$?
-                set -e
-                if [ "${exit_code}" -eq 0 ]; then
-                    break
-                fi
-                if [ "${exit_code}" -eq "${NODE3_LOCK_BUSY_EXIT_CODE}" ] && [ "${waited_seconds}" -lt "${NODE3_LOCK_WAIT_SECONDS}" ]; then
-                    echo "Node 3 retraining is busy. Waiting ${NODE3_LOCK_POLL_SECONDS}s before retrying (${waited_seconds}/${NODE3_LOCK_WAIT_SECONDS}s)."
-                    sleep "${NODE3_LOCK_POLL_SECONDS}"
-                    waited_seconds=$((waited_seconds + NODE3_LOCK_POLL_SECONDS))
-                    continue
-                fi
-                echo "ERROR: Spark Silver -> Gold failed with exit code ${exit_code}."
-                exit "${exit_code}"
-            done
+            ssh -i "${SSH_KEY_PATH}" \
+                -o IdentitiesOnly=yes \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=15 \
+                "${SSH_TARGET}" "
+                cd /opt/traffic &&
+                bash scripts/gcp/run-node3.sh
+            "
         """,
         execution_timeout=timedelta(hours=6),
     )
