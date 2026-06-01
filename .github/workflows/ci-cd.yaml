@@ -306,6 +306,16 @@ jobs:
             fi
           done
 
+          if ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE1_IP}" 'TRAINING_PID_FILE="/opt/traffic/logs/cloud_h2o_before_2020.pid"; if [ -f "${TRAINING_PID_FILE}" ] && ps -p "$(cat "${TRAINING_PID_FILE}")" >/dev/null 2>&1; then echo "NODE1_BOOTSTRAP_ACTIVE $(cat "${TRAINING_PID_FILE}")"; exit 0; fi; exit 1'; then
+            echo "Node 1 bootstrap training is already active. Skipping deploy sync/restart to avoid interrupting it."
+            exit 0
+          fi
+
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
