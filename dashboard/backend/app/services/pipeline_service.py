@@ -19,6 +19,7 @@ from app.core.database import fetch_all, fetch_one
 from app.services.prediction_service import table_identifier
 
 LATENCY_SANITY_MAX_MS = 3_600_000.0
+EXPENSIVE_SCAN_ROW_THRESHOLD = 500_000
 
 
 def _prediction_table_name() -> str:
@@ -87,8 +88,11 @@ def _coerce_utc_timestamp(value: Any) -> datetime | None:
 def _latest_table_timestamp(table_name: str, column: str) -> datetime | None:
     query = sql.SQL(
         """
-        SELECT MAX({time_column}) AS latest_time
+        SELECT {time_column} AS latest_time
         FROM {table}
+        WHERE {time_column} IS NOT NULL
+        ORDER BY {time_column} DESC NULLS LAST
+        LIMIT 1
         """
     ).format(
         table=table_identifier(table_name),
@@ -96,6 +100,54 @@ def _latest_table_timestamp(table_name: str, column: str) -> datetime | None:
     )
     row = fetch_one(query) or {}
     return _coerce_utc_timestamp(row.get("latest_time"))
+
+
+def _table_row_estimate(table_name: str) -> int:
+    row = fetch_one(
+        """
+        SELECT COALESCE(c.reltuples, 0)::BIGINT AS row_estimate
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = %(table_name)s
+        """,
+        {"table_name": table_name},
+    )
+    return int(row.get("row_estimate") or 0) if row else 0
+
+
+def _index_valid(index_name: str) -> bool:
+    row = fetch_one(
+        """
+        SELECT COALESCE(
+            (
+                SELECT i.indisvalid
+                FROM pg_index AS i
+                JOIN pg_class AS c ON c.oid = i.indexrelid
+                WHERE c.relname = %(index_name)s
+            ),
+            FALSE
+        ) AS is_valid
+        """,
+        {"index_name": index_name},
+    )
+    return bool(row and row.get("is_valid"))
+
+
+def _time_index_name(table_name: str, column: str) -> str | None:
+    if table_name == "traffic_risk_predictions" and column == "event_time":
+        return "idx_traffic_risk_predictions_event_time"
+    if table_name == "traffic_risk_predictions" and column == "processed_time":
+        return "idx_traffic_risk_predictions_processed_time"
+    if table_name == "traffic_tomtom_incidents" and column == "event_time":
+        return "idx_traffic_tomtom_incidents_event_time"
+    return None
+
+
+def _skip_expensive_time_scan(table_name: str, column: str) -> bool:
+    index_name = _time_index_name(table_name, column)
+    if index_name and _index_valid(index_name):
+        return False
+    return _table_row_estimate(table_name) >= EXPENSIVE_SCAN_ROW_THRESHOLD
 
 
 def _window_anchor(
@@ -125,6 +177,17 @@ def throughput(window: str) -> dict[str, Any]:
                 {
                     "table": table_name,
                     "status": "unavailable",
+                    "event_count": 0,
+                    "time_column": None,
+                    "latest_timestamp": None,
+                }
+            )
+            continue
+        if _skip_expensive_time_scan(table_name, column):
+            sources.append(
+                {
+                    "table": table_name,
+                    "status": "degraded",
                     "event_count": 0,
                     "time_column": None,
                     "latest_timestamp": None,
@@ -227,6 +290,8 @@ def latency(metric: str, window: str = "5m") -> dict[str, Any]:
         time_column = _time_column(columns)
         if not latency_columns or not time_column:
             continue
+        if _skip_expensive_time_scan(table_name, time_column):
+            continue
         column = latency_columns[0]
         latest_timestamp = _latest_table_timestamp(table_name, time_column)
         if latest_timestamp:
@@ -320,54 +385,24 @@ def replay_health() -> dict[str, Any]:
             )
             continue
 
-        select_created = (
-            sql.SQL("MAX(created_at) AS latest_created_at")
-            if "created_at" in columns
-            else sql.SQL("NULL AS latest_created_at")
-        )
-        select_event = (
-            sql.SQL("MAX(event_time) AS latest_event_time")
-            if "event_time" in columns
-            else sql.SQL("NULL AS latest_event_time")
-        )
-        summary_query = sql.SQL(
-            """
-            SELECT COUNT(*)::BIGINT AS row_count, {select_event}, {select_created}
-            FROM {table}
-            """
-        ).format(
-            table=table_identifier(table_name),
-            select_event=select_event,
-            select_created=select_created,
-        )
-        summary = fetch_one(summary_query) or {}
-        total_rows += int(summary.get("row_count") or 0)
-
-        if "model_status" in columns:
-            status_query = sql.SQL(
-                """
-                SELECT COALESCE(model_status, 'unknown') AS status, COUNT(*)::BIGINT AS count
-                FROM {table}
-                GROUP BY COALESCE(model_status, 'unknown')
-                ORDER BY count DESC
-                """
-            ).format(table=table_identifier(table_name))
-            model_status = fetch_all(status_query)
-        else:
-            model_status = []
-
-        for key in ("latest_event_time", "latest_created_at"):
-            if summary.get(key):
-                summary[key] = summary[key].isoformat()
+        latest_event_time = None
+        if "event_time" in columns and not _skip_expensive_time_scan(
+            table_name, "event_time"
+        ):
+            latest_event_time = _latest_table_timestamp(table_name, "event_time")
+        row_count = _table_row_estimate(table_name)
+        total_rows += row_count
 
         source_health.append(
             {
                 "table": table_name,
-                "status": "ok" if summary.get("row_count") else "not_enough_data",
-                "row_count": summary.get("row_count") or 0,
-                "latest_event_time": summary.get("latest_event_time"),
-                "latest_created_at": summary.get("latest_created_at"),
-                "model_status": model_status,
+                "status": "ok" if row_count else "not_enough_data",
+                "row_count": row_count,
+                "latest_event_time": (
+                    latest_event_time.isoformat() if latest_event_time else None
+                ),
+                "latest_created_at": None,
+                "model_status": [],
             }
         )
 

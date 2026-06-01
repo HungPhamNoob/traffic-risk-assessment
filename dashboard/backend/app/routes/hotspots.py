@@ -13,9 +13,10 @@ def get_hotspots(
     min_events: int = Query(default=5, ge=1),
     start_time: str | None = None,
     end_time: str | None = None,
+    mode: str | None = Query(default="full"),
 ) -> dict:
     """Return ranked high-risk locations."""
-    return top_hotspots(limit, min_events, start_time, end_time)
+    return top_hotspots(limit, min_events, start_time, end_time, mode)
 
 
 @router.get("/nearby")

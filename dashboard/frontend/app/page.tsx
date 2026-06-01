@@ -56,8 +56,8 @@ export default function DashboardPage() {
     refetchInterval: 10_000
   });
   const hotspotsQuery = useQuery({
-    queryKey: ["hotspots"],
-    queryFn: () => api.hotspots({ limit: 10, min_events: 1 }),
+    queryKey: ["hotspots", mode],
+    queryFn: () => api.hotspots({ limit: 10, min_events: 1, mode }),
     refetchInterval: 10_000
   });
   const riskByHourQuery = useQuery({

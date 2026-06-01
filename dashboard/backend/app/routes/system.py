@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from app.core.config import get_settings
 from app.services.pipeline_service import gold_last_update
-from app.services.prediction_service import overview_summary
 
 router = APIRouter()
 
@@ -13,7 +12,6 @@ router = APIRouter()
 def get_system_status() -> dict:
     """Return pipeline configuration and lightweight status metadata."""
     settings = get_settings()
-    summary = overview_summary()
     return {
         "environment": settings.environment,
         "kafka": {
@@ -50,7 +48,7 @@ def get_system_status() -> dict:
         "postgres": {
             "us_prediction_table": settings.us_prediction_table,
             "tomtom_events_table": settings.tomtom_events_table,
-            "row_count": summary.get("total_events", 0),
+            "row_count": None,
         },
     }
 

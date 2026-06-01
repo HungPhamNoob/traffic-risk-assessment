@@ -17,9 +17,10 @@ def risk_hotspots_alias(
     min_events: int = Query(default=5, ge=1),
     start_time: str | None = None,
     end_time: str | None = None,
+    mode: str | None = Query(default="full"),
 ) -> dict:
     """Return the same ranked hotspots through the design-document risk path."""
-    return top_hotspots(limit, min_events, start_time, end_time)
+    return top_hotspots(limit, min_events, start_time, end_time, mode)
 
 
 @router.get("/accidents")

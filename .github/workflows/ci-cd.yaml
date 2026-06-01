@@ -445,7 +445,7 @@ jobs:
                 exit 0
             else
                 cd /opt/traffic
-                sudo -E bash /opt/traffic/scripts/gcp/run-node1.sh
+                sudo -E env NODE1_BOOTSTRAP_MODEL=false bash /opt/traffic/scripts/gcp/run-node1.sh
             fi
 
             echo "=== Verifying Node 1 containers are running ==="
@@ -760,7 +760,7 @@ jobs:
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env
             cd /opt/traffic
-            sudo -E bash /opt/traffic/scripts/gcp/run-node3.sh
+            sudo -E env NODE3_RUN_BATCH_PIPELINE=false bash /opt/traffic/scripts/gcp/run-node3.sh
 
             echo "=== Verifying Node 3 containers are running ==="
             cd /opt/traffic/deployment/node3-batch

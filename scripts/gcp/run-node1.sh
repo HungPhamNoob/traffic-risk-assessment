@@ -16,6 +16,7 @@ NODE1_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node1-control/docker-compose.yaml
 NODE1_COMPOSE_DIR="$(dirname "${NODE1_COMPOSE_FILE}")"
 TRAINING_PID_FILE="${PROJECT_ROOT}/logs/cloud_h2o_before_2020.pid"
 TRAINING_TMP_CLEANUP_HOURS="${TRAINING_TMP_CLEANUP_HOURS:-12}"
+NODE1_BOOTSTRAP_MODEL="${NODE1_BOOTSTRAP_MODEL:-true}"
 APT_CACHE_UPDATED=0
 
 # Capture incoming environment variables to prevent them from being overwritten by sourcing env files
@@ -44,6 +45,7 @@ export MLFLOW_TRACKING_URI="${NODE1_MLFLOW_TRACKING_URI:-http://localhost:5000}"
 IS_TRAIN_OFFLINE="${IS_TRAIN_OFFLINE:-false}"
 echo "Node 1 MLflow tracking URI: ${MLFLOW_TRACKING_URI}"
 echo "IS_TRAIN_OFFLINE: ${IS_TRAIN_OFFLINE}"
+echo "NODE1_BOOTSTRAP_MODEL: ${NODE1_BOOTSTRAP_MODEL}"
 
 NODE1_CANONICAL_NAME_PATTERN='^node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi|dashboard-frontend)$'
 NODE1_TRANSIENT_NAME_PATTERN='^.+_node1-(postgres|airflow-db|airflow|blackbox-exporter|prometheus|grafana|mlflow|mlflow-serving|fastapi|dashboard-frontend)$'
@@ -141,11 +143,30 @@ ensure_prediction_indexes() {
     return 0
   fi
 
+  ensure_index() {
+    local index_name="$1"
+    local index_expression="$2"
+    local is_valid
+    is_valid="$(
+      docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" -At \
+        -c "SELECT COALESCE((SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = '${index_name}'), false);" 2>/dev/null || true
+    )"
+
+    if [ "${is_valid}" = "t" ]; then
+      echo "Index ${index_name} is already valid."
+      return 0
+    fi
+
+    echo "Rebuilding dashboard query index ${index_name}."
+    docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" \
+      -c "DROP INDEX CONCURRENTLY IF EXISTS public.${index_name};" >/dev/null
+    docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" \
+      -c "CREATE INDEX CONCURRENTLY ${index_name} ON public.traffic_risk_predictions (${index_expression});" >/dev/null
+  }
+
   echo "Ensuring dashboard query indexes exist on traffic_risk_predictions."
-  docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" \
-    -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_traffic_risk_predictions_event_time ON public.traffic_risk_predictions (event_time DESC NULLS LAST);" >/dev/null
-  docker exec node1-postgres psql -U "${POSTGRES_USER:-capstone}" -d "${POSTGRES_DB:-capstone_db}" \
-    -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_traffic_risk_predictions_processed_time ON public.traffic_risk_predictions (processed_time DESC NULLS LAST);" >/dev/null
+  ensure_index "idx_traffic_risk_predictions_event_time" "event_time DESC NULLS LAST"
+  ensure_index "idx_traffic_risk_predictions_processed_time" "processed_time DESC NULLS LAST"
 }
 
 prepare_runtime_directories() {
@@ -324,7 +345,9 @@ run_offline_training() {
   return "${exit_code}"
 }
 
-if [ "${IS_TRAIN_OFFLINE}" = "true" ]; then
+if [ "${NODE1_BOOTSTRAP_MODEL}" != "true" ]; then
+  echo "NODE1_BOOTSTRAP_MODEL=${NODE1_BOOTSTRAP_MODEL}. Skipping offline model bootstrap."
+elif [ "${IS_TRAIN_OFFLINE}" = "true" ]; then
   echo "IS_TRAIN_OFFLINE=true. Forcing offline feature engineering and H2O training."
   run_offline_training
 elif [ "${MODEL_EXISTS}" = "true" ]; then

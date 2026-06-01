@@ -13,7 +13,9 @@ function buildUrl(path: string, params?: Record<string, QueryValue>) {
     : typeof window !== "undefined"
       ? `${window.location.origin}${API_BASE_URL}`
       : `http://localhost:3001${API_BASE_URL}`;
-  const url = new URL(path, baseUrl);
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const normalizedPath = path.replace(/^\/+/, "");
+  const url = new URL(normalizedPath, normalizedBaseUrl);
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, String(value));
