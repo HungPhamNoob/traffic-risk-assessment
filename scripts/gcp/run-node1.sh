@@ -14,6 +14,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE1_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node1-control/docker-compose.yaml"
 NODE1_COMPOSE_DIR="$(dirname "${NODE1_COMPOSE_FILE}")"
+TRAINING_PID_FILE="${PROJECT_ROOT}/logs/cloud_h2o_before_2020.pid"
 APT_CACHE_UPDATED=0
 
 # Capture incoming environment variables to prevent them from being overwritten by sourcing env files
@@ -117,6 +118,15 @@ prepare_runtime_directories() {
   sudo chmod -R 2775 orchestration/logs 2>/dev/null || true
 }
 
+mark_training_active() {
+  mkdir -p "${PROJECT_ROOT}/logs"
+  echo "$$" > "${TRAINING_PID_FILE}"
+}
+
+clear_training_active() {
+  rm -f "${TRAINING_PID_FILE}" 2>/dev/null || true
+}
+
 echo "Checking host dependencies required for offline H2O training."
 ensure_command curl curl
 ensure_command docker docker.io
@@ -172,54 +182,61 @@ fi
 
 run_offline_training() {
   echo "Running offline feature engineering and H2O training."
+  mark_training_active
+  local exit_code=0
   local training_venv="${PROJECT_ROOT}/.venv-node1"
   local training_python="${training_venv}/bin/python"
-  if [ ! -x "${training_python}" ]; then
-    python3 -m venv "${training_venv}"
-  fi
+  {
+    if [ ! -x "${training_python}" ]; then
+      python3 -m venv "${training_venv}"
+    fi
 
-  local missing_specs=()
-  if ! "${training_python}" -c "import h2o" >/dev/null 2>&1; then
-    missing_specs+=("h2o==3.46.0.6")
-  fi
-  if ! "${training_python}" -c "import mlflow" >/dev/null 2>&1; then
-    missing_specs+=("mlflow==2.12.1")
-  fi
-  if ! "${training_python}" -c "import pandas" >/dev/null 2>&1; then
-    missing_specs+=("pandas==2.2.2")
-  fi
-  if ! "${training_python}" -c "import numpy" >/dev/null 2>&1; then
-    missing_specs+=("numpy==1.26.4")
-  fi
-  if ! "${training_python}" -c "import sklearn" >/dev/null 2>&1; then
-    missing_specs+=("scikit-learn==1.4.2")
-  fi
-  if ! "${training_python}" -c "import dotenv" >/dev/null 2>&1; then
-    missing_specs+=("python-dotenv==1.0.1")
-  fi
-  if ! "${training_python}" -c "import gcsfs" >/dev/null 2>&1; then
-    missing_specs+=("gcsfs==2024.3.1")
-  fi
-  if ! "${training_python}" -c "import google.auth" >/dev/null 2>&1; then
-    missing_specs+=("google-auth>=2.23.0")
-  fi
-  if ! "${training_python}" -c "import google.cloud.storage" >/dev/null 2>&1; then
-    missing_specs+=("google-cloud-storage>=2.14.0")
-  fi
+    local missing_specs=()
+    if ! "${training_python}" -c "import h2o" >/dev/null 2>&1; then
+      missing_specs+=("h2o==3.46.0.6")
+    fi
+    if ! "${training_python}" -c "import mlflow" >/dev/null 2>&1; then
+      missing_specs+=("mlflow==2.12.1")
+    fi
+    if ! "${training_python}" -c "import pandas" >/dev/null 2>&1; then
+      missing_specs+=("pandas==2.2.2")
+    fi
+    if ! "${training_python}" -c "import numpy" >/dev/null 2>&1; then
+      missing_specs+=("numpy==1.26.4")
+    fi
+    if ! "${training_python}" -c "import sklearn" >/dev/null 2>&1; then
+      missing_specs+=("scikit-learn==1.4.2")
+    fi
+    if ! "${training_python}" -c "import dotenv" >/dev/null 2>&1; then
+      missing_specs+=("python-dotenv==1.0.1")
+    fi
+    if ! "${training_python}" -c "import gcsfs" >/dev/null 2>&1; then
+      missing_specs+=("gcsfs==2024.3.1")
+    fi
+    if ! "${training_python}" -c "import google.auth" >/dev/null 2>&1; then
+      missing_specs+=("google-auth>=2.23.0")
+    fi
+    if ! "${training_python}" -c "import google.cloud.storage" >/dev/null 2>&1; then
+      missing_specs+=("google-cloud-storage>=2.14.0")
+    fi
 
-  if [ "${#missing_specs[@]}" -gt 0 ]; then
-    echo "Installing missing Python training dependencies into ${training_venv}."
-    "${training_python}" -m pip install --upgrade pip
-    "${training_python}" -m pip install "${missing_specs[@]}"
-  else
-    echo "Python training dependencies already exist in ${training_venv}."
-  fi
-  if [[ "${US_TRAIN_OFFLINE_PATH:-}" != gs://* ]]; then
-    "${training_python}" ml/dataset/dataset_offline.py
-  else
-    echo "US_TRAIN_OFFLINE_PATH is a GCS feature CSV. Skipping local feature generation."
-  fi
-  "${training_python}" ml/training/h2o_before_2020.py
+    if [ "${#missing_specs[@]}" -gt 0 ]; then
+      echo "Installing missing Python training dependencies into ${training_venv}."
+      "${training_python}" -m pip install --upgrade pip
+      "${training_python}" -m pip install "${missing_specs[@]}"
+    else
+      echo "Python training dependencies already exist in ${training_venv}."
+    fi
+    if [[ "${US_TRAIN_OFFLINE_PATH:-}" != gs://* ]]; then
+      "${training_python}" ml/dataset/dataset_offline.py
+    else
+      echo "US_TRAIN_OFFLINE_PATH is a GCS feature CSV. Skipping local feature generation."
+    fi
+    "${training_python}" ml/training/h2o_before_2020.py
+  } || exit_code=$?
+
+  clear_training_active
+  return "${exit_code}"
 }
 
 if [ "${IS_TRAIN_OFFLINE}" = "true" ]; then
