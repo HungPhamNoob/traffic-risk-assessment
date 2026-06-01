@@ -15,6 +15,10 @@ NODE3_COMPOSE_DIR="$(dirname "${NODE3_COMPOSE_FILE}")"
 NODE3_WAIT_FOR_SILVER_SECONDS="${NODE3_WAIT_FOR_SILVER_SECONDS:-600}"
 NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS="${NODE3_WAIT_FOR_SILVER_INTERVAL_SECONDS:-15}"
 NODE3_MIN_SILVER_OBJECTS="${NODE3_MIN_SILVER_OBJECTS:-100}"
+NODE3_GCLOUD_STORAGE_TIMEOUT_SECONDS="${NODE3_GCLOUD_STORAGE_TIMEOUT_SECONDS:-60}"
+NODE3_LOG_DIR="${PROJECT_ROOT}/logs"
+NODE3_LOCK_DIR="${NODE3_LOG_DIR}/.node3-run.lock"
+NODE3_LOCK_PID_FILE="${NODE3_LOCK_DIR}/pid"
 APT_CACHE_UPDATED=0
 NODE3_TEMP_DIR="$(mktemp -d /tmp/node3-run-XXXXXX)"
 NODE3_SILVER_LS_STDOUT="${NODE3_TEMP_DIR}/silver-ls.txt"
@@ -23,11 +27,47 @@ NODE3_SILVER_LS_STDERR="${NODE3_TEMP_DIR}/silver-ls.err"
 cleanup_node3_temp() {
   rm -rf "${NODE3_TEMP_DIR}" 2>/dev/null || true
 }
-trap cleanup_node3_temp EXIT
+
+release_node3_lock() {
+  rm -rf "${NODE3_LOCK_DIR}" 2>/dev/null || true
+}
+
+acquire_node3_lock() {
+  mkdir -p "${NODE3_LOG_DIR}"
+
+  if mkdir "${NODE3_LOCK_DIR}" 2>/dev/null; then
+    echo "$$" > "${NODE3_LOCK_PID_FILE}"
+    return 0
+  fi
+
+  if [ -f "${NODE3_LOCK_PID_FILE}" ]; then
+    local existing_pid
+    existing_pid="$(cat "${NODE3_LOCK_PID_FILE}" 2>/dev/null || true)"
+    if [ -n "${existing_pid}" ] && kill -0 "${existing_pid}" 2>/dev/null; then
+      echo "Another Node 3 batch/retraining run is already active (PID ${existing_pid}). Exiting without interrupting it."
+      exit 0
+    fi
+  fi
+
+  echo "Detected a stale Node 3 lock. Removing it before continuing."
+  rm -rf "${NODE3_LOCK_DIR}"
+  if mkdir "${NODE3_LOCK_DIR}" 2>/dev/null; then
+    echo "$$" > "${NODE3_LOCK_PID_FILE}"
+    return 0
+  fi
+
+  echo "Another Node 3 batch/retraining run acquired the lock first. Exiting cleanly."
+  exit 0
+}
+
+trap 'cleanup_node3_temp; release_node3_lock' EXIT
 
 echo "Node 3 run script started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Project root: ${PROJECT_ROOT}"
 echo "Environment file: ${ENV_FILE}"
+
+acquire_node3_lock
+echo "Node 3 execution lock acquired by PID $$."
 
 cd "${PROJECT_ROOT}"
 
@@ -121,23 +161,34 @@ wait_for_silver_data() {
   # Node 2 writes Silver objects asynchronously. Node 3 must wait until at
   # least one feature object is visible before taking a local snapshot for
   # Spark, otherwise the batch job succeeds with an empty dataset.
-  local silver_glob="${SILVER_FEATURES_PATH%/}/**"
+  local silver_prefix="${SILVER_FEATURES_PATH%/}/"
   local waited_seconds=0
 
   echo "Waiting for Silver feature objects before running Spark."
-  echo "Silver object glob: ${silver_glob}"
+  echo "Silver prefix: ${silver_prefix}"
 
   while [ "${waited_seconds}" -le "${NODE3_WAIT_FOR_SILVER_SECONDS}" ]; do
-    if gcloud storage ls "${silver_glob}" >"${NODE3_SILVER_LS_STDOUT}" 2>"${NODE3_SILVER_LS_STDERR}"; then
+    : > "${NODE3_SILVER_LS_STDOUT}"
+    : > "${NODE3_SILVER_LS_STDERR}"
+    if timeout "${NODE3_GCLOUD_STORAGE_TIMEOUT_SECONDS}" \
+      gcloud storage ls "${silver_prefix}" >"${NODE3_SILVER_LS_STDOUT}" 2>"${NODE3_SILVER_LS_STDERR}"; then
       if [ -s "${NODE3_SILVER_LS_STDOUT}" ]; then
-        local object_count
-        object_count="$(wc -l < "${NODE3_SILVER_LS_STDOUT}" | tr -d ' ')"
-        if [ "${object_count}" -ge "${NODE3_MIN_SILVER_OBJECTS}" ]; then
-          echo "Silver data is available with ${object_count} objects. Sample objects:"
-          head -20 "${NODE3_SILVER_LS_STDOUT}"
-          return 0
-        fi
-        echo "Silver data exists but only ${object_count} objects are visible. Waiting for at least ${NODE3_MIN_SILVER_OBJECTS} objects."
+        local entry_count
+        entry_count="$(wc -l < "${NODE3_SILVER_LS_STDOUT}" | tr -d ' ')"
+        echo "Silver data prefix is available with ${entry_count} top-level entries. Sample entries:"
+        head -20 "${NODE3_SILVER_LS_STDOUT}"
+        return 0
+      fi
+    else
+      local ls_exit_code=$?
+      if [ "${ls_exit_code}" -eq 124 ]; then
+        echo "Timed out after ${NODE3_GCLOUD_STORAGE_TIMEOUT_SECONDS}s while listing the Silver prefix. Retrying."
+      else
+        echo "Silver prefix listing failed with exit code ${ls_exit_code}. Retrying."
+      fi
+      if [ -s "${NODE3_SILVER_LS_STDERR}" ]; then
+        echo "Last gcloud storage ls stderr:"
+        cat "${NODE3_SILVER_LS_STDERR}"
       fi
     fi
 

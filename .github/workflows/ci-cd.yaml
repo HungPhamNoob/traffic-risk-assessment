@@ -267,6 +267,11 @@ jobs:
           gcloud storage cp .env.cloud gs://big-data-group-4-bronze/env/.env.cloud
           echo "SUCCESS: .env.cloud uploaded."
 
+      - name: Create deploy source archive
+        run: |
+          git archive --format=tar.gz --output traffic-src.tar.gz HEAD
+          ls -lh traffic-src.tar.gz
+
       # -------------------------------------------------------
       # Step 4: Deploy Node 1 (Control Plane - Standard VM)
       # -------------------------------------------------------
@@ -334,9 +339,22 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE1_IP}" "rm -f ~/traffic-src.tar.gz" || true
+
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            traffic-src.tar.gz "${SSH_USER}@${NODE1_IP}:~/traffic-src.tar.gz"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE1_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
-            REPO_URL="https://github.com/HungPhamNoob/traffic-risk-assessment.git"
             APT_CACHE_UPDATED=0
 
             apt_install_if_missing() {
@@ -368,41 +386,30 @@ jobs:
               apt_install_if_missing docker-compose-plugin
             }
 
-            ensure_cmd git git
             ensure_cmd curl curl
             ensure_cmd docker docker.io
+            ensure_cmd rsync rsync
             ensure_docker_compose
 
-            echo "=== Updating code from Git (pull first, clone if missing) ==="
-
-            # Fix Git permissions (in case sudo was used before)
-            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
-            git config --global --add safe.directory /opt/traffic 2>/dev/null || true
-
-            if [ ! -d /opt/traffic/.git ]; then
-                echo "=== First deployment: cloning repository ==="
-                sudo rm -rf /opt/traffic 2>/dev/null || true
-                sudo mkdir -p /opt/traffic
-                sudo chown -R $(whoami):$(whoami) /opt/traffic
-                git clone "${REPO_URL}" /opt/traffic
-                cd /opt/traffic
-                git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH"
-            else
-                echo "=== Repository exists: updating with git pull ==="
-                cd /opt/traffic
-                current_remote="$(git remote get-url origin 2>/dev/null || true)"
-                if [ "${current_remote}" != "${REPO_URL}" ]; then
-                    git remote remove origin 2>/dev/null || true
-                    git remote add origin "${REPO_URL}"
-                fi
-                git fetch --prune origin
-                if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-                    git checkout "$BRANCH"
-                else
-                    git checkout -B "$BRANCH" "origin/$BRANCH"
-                fi
-                git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
-            fi
+            echo "=== Syncing deployment source bundle into /opt/traffic ==="
+            DEPLOY_SRC_DIR="${HOME}/traffic-deploy-src"
+            rm -rf "${DEPLOY_SRC_DIR}"
+            mkdir -p "${DEPLOY_SRC_DIR}"
+            tar -xzf "${HOME}/traffic-src.tar.gz" -C "${DEPLOY_SRC_DIR}"
+            sudo mkdir -p /opt/traffic /opt/traffic/secrets /opt/traffic/logs
+            sudo rsync -a --delete \
+              --exclude '.git/' \
+              --exclude '.env' \
+              --exclude '.env.cloud' \
+              --exclude '.env.cloud.bak.*' \
+              --exclude '.venv-node1/' \
+              --exclude '.venv-node3/' \
+              --exclude 'secrets/' \
+              --exclude 'data/' \
+              --exclude 'logs/' \
+              --exclude '__pycache__/' \
+              "${DEPLOY_SRC_DIR}/" /opt/traffic/
+            sudo chown -R "$(whoami):$(whoami)" /opt/traffic
 
             echo "=== Loading cloud environment ==="
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
@@ -489,9 +496,22 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE2_IP}" "rm -f ~/traffic-src.tar.gz" || true
+
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            traffic-src.tar.gz "${SSH_USER}@${NODE2_IP}:~/traffic-src.tar.gz"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE2_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
-            REPO_URL="https://github.com/HungPhamNoob/traffic-risk-assessment.git"
             APT_CACHE_UPDATED=0
 
             apt_install_if_missing() {
@@ -523,41 +543,30 @@ jobs:
               apt_install_if_missing docker-compose-plugin
             }
 
-            ensure_cmd git git
             ensure_cmd curl curl
             ensure_cmd docker docker.io
+            ensure_cmd rsync rsync
             ensure_docker_compose
 
-            echo "=== Updating code from Git (pull first, clone if missing) ==="
-            # Normalize ownership and trust for the deployment checkout. Older
-            # startup scripts may have created /opt/traffic with root ownership.
-            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
-            git config --global --add safe.directory /opt/traffic 2>/dev/null || true
-
-            if [ ! -d /opt/traffic/.git ]; then
-                echo "=== First deployment: cloning repository ==="
-                sudo rm -rf /opt/traffic 2>/dev/null || true
-                sudo mkdir -p /opt/traffic
-                sudo chown -R $(whoami):$(whoami) /opt/traffic
-                git clone "${REPO_URL}" /opt/traffic
-                cd /opt/traffic
-                git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH"
-            else
-                echo "=== Repository exists: updating with git pull ==="
-                cd /opt/traffic
-                current_remote="$(git remote get-url origin 2>/dev/null || true)"
-                if [ "${current_remote}" != "${REPO_URL}" ]; then
-                    git remote remove origin 2>/dev/null || true
-                    git remote add origin "${REPO_URL}"
-                fi
-                git fetch --prune origin
-                if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-                    git checkout "$BRANCH"
-                else
-                    git checkout -B "$BRANCH" "origin/$BRANCH"
-                fi
-                git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
-            fi
+            echo "=== Syncing deployment source bundle into /opt/traffic ==="
+            DEPLOY_SRC_DIR="${HOME}/traffic-deploy-src"
+            rm -rf "${DEPLOY_SRC_DIR}"
+            mkdir -p "${DEPLOY_SRC_DIR}"
+            tar -xzf "${HOME}/traffic-src.tar.gz" -C "${DEPLOY_SRC_DIR}"
+            sudo mkdir -p /opt/traffic
+            sudo rsync -a --delete \
+              --exclude '.git/' \
+              --exclude '.env' \
+              --exclude '.env.cloud' \
+              --exclude '.env.cloud.bak.*' \
+              --exclude '.venv-node1/' \
+              --exclude '.venv-node3/' \
+              --exclude 'secrets/' \
+              --exclude 'data/' \
+              --exclude 'logs/' \
+              --exclude '__pycache__/' \
+              "${DEPLOY_SRC_DIR}/" /opt/traffic/
+            sudo chown -R "$(whoami):$(whoami)" /opt/traffic
 
             echo "=== Restarting streaming services ==="
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
@@ -633,9 +642,22 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE3_IP}" "rm -f ~/traffic-src.tar.gz" || true
+
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            traffic-src.tar.gz "${SSH_USER}@${NODE3_IP}:~/traffic-src.tar.gz"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE3_IP}" "BRANCH='${BRANCH}' bash -s" << 'EOF'
             set -e
-            REPO_URL="https://github.com/HungPhamNoob/traffic-risk-assessment.git"
             APT_CACHE_UPDATED=0
 
             apt_install_if_missing() {
@@ -667,41 +689,30 @@ jobs:
               apt_install_if_missing docker-compose-plugin
             }
 
-            ensure_cmd git git
             ensure_cmd curl curl
             ensure_cmd docker docker.io
+            ensure_cmd rsync rsync
             ensure_docker_compose
 
-            echo "=== Updating code from Git (pull first, clone if missing) ==="
-            # Normalize ownership and trust for the deployment checkout. Older
-            # startup scripts may have created /opt/traffic with root ownership.
-            sudo chown -R $(whoami):$(whoami) /opt/traffic 2>/dev/null || true
-            git config --global --add safe.directory /opt/traffic 2>/dev/null || true
-
-            if [ ! -d /opt/traffic/.git ]; then
-                echo "=== First deployment: cloning repository ==="
-                sudo rm -rf /opt/traffic 2>/dev/null || true
-                sudo mkdir -p /opt/traffic
-                sudo chown -R $(whoami):$(whoami) /opt/traffic
-                git clone "${REPO_URL}" /opt/traffic
-                cd /opt/traffic
-                git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH"
-            else
-                echo "=== Repository exists: updating with git pull ==="
-                cd /opt/traffic
-                current_remote="$(git remote get-url origin 2>/dev/null || true)"
-                if [ "${current_remote}" != "${REPO_URL}" ]; then
-                    git remote remove origin 2>/dev/null || true
-                    git remote add origin "${REPO_URL}"
-                fi
-                git fetch --prune origin
-                if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-                    git checkout "$BRANCH"
-                else
-                    git checkout -B "$BRANCH" "origin/$BRANCH"
-                fi
-                git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
-            fi
+            echo "=== Syncing deployment source bundle into /opt/traffic ==="
+            DEPLOY_SRC_DIR="${HOME}/traffic-deploy-src"
+            rm -rf "${DEPLOY_SRC_DIR}"
+            mkdir -p "${DEPLOY_SRC_DIR}"
+            tar -xzf "${HOME}/traffic-src.tar.gz" -C "${DEPLOY_SRC_DIR}"
+            sudo mkdir -p /opt/traffic
+            sudo rsync -a --delete \
+              --exclude '.git/' \
+              --exclude '.env' \
+              --exclude '.env.cloud' \
+              --exclude '.env.cloud.bak.*' \
+              --exclude '.venv-node1/' \
+              --exclude '.venv-node3/' \
+              --exclude 'secrets/' \
+              --exclude 'data/' \
+              --exclude 'logs/' \
+              --exclude '__pycache__/' \
+              "${DEPLOY_SRC_DIR}/" /opt/traffic/
+            sudo chown -R "$(whoami):$(whoami)" /opt/traffic
 
             if pgrep -af 'scripts/gcp/run-node3.sh|spark-submit|h2o_after_2020.py' >/dev/null 2>&1; then
                 echo "Active Node 3 batch/retraining work detected. Skipping deploy restart to avoid interrupting the current pipeline."
@@ -731,4 +742,4 @@ jobs:
       - name: Cleanup deploy secrets
         if: always()
         run: |
-          rm -f .env.cloud ~/.ssh/hung_vm_key
+          rm -f .env.cloud traffic-src.tar.gz ~/.ssh/hung_vm_key
