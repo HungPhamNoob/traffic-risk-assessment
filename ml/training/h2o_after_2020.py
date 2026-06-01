@@ -295,9 +295,12 @@ def find_latest_data(data_root: str) -> str:
                 key=lambda path: path.stat().st_mtime,
             )
             if candidate_files:
-                latest_file = str(candidate_files[-1])
-                logger.info("Using latest local retrain data file: %s", latest_file)
-                return latest_file
+                logger.info(
+                    "Using local retrain data directory: %s (%s supported files)",
+                    data_root,
+                    len(candidate_files),
+                )
+                return data_root
             logger.warning(
                 "Local retrain directory exists but contains no CSV or Parquet files: %s",
                 data_root,

@@ -165,9 +165,14 @@ def main() -> None:
 
     try:
         while True:
-            remaining_limit = max(args.limit - processed, 0) if args.limit else 0
+            remaining_limit = max(args.limit - processed, 0) if args.limit else None
+            if remaining_limit == 0:
+                break
+
             batch_size = (
-                min(args.batch_size, remaining_limit) if remaining_limit else args.batch_size
+                min(args.batch_size, remaining_limit)
+                if remaining_limit is not None
+                else args.batch_size
             )
             if batch_size <= 0:
                 break
