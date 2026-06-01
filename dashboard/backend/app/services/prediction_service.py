@@ -9,6 +9,7 @@ from psycopg2 import sql
 
 from app.core.config import get_settings
 from app.core.database import fetch_all, fetch_one
+from app.core.runtime_cache import cached_result
 from app.services.risk_sql import (
     effective_tomtom_risk_score_expr,
     effective_us_risk_score_expr,
@@ -26,6 +27,9 @@ def risk_level(score: float | None) -> str:
 
 
 MapMode = Literal["replay", "live", "full"]
+OVERVIEW_CACHE_TTL_SECONDS = 20.0
+MAP_POINTS_CACHE_TTL_SECONDS = 15.0
+LATEST_PREDICTIONS_CACHE_TTL_SECONDS = 15.0
 
 
 def _public_table_name(value: str) -> str:
@@ -108,6 +112,20 @@ def mode_table_identifier(mode: str | None) -> sql.Identifier:
 def overview_summary(mode: str | None = None) -> dict[str, Any]:
     """Aggregate high-level metrics for the selected dashboard mode."""
     normalized_mode = _normalize_mode(mode)
+
+    def load_summary() -> dict[str, Any]:
+        return _load_overview_summary(normalized_mode)
+
+    return cached_result(
+        "overview_summary",
+        (normalized_mode,),
+        OVERVIEW_CACHE_TTL_SECONDS,
+        load_summary,
+    )
+
+
+def _load_overview_summary(normalized_mode: MapMode) -> dict[str, Any]:
+    """Load high-level metrics for the selected dashboard mode."""
     settings = get_settings()
     selects: list[sql.Composable] = []
     us_risk_score = effective_us_risk_score_expr()
@@ -232,6 +250,35 @@ def map_points(
 ) -> dict[str, list[dict[str, Any]]]:
     """Return replay, live, or combined points for map rendering."""
     normalized_mode = _normalize_mode(mode)
+
+    def load_points() -> dict[str, list[dict[str, Any]]]:
+        return _load_map_points(
+            bbox=bbox,
+            min_risk=min_risk,
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit,
+            normalized_mode=normalized_mode,
+        )
+
+    return cached_result(
+        "map_points",
+        (bbox, min_risk, start_time, end_time, limit, normalized_mode),
+        MAP_POINTS_CACHE_TTL_SECONDS,
+        load_points,
+    )
+
+
+def _load_map_points(
+    *,
+    bbox: str | None,
+    min_risk: float,
+    start_time: str | None,
+    end_time: str | None,
+    limit: int,
+    normalized_mode: MapMode,
+) -> dict[str, list[dict[str, Any]]]:
+    """Load replay, live, or combined points for map rendering."""
     us_risk_score = effective_us_risk_score_expr()
     tomtom_risk_score = effective_tomtom_risk_score_expr()
     where_clauses = ["{risk_score} >= %(min_risk)s"]
@@ -455,6 +502,22 @@ def latest_predictions(
 ) -> dict[str, list[dict[str, Any]]]:
     """Return the most recent replay, live, or combined records."""
     normalized_mode = _normalize_mode(mode)
+
+    def load_latest() -> dict[str, list[dict[str, Any]]]:
+        return _load_latest_predictions(limit, normalized_mode)
+
+    return cached_result(
+        "latest_predictions",
+        (limit, normalized_mode),
+        LATEST_PREDICTIONS_CACHE_TTL_SECONDS,
+        load_latest,
+    )
+
+
+def _load_latest_predictions(
+    limit: int, normalized_mode: MapMode
+) -> dict[str, list[dict[str, Any]]]:
+    """Load the most recent replay, live, or combined records."""
     selects: list[sql.Composable] = []
     settings = get_settings()
     if normalized_mode in {"replay", "full"} and _table_exists(

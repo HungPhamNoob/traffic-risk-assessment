@@ -162,7 +162,7 @@ services:
           cpus: '1.0'
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bash", "-lc", "pgrep -f 'airflow scheduler' >/dev/null"]
+      test: ["CMD", "bash", "-lc", "ps -ef | grep '[a]irflow scheduler' >/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3

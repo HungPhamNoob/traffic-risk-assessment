@@ -15,6 +15,8 @@ NODE2_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node2-streaming/docker-compose.ya
 NODE2_COMPOSE_DIR="$(dirname "${NODE2_COMPOSE_FILE}")"
 NODE2_COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME:-node2-streaming}"
 NODE2_REFRESH_US_PRODUCERS="${NODE2_REFRESH_US_PRODUCERS:-false}"
+NODE2_DISK_PRESSURE_THRESHOLD="${NODE2_DISK_PRESSURE_THRESHOLD:-85}"
+NODE2_LOG_TRUNCATE_MB="${NODE2_LOG_TRUNCATE_MB:-200}"
 NODE2_MANAGED_NAME_PATTERN='^node2-(zookeeper|kafka-1|kafka-2|kafka-3|kafka-topic-init|producer-0|producer-1|producer-2|tomtom-producer|tomtom-live-consumer|flink-jm|flink-tm|redis|flink-python-job)$'
 APT_CACHE_UPDATED=0
 
@@ -215,11 +217,44 @@ remove_conflicting_node2_containers() {
   docker rm -f "${conflicting_containers[@]}" >/dev/null
 }
 
+root_disk_usage_percent() {
+  df -P / | awk 'NR==2 {gsub("%", "", $5); print $5}'
+}
+
+cleanup_node2_disk_pressure() {
+  local current_usage
+  current_usage="$(root_disk_usage_percent)"
+  echo "Node 2 root disk usage: ${current_usage}%"
+
+  if [ "${current_usage}" -lt "${NODE2_DISK_PRESSURE_THRESHOLD}" ]; then
+    echo "Disk usage is below the pressure threshold (${NODE2_DISK_PRESSURE_THRESHOLD}%)."
+    return 0
+  fi
+
+  echo "Disk usage crossed ${NODE2_DISK_PRESSURE_THRESHOLD}%. Reclaiming only safe Docker residue."
+  docker system prune -f >/dev/null 2>&1 || true
+  docker volume prune -f >/dev/null 2>&1 || true
+  docker builder prune -af >/dev/null 2>&1 || true
+
+  if [ -d /var/lib/docker/containers ]; then
+    echo "Truncating oversized Docker json logs above ${NODE2_LOG_TRUNCATE_MB}MB."
+    sudo find /var/lib/docker/containers \
+      -name '*-json.log' \
+      -size +"${NODE2_LOG_TRUNCATE_MB}"M \
+      -print \
+      -exec truncate -s 0 {} \; 2>/dev/null || true
+  fi
+
+  current_usage="$(root_disk_usage_percent)"
+  echo "Node 2 root disk usage after safe cleanup: ${current_usage}%"
+}
+
 echo "Checking host dependencies required for Node 2 services."
 ensure_command docker docker.io
 ensure_docker_compose
 
 echo "Starting Kafka, Redis, TomTom, and Flink streaming services..."
+cleanup_node2_disk_pressure
 
 echo "Ensuring the shared Docker network exists before Compose starts."
 docker network inspect capstone-net >/dev/null 2>&1 || docker network create capstone-net >/dev/null

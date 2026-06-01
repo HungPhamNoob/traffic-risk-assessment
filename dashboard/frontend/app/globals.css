@@ -184,6 +184,10 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.triple-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .card,
 .floating-panel {
   background: var(--bg-panel);
@@ -378,6 +382,10 @@ button {
   font-size: 13px;
 }
 
+.table-wrap {
+  overflow-x: auto;
+}
+
 .table th,
 .table td {
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
@@ -409,6 +417,10 @@ button {
   .analytics-grid,
   .pipeline-grid,
   .scenario-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .triple-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -487,6 +499,10 @@ button {
     flex-wrap: wrap;
   }
 
+  .triple-grid {
+    grid-template-columns: 1fr;
+  }
+
   .table {
     font-size: 11px;
   }
@@ -520,6 +536,10 @@ button {
 
   .map-frame {
     min-height: 320px;
+  }
+
+  .triple-grid {
+    grid-template-columns: 1fr;
   }
 
   .chart-box {

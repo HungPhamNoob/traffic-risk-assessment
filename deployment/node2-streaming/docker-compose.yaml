@@ -4,7 +4,14 @@
 # Topics: traffic.us.raw and traffic.tomtom.raw
 # ============================================================
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: node2-zookeeper
@@ -14,6 +21,8 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
       KAFKA_HEAP_OPTS: -Xms128m -Xmx512m
+      ZOO_AUTOPURGE_PURGEINTERVAL: 12
+      ZOO_AUTOPURGE_SNAPRETAINCOUNT: 3
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
@@ -30,6 +39,7 @@ services:
           memory: 512M
           cpus: '0.5'
     restart: unless-stopped
+    logging: *default-logging
 
   # ==========================================================
   # 3 Kafka Brokers
@@ -50,6 +60,10 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_RETENTION_BYTES: 4294967296
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_LOG_SEGMENT_BYTES: 268435456
       KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     volumes:
       - kafka_data_1:/var/lib/kafka/data
@@ -65,6 +79,7 @@ services:
       retries: 5
       start_period: 40s
     restart: unless-stopped
+    logging: *default-logging
 
   kafka-2:
     image: confluentinc/cp-kafka:7.6.0
@@ -82,6 +97,10 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_RETENTION_BYTES: 4294967296
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_LOG_SEGMENT_BYTES: 268435456
       KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     volumes:
       - kafka_data_2:/var/lib/kafka/data
@@ -97,6 +116,7 @@ services:
       retries: 5
       start_period: 40s
     restart: unless-stopped
+    logging: *default-logging
 
   kafka-3:
     image: confluentinc/cp-kafka:7.6.0
@@ -114,6 +134,10 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_RETENTION_BYTES: 4294967296
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_LOG_SEGMENT_BYTES: 268435456
       KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     volumes:
       - kafka_data_3:/var/lib/kafka/data
@@ -129,6 +153,7 @@ services:
       retries: 5
       start_period: 40s
     restart: unless-stopped
+    logging: *default-logging
 
   kafka-topic-init:
     # Long-running topic guard. It creates and validates the US replay and
@@ -186,6 +211,7 @@ services:
       retries: 5
       start_period: 40s
     restart: unless-stopped
+    logging: *default-logging
 
   # ==========================================================
   # 3 Producers - row_index modulo split avoids duplicate replay rows.
@@ -220,6 +246,7 @@ services:
       kafka-topic-init:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   producer-2:
     image: python:3.10-slim
@@ -251,6 +278,7 @@ services:
       kafka-topic-init:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   producer-3:
     image: python:3.10-slim
@@ -282,6 +310,7 @@ services:
       kafka-topic-init:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   tomtom-producer:
     image: python:3.10-slim
@@ -315,6 +344,7 @@ services:
       kafka-topic-init:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   tomtom-live-consumer:
     build:
@@ -358,6 +388,7 @@ services:
       kafka-topic-init:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   # ==========================================================
   # Flink JobManager
@@ -407,6 +438,7 @@ services:
           memory: 2G
           cpus: '2.0'
     restart: on-failure
+    logging: *default-logging
 
   flink-taskmanager:
     build:
@@ -451,6 +483,7 @@ services:
           memory: 2G
           cpus: '2.0'
     restart: on-failure
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -472,6 +505,7 @@ services:
         limits:
           memory: 512M
     restart: unless-stopped
+    logging: *default-logging
 
   flink-python-job:
     build:
@@ -539,6 +573,7 @@ services:
       flink-jobmanager:
         condition: service_started
     restart: on-failure
+    logging: *default-logging
 
 networks:
   capstone-net:

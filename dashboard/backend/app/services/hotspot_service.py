@@ -8,6 +8,7 @@ from psycopg2 import sql
 
 from app.core.database import fetch_all, fetch_one
 from app.core.config import get_settings
+from app.core.runtime_cache import cached_result
 from app.services.prediction_service import (
     table_identifier,
     tomtom_table_identifier,
@@ -21,6 +22,7 @@ MapMode = Literal["replay", "live", "full"]
 DEFAULT_REPLAY_LOOKBACK = timedelta(days=7)
 DEFAULT_LIVE_LOOKBACK = timedelta(hours=24)
 EXPENSIVE_SCAN_ROW_THRESHOLD = 500_000
+HOTSPOT_CACHE_TTL_SECONDS = 30.0
 
 
 def _normalize_mode(mode: str | None) -> MapMode:
@@ -178,74 +180,85 @@ def top_hotspots(
     mode: str | None = None,
 ) -> dict[str, Any]:
     """Group nearby events by rounded coordinates and return the riskiest cells."""
-    settings = get_settings()
     normalized_mode = _normalize_mode(mode)
-    sources: list[dict[str, Any]] = []
 
-    if normalized_mode in {"replay", "full"} and _table_exists(
-        settings.us_prediction_table
-    ):
-        if start_time or end_time or not _skip_default_replay_scan():
+    def load_hotspots() -> dict[str, Any]:
+        settings = get_settings()
+        sources: list[dict[str, Any]] = []
+
+        if normalized_mode in {"replay", "full"} and _table_exists(
+            settings.us_prediction_table
+        ):
+            if start_time or end_time or not _skip_default_replay_scan():
+                sources.append(
+                    {
+                        "label": "us_replay",
+                        "table": us_table_identifier(),
+                        "risk_score": effective_us_risk_score_expr(),
+                        "severe_expr": sql.SQL(
+                            "true_severity >= 3 OR predicted_severity >= 3"
+                        ),
+                        "lookback": DEFAULT_REPLAY_LOOKBACK,
+                    }
+                )
+        if normalized_mode in {"live", "full"} and _table_exists(
+            settings.tomtom_events_table
+        ):
             sources.append(
                 {
-                    "label": "us_replay",
-                    "table": us_table_identifier(),
-                    "risk_score": effective_us_risk_score_expr(),
-                    "severe_expr": sql.SQL(
-                        "true_severity >= 3 OR predicted_severity >= 3"
-                    ),
-                    "lookback": DEFAULT_REPLAY_LOOKBACK,
+                    "label": "tomtom_live",
+                    "table": tomtom_table_identifier(),
+                    "risk_score": effective_tomtom_risk_score_expr(),
+                    "severe_expr": sql.SQL("severity >= 3"),
+                    "lookback": DEFAULT_LIVE_LOOKBACK,
                 }
             )
-    if normalized_mode in {"live", "full"} and _table_exists(
-        settings.tomtom_events_table
-    ):
-        sources.append(
-            {
-                "label": "tomtom_live",
-                "table": tomtom_table_identifier(),
-                "risk_score": effective_tomtom_risk_score_expr(),
-                "severe_expr": sql.SQL("severity >= 3"),
-                "lookback": DEFAULT_LIVE_LOOKBACK,
-            }
-        )
 
-    if not sources:
-        return {"hotspots": []}
+        if not sources:
+            return {"hotspots": []}
 
-    per_source_limit = limit if len(sources) == 1 else max(limit, ceil(limit / len(sources)) * 3)
-    hotspots: list[dict[str, Any]] = []
-    for source in sources:
-        bounded_start, bounded_end = _default_time_bounds(
-            source["table"],
-            start_time=start_time,
-            end_time=end_time,
-            lookback=source["lookback"],
+        per_source_limit = (
+            limit if len(sources) == 1 else max(limit, ceil(limit / len(sources)) * 3)
         )
-        source_rows = _query_hotspots_for_table(
-            table=source["table"],
-            risk_score=source["risk_score"],
-            severe_expr=source["severe_expr"],
-            limit=per_source_limit,
-            min_events=min_events,
-            start_time=bounded_start,
-            end_time=bounded_end,
-        )
-        for row in source_rows:
-            row["data_source"] = source["label"]
-        hotspots.extend(source_rows)
+        hotspots: list[dict[str, Any]] = []
+        for source in sources:
+            bounded_start, bounded_end = _default_time_bounds(
+                source["table"],
+                start_time=start_time,
+                end_time=end_time,
+                lookback=source["lookback"],
+            )
+            source_rows = _query_hotspots_for_table(
+                table=source["table"],
+                risk_score=source["risk_score"],
+                severe_expr=source["severe_expr"],
+                limit=per_source_limit,
+                min_events=min_events,
+                start_time=bounded_start,
+                end_time=bounded_end,
+            )
+            for row in source_rows:
+                row["data_source"] = source["label"]
+            hotspots.extend(source_rows)
 
-    hotspots.sort(
-        key=lambda row: (
-            float(row.get("avg_risk_score") or 0.0),
-            int(row.get("accident_count") or 0),
-        ),
-        reverse=True,
+        hotspots.sort(
+            key=lambda row: (
+                float(row.get("avg_risk_score") or 0.0),
+                int(row.get("accident_count") or 0),
+            ),
+            reverse=True,
+        )
+        ranked = hotspots[:limit]
+        for index, row in enumerate(ranked, start=1):
+            row["rank"] = index
+        return {"hotspots": ranked}
+
+    return cached_result(
+        "top_hotspots",
+        (limit, min_events, start_time, end_time, normalized_mode),
+        HOTSPOT_CACHE_TTL_SECONDS,
+        load_hotspots,
     )
-    ranked = hotspots[:limit]
-    for index, row in enumerate(ranked, start=1):
-        row["rank"] = index
-    return {"hotspots": ranked}
 
 
 def nearby_events(

@@ -27,6 +27,8 @@ const RiskMap = dynamic(
   { ssr: false }
 );
 
+const DASHBOARD_MAP_POINT_LIMIT = 2000;
+
 function formatMetricPercent(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return null;
@@ -44,42 +46,50 @@ export default function DashboardPage() {
     queryKey: ["overview", mode],
     queryFn: () => api.overview(mode),
     refetchInterval: 15_000,
+    staleTime: 15_000,
     placeholderData: (previousData) => previousData
   });
   const pointsQuery = useQuery({
     queryKey: ["points", minRisk, mode],
-    queryFn: () => api.mapPoints({ limit: 5000, min_risk: minRisk, mode }),
+    queryFn: () =>
+      api.mapPoints({ limit: DASHBOARD_MAP_POINT_LIMIT, min_risk: minRisk, mode }),
     refetchInterval: 15_000,
+    staleTime: 15_000,
     placeholderData: (previousData) => previousData
   });
   const latestQuery = useQuery({
     queryKey: ["latest", mode],
     queryFn: () => api.latest(10, mode),
     refetchInterval: 15_000,
+    staleTime: 15_000,
     placeholderData: (previousData) => previousData
   });
   const hotspotsQuery = useQuery({
     queryKey: ["hotspots", mode],
     queryFn: () => api.hotspots({ limit: 10, min_events: 1, mode }),
     refetchInterval: 30_000,
+    staleTime: 30_000,
     placeholderData: (previousData) => previousData
   });
   const riskByHourQuery = useQuery({
     queryKey: ["risk-by-hour", mode],
     queryFn: () => api.riskByHour(mode),
     refetchInterval: 600_000,
+    staleTime: 600_000,
     placeholderData: (previousData) => previousData
   });
   const severityQuery = useQuery({
     queryKey: ["severity", mode],
     queryFn: () => api.severityDistribution(mode),
     refetchInterval: 600_000,
+    staleTime: 600_000,
     placeholderData: (previousData) => previousData
   });
   const weatherQuery = useQuery({
     queryKey: ["weather-histogram", mode],
     queryFn: () => api.weatherHistogram(mode),
     refetchInterval: 600_000,
+    staleTime: 600_000,
     placeholderData: (previousData) => previousData
   });
 
@@ -155,7 +165,7 @@ export default function DashboardPage() {
           </Link>
           <span className="status-pill">
             <RefreshCw size={14} />
-            Auto-refresh 10s
+            Auto-refresh 15s
           </span>
         </div>
       </div>
@@ -323,7 +333,7 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="grid analytics-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      <section className="grid analytics-grid triple-grid">
         {["temperature", "humidity", "wind_speed"].map((metric) => {
           const data = weatherHistogram[metric] || [];
           return (
@@ -349,28 +359,30 @@ export default function DashboardPage() {
 
       <section className="card">
         <h2 className="card-title">Latest predictions</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th>Risk</th>
-              <th>Severity</th>
-              <th>Time</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {latest.map((point) => (
-              <tr key={point.event_id}>
-                <td className="mono">{point.event_id}</td>
-                <td>{Number(point.risk_score).toFixed(4)}</td>
-                <td>{point.predicted_severity ?? point.true_severity ?? "-"}</td>
-                <td>{formatVietnamTimestamp(point.event_time, "-")}</td>
-                <td>{statusText(point)}</td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Risk</th>
+                <th>Severity</th>
+                <th>Time</th>
+                <th>Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {latest.map((point) => (
+                <tr key={point.event_id}>
+                  <td className="mono">{point.event_id}</td>
+                  <td>{Number(point.risk_score).toFixed(4)}</td>
+                  <td>{point.predicted_severity ?? point.true_severity ?? "-"}</td>
+                  <td>{formatVietnamTimestamp(point.event_time, "-")}</td>
+                  <td>{statusText(point)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );

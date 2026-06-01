@@ -2,50 +2,30 @@
 
 import DeckGL from "@deck.gl/react";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
-import { PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { GeoJsonLayer, PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import type { StyleSpecification } from "maplibre-gl";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Map from "react-map-gl/maplibre";
+import { feature } from "topojson-client";
+import countriesTopology from "world-atlas/countries-110m.json";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot, PredictionPoint } from "@/lib/types";
 
-/**
- * Dark basemap using CARTO dark raster tiles.
- *
- * Using raster tiles directly (instead of loading an external style.json)
- * avoids the console timeout errors that occurred with the previous
- * vector style approach. Individual tile PNGs load progressively and
- * never block the initial map render.
- */
+const COUNTRY_FEATURES = feature(
+  countriesTopology as any,
+  (countriesTopology as any).objects.countries
+) as any;
+
 const MAP_STYLE: StyleSpecification = {
   version: 8,
-  name: "traffic-risk-dark",
-  sources: {
-    "carto-dark": {
-      type: "raster",
-      tiles: [
-        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"
-      ],
-      tileSize: 256,
-      attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OSM</a> &copy; <a href='https://carto.com/'>CARTO</a>",
-      minzoom: 0,
-      maxzoom: 20
-    }
-  },
+  name: "traffic-risk-local",
+  sources: {},
   layers: [
     {
-      id: "carto-dark-tiles",
-      type: "raster",
-      source: "carto-dark",
-      minzoom: 0,
-      maxzoom: 20,
+      id: "background",
+      type: "background",
       paint: {
-        "raster-brightness-min": 0,
-        "raster-brightness-max": 1,
-        "raster-saturation": -0.2,
-        "raster-contrast": 0.1
+        "background-color": "#020617"
       }
     }
   ]
@@ -139,6 +119,17 @@ const RiskMapInner = memo(function RiskMapInner({
   /* Memoize DeckGL layers so they are only recreated when their data
      or configuration actually changes – not on every parent re-render. */
   const layers = useMemo(() => [
+    new GeoJsonLayer({
+      id: "country-basemap",
+      data: COUNTRY_FEATURES,
+      pickable: false,
+      stroked: true,
+      filled: true,
+      opacity: 0.92,
+      getFillColor: [9, 20, 36, 230],
+      getLineColor: [71, 85, 105, 235],
+      lineWidthMinPixels: 1
+    }),
     showHeatmap &&
       new HeatmapLayer<PredictionPoint>({
         id: "risk-heatmap",
