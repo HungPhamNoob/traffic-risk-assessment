@@ -16,6 +16,7 @@ PG_POOL: SimpleConnectionPool | None = None
 RECOVERABLE_READ_ERRORS = (
     psycopg2.InterfaceError,
     psycopg2.OperationalError,
+    psycopg2.pool.PoolError,
 )
 
 
@@ -34,6 +35,17 @@ def get_pg_pool() -> SimpleConnectionPool:
             password=settings.postgres_password,
         )
     return PG_POOL
+
+
+def reset_pg_pool() -> None:
+    """Drop the shared pool so the next read can rebuild fresh connections."""
+    global PG_POOL
+    if PG_POOL is not None:
+        try:
+            PG_POOL.closeall()
+        except Exception:
+            pass
+    PG_POOL = None
 
 
 @contextmanager
@@ -75,28 +87,35 @@ def _run_read_query(
     fetch_many: bool,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
     for attempt in range(2):
-        with get_connection() as connection:
-            with connection.cursor(
-                cursor_factory=psycopg2.extras.RealDictCursor
-            ) as cursor:
-                try:
-                    cursor.execute(query, params)
-                except psycopg2.errors.UndefinedTable:
-                    return [] if fetch_many else None
-                except RECOVERABLE_READ_ERRORS:
-                    # Drop dead pooled connections so the next attempt borrows
-                    # a fresh backend instead of surfacing transient HTTP 500s.
+        try:
+            with get_connection() as connection:
+                with connection.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor
+                ) as cursor:
                     try:
-                        connection.close()
-                    except Exception:
-                        pass
-                    if attempt == 0:
-                        continue
-                    raise
-                if fetch_many:
-                    return [dict(row) for row in cursor.fetchall()]
-                row = cursor.fetchone()
-                return dict(row) if row else None
+                        cursor.execute(query, params)
+                    except psycopg2.errors.UndefinedTable:
+                        return [] if fetch_many else None
+                    except RECOVERABLE_READ_ERRORS:
+                        # Drop dead pooled connections so the next attempt borrows
+                        # a fresh backend instead of surfacing transient HTTP 500s.
+                        try:
+                            connection.close()
+                        except Exception:
+                            pass
+                        reset_pg_pool()
+                        if attempt == 0:
+                            continue
+                        return [] if fetch_many else None
+                    if fetch_many:
+                        return [dict(row) for row in cursor.fetchall()]
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except RECOVERABLE_READ_ERRORS:
+            reset_pg_pool()
+            if attempt == 0:
+                continue
+            return [] if fetch_many else None
     return [] if fetch_many else None
 
 

@@ -99,3 +99,68 @@ def test_open_meteo_weather_uses_tomtom_event_time(monkeypatch):
         "Wind_Speed(mph)": 5.0,
         "weather_observed_at": "2024-06-15T06:00",
     }
+
+
+def test_open_meteo_weather_caches_nearby_requests(monkeypatch):
+    """Nearby events in the same hour should reuse the cached weather response."""
+    import processing.streaming_enrichment as enrichment
+
+    enrichment._WEATHER_CACHE.clear()
+    enrichment._OPEN_METEO_BACKOFF_UNTIL = 0.0
+    calls = {"count": 0}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "hourly": {
+                    "time": ["2024-06-15T06:00"],
+                    "temperature_2m": [61.0],
+                    "relative_humidity_2m": [80],
+                    "weather_code": [61],
+                    "wind_speed_10m": [5.0],
+                }
+            }
+
+    def fake_get(url, params, timeout):
+        calls["count"] += 1
+        return FakeResponse()
+
+    monkeypatch.setattr("processing.streaming_enrichment.requests.get", fake_get)
+
+    first = fetch_open_meteo_weather(40.731, -74.001, "2024-06-15T06:25:00Z")
+    second = fetch_open_meteo_weather(40.732, -74.002, "2024-06-15T06:40:00Z")
+
+    assert calls["count"] == 1
+    assert first == second
+
+
+def test_open_meteo_weather_enters_backoff_after_rate_limit(monkeypatch):
+    """HTTP 429 should suppress repeated requests during the cooldown window."""
+    import processing.streaming_enrichment as enrichment
+    import requests
+
+    enrichment._WEATHER_CACHE.clear()
+    enrichment._OPEN_METEO_BACKOFF_UNTIL = 0.0
+    calls = {"count": 0}
+
+    class FakeResponse:
+        status_code = 429
+
+        def raise_for_status(self):
+            raise requests.HTTPError("429 Too Many Requests", response=self)
+
+    def fake_get(url, params, timeout):
+        calls["count"] += 1
+        return FakeResponse()
+
+    monkeypatch.setattr("processing.streaming_enrichment.requests.get", fake_get)
+
+    first = fetch_open_meteo_weather(40.73, -74.0, "2024-06-15T06:25:00Z")
+    second = fetch_open_meteo_weather(40.73, -74.0, "2024-06-15T06:26:00Z")
+
+    assert first == {}
+    assert second == {}
+    assert calls["count"] == 1

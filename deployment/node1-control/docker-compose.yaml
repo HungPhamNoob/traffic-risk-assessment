@@ -72,6 +72,8 @@ services:
       - PROJECT_ROOT=/opt/traffic
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - AIRFLOW_MODEL_RETRAIN_SCHEDULE=${AIRFLOW_MODEL_RETRAIN_SCHEDULE:-0 * * * *}
+      - AIRFLOW_STREAM_HEALTH_SCHEDULE=${AIRFLOW_STREAM_HEALTH_SCHEDULE:-*/2 * * * *}
       - SSH_KEY=/run/secrets/google_compute_engine
       - HUNG_SSH_USER=${HUNG_SSH_USER:-runner}
       - NODE2_INTERNAL_IP=${NODE2_INTERNAL_IP:-10.128.0.5}
@@ -87,11 +89,21 @@ services:
       - "8080:8080"
     command: >
       bash -c "
-        set -e;
+        set -euo pipefail;
         airflow db migrate || airflow db init;
         airflow users create --username $${AIRFLOW_USER:-admin} --password $${AIRFLOW_PASSWORD:-admin} --firstname Admin --lastname User --role Admin --email admin@local 2>/dev/null || true;
-        airflow scheduler &
-        exec airflow webserver -p 8080
+        while true; do
+          airflow scheduler &
+          scheduler_pid=$$!;
+          airflow webserver -p 8080 &
+          webserver_pid=$$!;
+          wait -n $$scheduler_pid $$webserver_pid || true;
+          kill $$scheduler_pid $$webserver_pid 2>/dev/null || true;
+          wait $$scheduler_pid 2>/dev/null || true;
+          wait $$webserver_pid 2>/dev/null || true;
+          echo 'Airflow process exited. Restarting both scheduler and webserver in 5s.';
+          sleep 5;
+        done
       "
     networks:
       - capstone-net

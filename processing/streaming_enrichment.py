@@ -12,6 +12,7 @@ them.
 import logging
 import os
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -34,6 +35,17 @@ OPEN_METEO_TIMEOUT_SECONDS = float(os.getenv("OPEN_METEO_TIMEOUT_SECONDS", "5"))
 WEATHER_ENRICHMENT_ENABLED = os.getenv(
     "STREAMING_WEATHER_ENRICHMENT_ENABLED", "true"
 ).lower() in {"1", "true", "yes"}
+OPEN_METEO_CACHE_TTL_SECONDS = float(
+    os.getenv("OPEN_METEO_CACHE_TTL_SECONDS", "900")
+)
+OPEN_METEO_BACKOFF_SECONDS = float(
+    os.getenv("OPEN_METEO_BACKOFF_SECONDS", "300")
+)
+OPEN_METEO_COORDINATE_PRECISION = int(
+    os.getenv("OPEN_METEO_COORDINATE_PRECISION", "2")
+)
+_WEATHER_CACHE: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
+_OPEN_METEO_BACKOFF_UNTIL = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +170,38 @@ def _value_at(values: Any, index: Optional[int]) -> Any:
     return values[index]
 
 
+def _cache_key(lat: float, lon: float, event_time: Optional[datetime]) -> tuple[Any, ...]:
+    """Bucket nearby events together so repeated weather lookups reuse responses."""
+    rounded_lat = round(lat, OPEN_METEO_COORDINATE_PRECISION)
+    rounded_lon = round(lon, OPEN_METEO_COORDINATE_PRECISION)
+    if event_time is None:
+        return ("current", rounded_lat, rounded_lon)
+    return (
+        event_time.date().isoformat(),
+        event_time.hour,
+        rounded_lat,
+        rounded_lon,
+    )
+
+
+def _get_cached_weather(cache_key: tuple[Any, ...]) -> Dict[str, Any]:
+    """Return a cached weather payload if it is still fresh."""
+    cached = _WEATHER_CACHE.get(cache_key)
+    if not cached:
+        return {}
+    cached_at, payload = cached
+    if monotonic() - cached_at > OPEN_METEO_CACHE_TTL_SECONDS:
+        _WEATHER_CACHE.pop(cache_key, None)
+        return {}
+    return dict(payload)
+
+
+def _set_cached_weather(cache_key: tuple[Any, ...], payload: Dict[str, Any]) -> None:
+    """Store a successful weather payload for future nearby events."""
+    if payload:
+        _WEATHER_CACHE[cache_key] = (monotonic(), dict(payload))
+
+
 # ---------------------------------------------------------------------------
 # Open-Meteo weather fetch
 # ---------------------------------------------------------------------------
@@ -209,10 +253,21 @@ def fetch_open_meteo_weather(
     if not WEATHER_ENRICHMENT_ENABLED:
         return {}
 
+    global _OPEN_METEO_BACKOFF_UNTIL
     try:
         event_time = _parse_event_time(timestamp)
+        cache_key = _cache_key(lat, lon, event_time)
+        cached = _get_cached_weather(cache_key)
+        if cached:
+            return cached
+
+        if monotonic() < _OPEN_METEO_BACKOFF_UNTIL:
+            return {}
+
         if event_time is None:
-            return _fetch_current_open_meteo_weather(lat, lon)
+            payload = _fetch_current_open_meteo_weather(lat, lon)
+            _set_cached_weather(cache_key, payload)
+            return payload
 
         today = datetime.now(timezone.utc).date()
         endpoint = (
@@ -245,13 +300,29 @@ def fetch_open_meteo_weather(
         hourly = response.json().get("hourly") or {}
         index = _nearest_hour_index(hourly.get("time") or [], event_time)
         weather_code = _value_at(hourly.get("weather_code"), index)
-        return {
+        payload = {
             "Weather_Condition": _weather_label_from_code(weather_code),
             "Temperature(F)": _value_at(hourly.get("temperature_2m"), index),
             "Humidity(%)": _value_at(hourly.get("relative_humidity_2m"), index),
             "Wind_Speed(mph)": _value_at(hourly.get("wind_speed_10m"), index),
             "weather_observed_at": _value_at(hourly.get("time"), index),
         }
+        _set_cached_weather(cache_key, payload)
+        return payload
+    except requests.HTTPError as exc:
+        response = exc.response
+        if response is not None and response.status_code == 429:
+            _OPEN_METEO_BACKOFF_UNTIL = monotonic() + OPEN_METEO_BACKOFF_SECONDS
+            logger.warning(
+                "Open-Meteo rate limit hit. Skipping weather enrichment for %.0fs.",
+                OPEN_METEO_BACKOFF_SECONDS,
+            )
+            return {}
+        logger.warning("Open-Meteo weather enrichment failed: %s", exc)
+        return {}
+    except requests.RequestException as exc:
+        logger.warning("Open-Meteo weather enrichment failed: %s", exc)
+        return {}
     except Exception:
         logger.exception("Open-Meteo weather enrichment failed")
         return {}

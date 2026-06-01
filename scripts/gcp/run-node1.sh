@@ -15,6 +15,7 @@ ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env.cloud}"
 NODE1_COMPOSE_FILE="${PROJECT_ROOT}/deployment/node1-control/docker-compose.yaml"
 NODE1_COMPOSE_DIR="$(dirname "${NODE1_COMPOSE_FILE}")"
 TRAINING_PID_FILE="${PROJECT_ROOT}/logs/cloud_h2o_before_2020.pid"
+TRAINING_TMP_CLEANUP_HOURS="${TRAINING_TMP_CLEANUP_HOURS:-12}"
 APT_CACHE_UPDATED=0
 
 # Capture incoming environment variables to prevent them from being overwritten by sourcing env files
@@ -165,6 +166,45 @@ clear_training_active() {
   rm -f "${TRAINING_PID_FILE}" 2>/dev/null || true
 }
 
+cleanup_stale_training_temp_files() {
+  echo "Cleaning stale offline-training temp files older than ${TRAINING_TMP_CLEANUP_HOURS} hours."
+  sudo find /tmp \
+    \( \
+      -name 'tmp*_us_train_offline_before_2020.csv' -o \
+      -name 'tmp*_us_train_offline_before_2020_features_for_h2o.csv' -o \
+      -name 'us_train_offline_before_2020.csv' -o \
+      -name 'us_train_offline_before_2020_features_for_h2o.csv' -o \
+      -name 'traffic-workspace-*.tar.gz' \
+    \) \
+    -type f \
+    -mmin "+$((TRAINING_TMP_CLEANUP_HOURS * 60))" \
+    -print -delete 2>/dev/null || true
+
+  sudo find /tmp \
+    -maxdepth 1 \
+    -type d \
+    \( -name 'tmp*' -o -name 'hsperfdata_*' \) \
+    -mmin "+$((TRAINING_TMP_CLEANUP_HOURS * 60))" \
+    -print0 2>/dev/null | xargs -0 -r sudo rm -rf || true
+}
+
+training_already_running() {
+  if [ ! -f "${TRAINING_PID_FILE}" ]; then
+    return 1
+  fi
+
+  local existing_pid
+  existing_pid="$(cat "${TRAINING_PID_FILE}" 2>/dev/null || true)"
+  if [ -n "${existing_pid}" ] && kill -0 "${existing_pid}" 2>/dev/null; then
+    echo "Offline baseline training is already active under PID ${existing_pid}. Reusing the current run."
+    return 0
+  fi
+
+  echo "Removing stale offline-training PID file."
+  clear_training_active
+  return 1
+}
+
 echo "Checking host dependencies required for offline H2O training."
 ensure_command curl curl
 ensure_command docker docker.io
@@ -221,7 +261,12 @@ if curl --max-time 10 -fsS "${MODEL_REGISTRY_URL}" >/dev/null 2>&1; then
 fi
 
 run_offline_training() {
+  if training_already_running; then
+    return 0
+  fi
+
   echo "Running offline feature engineering and H2O training."
+  cleanup_stale_training_temp_files
   mark_training_active
   local exit_code=0
   local training_venv="${PROJECT_ROOT}/.venv-node1"

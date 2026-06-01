@@ -20,6 +20,7 @@ Example command:
 import logging
 import os
 import csv
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -330,7 +331,21 @@ def build_class_sampling_factors(label_distribution) -> tuple[list[float] | None
     return factors, metadata
 
 
-def materialize_training_csv(data_path: str) -> str:
+def cleanup_temporary_artifacts(paths: list[str]) -> None:
+    """Remove temp files/directories created during training bootstrap."""
+    for path in reversed(paths):
+        if not path:
+            continue
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.exists(path):
+                os.unlink(path)
+        except Exception:
+            logger.warning("Could not remove temporary training artifact: %s", path)
+
+
+def materialize_training_csv(data_path: str, temporary_paths: list[str]) -> str:
     """
     Return a local CSV path that H2O can import reliably.
 
@@ -354,6 +369,7 @@ def materialize_training_csv(data_path: str) -> str:
     fd, local_path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     logger.info("Downloading GCS training CSV from %s to %s", data_path, local_path)
+    temporary_paths.append(local_path)
 
     fs = gcsfs.GCSFileSystem()
     try:
@@ -390,7 +406,9 @@ def ordered_feature_row(feature_row: dict) -> dict:
     return {column: feature_row.get(column) for column in FEATURE_COLUMNS}
 
 
-def build_feature_csv_from_raw_csv(raw_csv_path: str) -> str:
+def build_feature_csv_from_raw_csv(
+    raw_csv_path: str, temporary_paths: list[str]
+) -> str:
     """
     Stream-convert a raw US Accidents CSV into the unified feature schema.
 
@@ -400,10 +418,11 @@ def build_feature_csv_from_raw_csv(raw_csv_path: str) -> str:
     flags. This conversion keeps offline training aligned with Flink inference
     without loading the full raw dataset into memory.
     """
-    output_path = os.path.join(
-        tempfile.gettempdir(),
-        f"{Path(raw_csv_path).stem}_features_for_h2o.csv",
+    fd, output_path = tempfile.mkstemp(
+        suffix=f"_{Path(raw_csv_path).stem}_features_for_h2o.csv"
     )
+    os.close(fd)
+    temporary_paths.append(output_path)
     logger.info(
         "Raw US Accidents schema detected. Building feature CSV at %s",
         output_path,
@@ -451,7 +470,7 @@ def build_feature_csv_from_raw_csv(raw_csv_path: str) -> str:
     return output_path
 
 
-def ensure_feature_training_csv(csv_path: str) -> str:
+def ensure_feature_training_csv(csv_path: str, temporary_paths: list[str]) -> str:
     """
     Return an H2O-ready feature CSV regardless of raw or engineered input.
 
@@ -468,7 +487,7 @@ def ensure_feature_training_csv(csv_path: str) -> str:
         return csv_path
 
     if RAW_REQUIRED_COLUMNS.issubset(header_set):
-        return build_feature_csv_from_raw_csv(csv_path)
+        return build_feature_csv_from_raw_csv(csv_path, temporary_paths)
 
     raise ValueError(
         "Training CSV does not match the feature schema or raw US Accidents schema. "
@@ -483,6 +502,7 @@ def ensure_feature_training_csv(csv_path: str) -> str:
 
 
 def main():
+    temporary_paths: list[str] = []
     logger.info("=" * 80)
     logger.info("H2O AutoML Training - Traffic Risk Assessment")
     logger.info("=" * 80)
@@ -510,202 +530,212 @@ def main():
 
     # ---- Step 3: Load data ----
     logger.info("Step 3: Loading training data from CSV...")
-    local_data_path = materialize_training_csv(DATA_PATH)
-    df_h2o = h2o.import_file(local_data_path)
-    logger.info("Loaded %s rows, %s columns", f"{df_h2o.nrows:,}", df_h2o.ncols)
+    try:
+        local_data_path = materialize_training_csv(DATA_PATH, temporary_paths)
+        df_h2o = h2o.import_file(local_data_path)
+        logger.info("Loaded %s rows, %s columns", f"{df_h2o.nrows:,}", df_h2o.ncols)
 
-    # Convert label to categorical factor
-    df_h2o[LABEL_COLUMN] = df_h2o[LABEL_COLUMN].asfactor()
+        # Convert label to categorical factor
+        df_h2o[LABEL_COLUMN] = df_h2o[LABEL_COLUMN].asfactor()
 
-    # Log label distribution
-    label_dist = df_h2o[LABEL_COLUMN].table()
-    logger.info("Label distribution:\n%s", label_dist)
-    class_sampling_factors, class_sampling_metadata = build_class_sampling_factors(
-        label_dist
-    )
-    if class_sampling_factors:
-        logger.info(
-            "Class sampling labels:  %s",
-            class_sampling_metadata["ordered_labels"],
+        # Log label distribution
+        label_dist = df_h2o[LABEL_COLUMN].table()
+        logger.info("Label distribution:\n%s", label_dist)
+        class_sampling_factors, class_sampling_metadata = build_class_sampling_factors(
+            label_dist
         )
-        logger.info("Class sampling factors: %s", class_sampling_factors)
-
-    # ---- Step 4: Train/test split ----
-    logger.info("Step 4: Splitting into train/test (80/20)...")
-    train, test = df_h2o.split_frame(ratios=[0.8], seed=SEED)
-    logger.info("Training rows:   %s", f"{train.nrows:,}")
-    logger.info("Test rows:       %s", f"{test.nrows:,}")
-
-    # ---- Step 5: Define features ----
-    feature_columns = [c for c in df_h2o.columns if c not in EXCLUDED_COLUMNS]
-    logger.info("Feature columns (%s): %s", len(feature_columns), feature_columns)
-    logger.info("Label column:         %s", LABEL_COLUMN)
-
-    # ---- Step 6: Train H2O AutoML ----
-    logger.info("Step 6: Starting H2O AutoML training...")
-    logger.info("Max runtime: %s seconds", MAX_RUNTIME_SECS)
-
-    with mlflow.start_run(run_name="h2o_automl") as run:
-        run_id = run.info.run_id
-        logger.info("MLflow run ID: %s", run_id)
-
-        # Log training parameters
-        mlflow.log_param("max_runtime_secs", MAX_RUNTIME_SECS)
-        mlflow.log_param("seed", SEED)
-        mlflow.log_param("n_features", len(feature_columns))
-        mlflow.log_param("n_train_rows", train.nrows)
-        mlflow.log_param("n_test_rows", test.nrows)
         if class_sampling_factors:
-            mlflow.log_param(
-                "class_sampling_labels",
-                ",".join(class_sampling_metadata["ordered_labels"]),
+            logger.info(
+                "Class sampling labels:  %s",
+                class_sampling_metadata["ordered_labels"],
             )
-            mlflow.log_param(
-                "class_sampling_factors",
-                ",".join(str(value) for value in class_sampling_factors),
-            )
-            mlflow.log_param(
-                "max_class_sampling_factor",
-                class_sampling_metadata["max_class_sampling_factor"],
-            )
+            logger.info("Class sampling factors: %s", class_sampling_factors)
 
-        automl_parameters = {
-            "max_runtime_secs": MAX_RUNTIME_SECS,
-            "seed": SEED,
-            "project_name": "traffic_risk",
-            "balance_classes": True,
-            "max_after_balance_size": 5.0,
-            "sort_metric": "mean_per_class_error",
-        }
-        if class_sampling_factors:
-            automl_parameters["class_sampling_factors"] = class_sampling_factors
+        # ---- Step 4: Train/test split ----
+        logger.info("Step 4: Splitting into train/test (80/20)...")
+        train, test = df_h2o.split_frame(ratios=[0.8], seed=SEED)
+        logger.info("Training rows:   %s", f"{train.nrows:,}")
+        logger.info("Test rows:       %s", f"{test.nrows:,}")
 
-        aml = H2OAutoML(**automl_parameters)
+        # ---- Step 5: Define features ----
+        feature_columns = [c for c in df_h2o.columns if c not in EXCLUDED_COLUMNS]
+        logger.info("Feature columns (%s): %s", len(feature_columns), feature_columns)
+        logger.info("Label column:         %s", LABEL_COLUMN)
 
-        aml.train(
-            x=feature_columns,
-            y=LABEL_COLUMN,
-            training_frame=train,
-        )
+        # ---- Step 6: Train H2O AutoML ----
+        logger.info("Step 6: Starting H2O AutoML training...")
+        logger.info("Max runtime: %s seconds", MAX_RUNTIME_SECS)
 
-        logger.info("Training completed.")
+        with mlflow.start_run(run_name="h2o_automl") as run:
+            run_id = run.info.run_id
+            logger.info("MLflow run ID: %s", run_id)
 
-        # ---- Step 7: Leaderboard ----
-        lb = aml.leaderboard
-        lb_df = lb.head(rows=10).as_data_frame()
-        logger.info("H2O AutoML leaderboard (top 10):\n%s", lb_df)
-
-        # ---- Step 8: Evaluate and log top models ----
-        top_model_ids = lb_df["model_id"].tolist()
-        logger.info(
-            "Step 8: Evaluating and logging top %s models...", len(top_model_ids)
-        )
-        logger.info("Model IDs: %s", top_model_ids)
-
-        best_model = None
-        best_macro_f1 = -1.0
-        best_logloss = float("inf")
-        best_metrics = {}
-
-        for rank, model_id in enumerate(top_model_ids, start=1):
-            model = h2o.get_model(model_id)
-            model_perf = model.model_performance(test)
-            sklearn_metrics, report_df, confusion_df = evaluate_classifier_with_sklearn(
-                model,
-                test,
-                feature_columns,
-                LABEL_COLUMN,
-            )
-
-            # Track the best model using macro F1 first because severity classes
-            # are strongly imbalanced. Logloss remains a tie-breaker.
-            current_logloss = float(model_perf.logloss())
-            current_macro_f1 = sklearn_metrics["macro_f1"]
-            if current_macro_f1 > best_macro_f1 or (
-                current_macro_f1 == best_macro_f1 and current_logloss < best_logloss
-            ):
-                best_macro_f1 = current_macro_f1
-                best_logloss = current_logloss
-                best_model = model
-                best_metrics = sklearn_metrics
-
-            logger.info("-" * 60)
-            logger.info("Evaluating model rank %d: %s (%s)", rank, model_id, model.algo)
-
-            # Create a nested run for each model
-            with mlflow.start_run(
-                run_name=f"top{rank}_{model.algo}", nested=True
-            ) as child_run:
-                child_run_id = child_run.info.run_id
-                logger.info("Nested MLflow run ID: %s", child_run_id)
-
-                # Log model info as params
-                mlflow.log_param("rank", rank)
-                mlflow.log_param("model_id", model_id)
-                mlflow.log_param("algo", model.algo)
-
-                # --- Log all available metrics ---
-                log_metric_if_exists(model_perf, "logloss")
-                log_metric_if_exists(model_perf, "mean_per_class_error")
-                log_metric_if_exists(model_perf, "accuracy")
-                log_metric_if_exists(model_perf, "rmse")
-                log_metric_if_exists(model_perf, "mse")
-                log_metric_if_exists(model_perf, "r2")
-                log_metric_if_exists(model_perf, "mae")
-                log_metric_if_exists(model_perf, "rmsle")
-                log_metric_if_exists(model_perf, "auc")
-                log_metric_if_exists(model_perf, "gini")
-
-                # Per-class metrics
-                log_metric_if_exists(model_perf, "F1")
-                log_metric_if_exists(model_perf, "precision")
-                log_metric_if_exists(model_perf, "recall")
-                log_classifier_metrics(
-                    sklearn_metrics,
-                    report_df,
-                    confusion_df,
-                    artifact_prefix=f"rank{rank}_{model.algo}",
+            # Log training parameters
+            mlflow.log_param("max_runtime_secs", MAX_RUNTIME_SECS)
+            mlflow.log_param("seed", SEED)
+            mlflow.log_param("n_features", len(feature_columns))
+            mlflow.log_param("n_train_rows", train.nrows)
+            mlflow.log_param("n_test_rows", test.nrows)
+            if class_sampling_factors:
+                mlflow.log_param(
+                    "class_sampling_labels",
+                    ",".join(class_sampling_metadata["ordered_labels"]),
+                )
+                mlflow.log_param(
+                    "class_sampling_factors",
+                    ",".join(str(value) for value in class_sampling_factors),
+                )
+                mlflow.log_param(
+                    "max_class_sampling_factor",
+                    class_sampling_metadata["max_class_sampling_factor"],
                 )
 
-                # --- Confusion matrix ---
-                try:
-                    if hasattr(model_perf, "confusion_matrix"):
-                        cm = model_perf.confusion_matrix()
-                        logger.info("  Confusion matrix:\n%s", cm)
-                except (KeyError, AttributeError):
-                    logger.info("  Confusion matrix:           N/A")
+            automl_parameters = {
+                "max_runtime_secs": MAX_RUNTIME_SECS,
+                "seed": SEED,
+                "project_name": "traffic_risk",
+                "balance_classes": True,
+                "max_after_balance_size": 5.0,
+                "sort_metric": "mean_per_class_error",
+            }
+            if class_sampling_factors:
+                automl_parameters["class_sampling_factors"] = class_sampling_factors
 
-                # Log model artifact for this rank
-                mlflow.h2o.log_model(model, artifact_path=f"model_rank{rank}")
+            aml = H2OAutoML(**automl_parameters)
 
-        # ---- Step 9: Register the best model ----
-        logger.info("=" * 60)
-        logger.info(
-            "Registering the best model (highest macro F1, logloss tie-breaker)..."
-        )
-        logger.info("Best model ID: %s", best_model.model_id)
-        logger.info("Best model algorithm: %s", best_model.algo)
-        logger.info("Best model macro F1: %.6f", best_macro_f1)
-        logger.info(
-            "Best model weighted F1: %.6f", best_metrics.get("weighted_f1", 0.0)
-        )
-        logger.info("Best model logloss: %.6f", best_logloss)
+            aml.train(
+                x=feature_columns,
+                y=LABEL_COLUMN,
+                training_frame=train,
+            )
 
-        # Log best model as a separate artifact
-        mlflow.h2o.log_model(best_model, artifact_path="best_model")
+            logger.info("Training completed.")
 
-        # Register in MLflow Registry
-        model_uri = f"runs:/{run_id}/best_model"
-        registered_model = mlflow.register_model(model_uri, MODEL_NAME)
-        logger.info(
-            "Model registered: name=%s, version=%s",
-            registered_model.name,
-            registered_model.version,
-        )
+            # ---- Step 7: Leaderboard ----
+            lb = aml.leaderboard
+            lb_df = lb.head(rows=10).as_data_frame()
+            logger.info("H2O AutoML leaderboard (top 10):\n%s", lb_df)
 
-    # ---- Cleanup ----
-    logger.info("Shutting down H2O cluster...")
-    h2o.shutdown(prompt=False)
+            # ---- Step 8: Evaluate and log top models ----
+            top_model_ids = lb_df["model_id"].tolist()
+            logger.info(
+                "Step 8: Evaluating and logging top %s models...", len(top_model_ids)
+            )
+            logger.info("Model IDs: %s", top_model_ids)
+
+            best_model = None
+            best_macro_f1 = -1.0
+            best_logloss = float("inf")
+            best_metrics = {}
+
+            for rank, model_id in enumerate(top_model_ids, start=1):
+                model = h2o.get_model(model_id)
+                model_perf = model.model_performance(test)
+                sklearn_metrics, report_df, confusion_df = (
+                    evaluate_classifier_with_sklearn(
+                        model,
+                        test,
+                        feature_columns,
+                        LABEL_COLUMN,
+                    )
+                )
+
+                # Track the best model using macro F1 first because severity classes
+                # are strongly imbalanced. Logloss remains a tie-breaker.
+                current_logloss = float(model_perf.logloss())
+                current_macro_f1 = sklearn_metrics["macro_f1"]
+                if current_macro_f1 > best_macro_f1 or (
+                    current_macro_f1 == best_macro_f1 and current_logloss < best_logloss
+                ):
+                    best_macro_f1 = current_macro_f1
+                    best_logloss = current_logloss
+                    best_model = model
+                    best_metrics = sklearn_metrics
+
+                logger.info(
+                    "-" * 60
+                )
+                logger.info(
+                    "Evaluating model rank %d: %s (%s)", rank, model_id, model.algo
+                )
+
+                # Create a nested run for each model
+                with mlflow.start_run(
+                    run_name=f"top{rank}_{model.algo}", nested=True
+                ) as child_run:
+                    child_run_id = child_run.info.run_id
+                    logger.info("Nested MLflow run ID: %s", child_run_id)
+
+                    # Log model info as params
+                    mlflow.log_param("rank", rank)
+                    mlflow.log_param("model_id", model_id)
+                    mlflow.log_param("algo", model.algo)
+
+                    # --- Log all available metrics ---
+                    log_metric_if_exists(model_perf, "logloss")
+                    log_metric_if_exists(model_perf, "mean_per_class_error")
+                    log_metric_if_exists(model_perf, "accuracy")
+                    log_metric_if_exists(model_perf, "rmse")
+                    log_metric_if_exists(model_perf, "mse")
+                    log_metric_if_exists(model_perf, "r2")
+                    log_metric_if_exists(model_perf, "mae")
+                    log_metric_if_exists(model_perf, "rmsle")
+                    log_metric_if_exists(model_perf, "auc")
+                    log_metric_if_exists(model_perf, "gini")
+
+                    # Per-class metrics
+                    log_metric_if_exists(model_perf, "F1")
+                    log_metric_if_exists(model_perf, "precision")
+                    log_metric_if_exists(model_perf, "recall")
+                    log_classifier_metrics(
+                        sklearn_metrics,
+                        report_df,
+                        confusion_df,
+                        artifact_prefix=f"rank{rank}_{model.algo}",
+                    )
+
+                    # --- Confusion matrix ---
+                    try:
+                        if hasattr(model_perf, "confusion_matrix"):
+                            cm = model_perf.confusion_matrix()
+                            logger.info("  Confusion matrix:\n%s", cm)
+                    except (KeyError, AttributeError):
+                        logger.info("  Confusion matrix:           N/A")
+
+                    # Log model artifact for this rank
+                    mlflow.h2o.log_model(model, artifact_path=f"model_rank{rank}")
+
+            # ---- Step 9: Register the best model ----
+            logger.info("=" * 60)
+            logger.info(
+                "Registering the best model (highest macro F1, logloss tie-breaker)..."
+            )
+            logger.info("Best model ID: %s", best_model.model_id)
+            logger.info("Best model algorithm: %s", best_model.algo)
+            logger.info("Best model macro F1: %.6f", best_macro_f1)
+            logger.info(
+                "Best model weighted F1: %.6f", best_metrics.get("weighted_f1", 0.0)
+            )
+            logger.info("Best model logloss: %.6f", best_logloss)
+
+            # Log best model as a separate artifact
+            mlflow.h2o.log_model(best_model, artifact_path="best_model")
+
+            # Register in MLflow Registry
+            model_uri = f"runs:/{run_id}/best_model"
+            registered_model = mlflow.register_model(model_uri, MODEL_NAME)
+            logger.info(
+                "Model registered: name=%s, version=%s",
+                registered_model.name,
+                registered_model.version,
+            )
+    finally:
+        cleanup_temporary_artifacts(temporary_paths)
+        logger.info("Shutting down H2O cluster...")
+        try:
+            h2o.shutdown(prompt=False)
+        except Exception:
+            logger.warning("H2O cluster shutdown raised a non-fatal error.")
 
     logger.info("=" * 80)
     logger.info("Training complete. Model registered in MLflow.")

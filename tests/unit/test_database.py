@@ -106,3 +106,35 @@ def test_fetch_one_retries_with_fresh_connection_after_operational_error(monkeyp
     assert failed_close is True
     assert recovered_connection.closed is False
     assert recovered_close is False
+
+
+def test_fetch_one_returns_none_when_initial_connection_cannot_be_opened(monkeypatch):
+    attempts = {"count": 0}
+
+    def fake_get_connection():
+        attempts["count"] += 1
+        raise psycopg2.OperationalError("database system is in recovery mode")
+
+    monkeypatch.setattr(database, "get_connection", fake_get_connection)
+    monkeypatch.setattr(database, "reset_pg_pool", lambda: None)
+
+    row = database.fetch_one("SELECT 1")
+
+    assert row is None
+    assert attempts["count"] == 2
+
+
+def test_fetch_all_returns_empty_when_initial_connection_cannot_be_opened(monkeypatch):
+    attempts = {"count": 0}
+
+    def fake_get_connection():
+        attempts["count"] += 1
+        raise psycopg2.pool.PoolError("pool exhausted")
+
+    monkeypatch.setattr(database, "get_connection", fake_get_connection)
+    monkeypatch.setattr(database, "reset_pg_pool", lambda: None)
+
+    rows = database.fetch_all("SELECT 1")
+
+    assert rows == []
+    assert attempts["count"] == 2
