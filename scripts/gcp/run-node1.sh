@@ -114,6 +114,8 @@ compose_cmd() {
 prepare_runtime_directories() {
   echo "Preparing writable runtime directories for containers."
   mkdir -p orchestration/logs/scheduler ml/mlruns
+  sudo chown -R "$(id -u):$(id -g)" ml/mlruns 2>/dev/null || true
+  sudo chmod -R a+rwX ml/mlruns 2>/dev/null || true
   sudo chown -R 50000:0 orchestration/logs 2>/dev/null || true
   sudo chmod -R 2775 orchestration/logs 2>/dev/null || true
 }
