@@ -405,10 +405,9 @@ jobs:
             fi
 
             echo "=== Loading cloud environment ==="
-            cp ~/traffic.env.cloud /opt/traffic/.env.cloud
-            cp ~/traffic.env.cloud /opt/traffic/.env
-            mkdir -p /opt/traffic/secrets
-            install -m 600 ~/traffic-inter-node.key /opt/traffic/secrets/inter_node_google_compute_engine
+            sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
+            sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env
+            sudo install -D -m 600 ~/traffic-inter-node.key /opt/traffic/secrets/inter_node_google_compute_engine
 
             echo "=== Starting Node 1 services and offline training bootstrap ==="
             TRAINING_PID_FILE="/opt/traffic/logs/cloud_h2o_before_2020.pid"
@@ -561,8 +560,8 @@ jobs:
             fi
 
             echo "=== Restarting streaming services ==="
-            cp ~/traffic.env.cloud /opt/traffic/.env.cloud
-            cp ~/traffic.env.cloud /opt/traffic/.env
+            sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
+            sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env
             sudo -E bash scripts/gcp/run-node2.sh
 
             echo "=== Verifying Node 2 containers are running ==="
@@ -711,8 +710,8 @@ jobs:
             fi
 
             echo "=== Restarting batch services ==="
-            cp ~/traffic.env.cloud /opt/traffic/.env.cloud
-            cp ~/traffic.env.cloud /opt/traffic/.env
+            sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
+            sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env
             sudo -E bash scripts/gcp/run-node3.sh
 
             echo "=== Verifying Node 3 containers are running ==="
