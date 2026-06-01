@@ -522,8 +522,12 @@ def _path_status(path_value: str | None) -> dict[str, Any]:
 def checkpoints() -> dict[str, Any]:
     """Return configured checkpoint and Gold output paths with best-effort timestamps."""
     settings = get_settings()
+    primary_flink_path = (
+        settings.flink_local_checkpoint_dir or settings.flink_checkpoint_dir
+    )
     return {
-        "flink": _path_status(settings.flink_checkpoint_dir),
+        "flink": _path_status(primary_flink_path),
+        "flink_remote": _path_status(settings.flink_checkpoint_dir),
         "gold": _path_status(settings.gold_retrain_path),
         "environment": settings.environment,
         "cwd": os.getcwd(),

@@ -54,6 +54,7 @@ services:
   airflow:
     image: apache/airflow:2.9.0-python3.10
     container_name: node1-airflow
+    user: root
     depends_on:
       airflow-db:
         condition: service_healthy

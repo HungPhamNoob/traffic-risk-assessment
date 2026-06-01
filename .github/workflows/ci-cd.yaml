@@ -215,6 +215,8 @@ jobs:
         run: |
           echo "=== Uploading .env.cloud to GCS ==="
           echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
+          SSH_USER="${{ vars.HUNG_SSH_USER }}"
+          SSH_USER="${SSH_USER:-hung}"
           {
             printf '\n# CI/CD deployment overrides. These values keep stale GitHub secret content from pointing VMs at retired buckets.\n'
             NODE1_INTERNAL_IP="$(gcloud compute instances describe node1-control --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].networkIP)')"
@@ -241,6 +243,19 @@ jobs:
             printf 'MLFLOW_SERVING_ENDPOINT=http://%s:5001/invocations\n' "$NODE1_INTERNAL_IP"
             printf 'MLFLOW_GUNICORN_TIMEOUT_SECONDS=300\n'
             printf 'MLFLOW_GUNICORN_WORKERS=2\n'
+            printf 'FLINK_LOCAL_CHECKPOINT_DIR=file:///opt/flink/checkpoints/unified-traffic-streaming\n'
+            printf 'FLINK_CHECKPOINT_TIMEOUT=1800000\n'
+            printf 'FLINK_CHECKPOINT_MIN_PAUSE=120000\n'
+            printf 'FLINK_TOLERABLE_FAILED_CHECKPOINTS=10\n'
+            printf 'FLINK_TMP_DIR=/opt/flink/tmp\n'
+            printf 'ML_BATCH_SIZE=250\n'
+            printf 'SILVER_FLUSH_EVERY_N=2000\n'
+            printf 'TOMTOM_CONSUMER_GROUP=tomtom-live-postgres-consumer\n'
+            printf 'TOMTOM_CONSUMER_AUTO_OFFSET_RESET=earliest\n'
+            printf 'TOMTOM_CONSUMER_POLL_TIMEOUT_SECONDS=1\n'
+            printf 'TOMTOM_FLUSH_INTERVAL_SECONDS=15\n'
+            printf 'STREAM_LOOP_FOREVER=false\n'
+            printf 'FASTAPI_SSH_KEY_PATH=/opt/traffic/secrets/inter_node_google_compute_engine\n'
             printf 'TOMTOM_BBOXES=US:New_York:-74.25909,40.477399,-73.700181,40.917577\n'
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
@@ -291,14 +306,28 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE1_IP}" "sudo rm -f /tmp/.env.cloud" || true
+            "${SSH_USER}@${NODE1_IP}" "rm -f ~/traffic.env.cloud" || true
 
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            .env.cloud "${SSH_USER}@${NODE1_IP}:/tmp/.env.cloud"
+            .env.cloud "${SSH_USER}@${NODE1_IP}:~/traffic.env.cloud"
+
+          ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE1_IP}" "rm -f ~/traffic-inter-node.key" || true
+
+          scp -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            ~/.ssh/hung_vm_key "${SSH_USER}@${NODE1_IP}:~/traffic-inter-node.key"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
@@ -376,8 +405,10 @@ jobs:
             fi
 
             echo "=== Loading cloud environment ==="
-            cp /tmp/.env.cloud /opt/traffic/.env.cloud
-            cp /tmp/.env.cloud /opt/traffic/.env
+            cp ~/traffic.env.cloud /opt/traffic/.env.cloud
+            cp ~/traffic.env.cloud /opt/traffic/.env
+            mkdir -p /opt/traffic/secrets
+            install -m 600 ~/traffic-inter-node.key /opt/traffic/secrets/inter_node_google_compute_engine
 
             echo "=== Starting Node 1 services and offline training bootstrap ==="
             TRAINING_PID_FILE="/opt/traffic/logs/cloud_h2o_before_2020.pid"
@@ -445,14 +476,14 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE2_IP}" "sudo rm -f /tmp/.env.cloud" || true
+            "${SSH_USER}@${NODE2_IP}" "rm -f ~/traffic.env.cloud" || true
 
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            .env.cloud "${SSH_USER}@${NODE2_IP}:/tmp/.env.cloud"
+            .env.cloud "${SSH_USER}@${NODE2_IP}:~/traffic.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
@@ -530,8 +561,8 @@ jobs:
             fi
 
             echo "=== Restarting streaming services ==="
-            cp /tmp/.env.cloud /opt/traffic/.env.cloud
-            cp /tmp/.env.cloud /opt/traffic/.env
+            cp ~/traffic.env.cloud /opt/traffic/.env.cloud
+            cp ~/traffic.env.cloud /opt/traffic/.env
             sudo -E bash scripts/gcp/run-node2.sh
 
             echo "=== Verifying Node 2 containers are running ==="
@@ -589,14 +620,14 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            "${SSH_USER}@${NODE3_IP}" "sudo rm -f /tmp/.env.cloud" || true
+            "${SSH_USER}@${NODE3_IP}" "rm -f ~/traffic.env.cloud" || true
 
           scp -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            .env.cloud "${SSH_USER}@${NODE3_IP}:/tmp/.env.cloud"
+            .env.cloud "${SSH_USER}@${NODE3_IP}:~/traffic.env.cloud"
 
           ssh -i ~/.ssh/hung_vm_key \
             -o IdentitiesOnly=yes \
@@ -673,9 +704,15 @@ jobs:
                 git pull --ff-only origin "$BRANCH" || git pull --rebase origin "$BRANCH"
             fi
 
+            if pgrep -af 'scripts/gcp/run-node3.sh|spark-submit|h2o_after_2020.py' >/dev/null 2>&1; then
+                echo "Active Node 3 batch/retraining work detected. Skipping deploy restart to avoid interrupting the current pipeline."
+                pgrep -af 'scripts/gcp/run-node3.sh|spark-submit|h2o_after_2020.py' || true
+                exit 0
+            fi
+
             echo "=== Restarting batch services ==="
-            cp /tmp/.env.cloud /opt/traffic/.env.cloud
-            cp /tmp/.env.cloud /opt/traffic/.env
+            cp ~/traffic.env.cloud /opt/traffic/.env.cloud
+            cp ~/traffic.env.cloud /opt/traffic/.env
             sudo -E bash scripts/gcp/run-node3.sh
 
             echo "=== Verifying Node 3 containers are running ==="

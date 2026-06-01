@@ -313,6 +313,49 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  tomtom-live-consumer:
+    build:
+      context: ../..
+      dockerfile: deployment/node2-streaming/Dockerfile.flink
+    image: capstone/flink-streaming:1.19-node2
+    container_name: node2-tomtom-live-consumer
+    user: root
+    entrypoint: []
+    working_dir: /opt/traffic
+    command: >
+      bash -c "
+        /opt/flink/pyenv/bin/pip install --no-cache-dir confluent-kafka==2.3.0 &&
+        python processing/tomtom_realtime_consumer.py
+      "
+    environment:
+      PYTHONPATH: /opt/traffic
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_TOPIC_TOMTOM_RAW: ${KAFKA_TOPIC_TOMTOM_RAW:-traffic.tomtom.raw}
+      TOMTOM_CONSUMER_GROUP: ${TOMTOM_CONSUMER_GROUP:-tomtom-live-postgres-consumer}
+      TOMTOM_CONSUMER_AUTO_OFFSET_RESET: ${TOMTOM_CONSUMER_AUTO_OFFSET_RESET:-earliest}
+      TOMTOM_CONSUMER_POLL_TIMEOUT_SECONDS: ${TOMTOM_CONSUMER_POLL_TIMEOUT_SECONDS:-1}
+      TOMTOM_FLUSH_INTERVAL_SECONDS: ${TOMTOM_FLUSH_INTERVAL_SECONDS:-15}
+      POSTGRES_HOST: ${POSTGRES_HOST:-10.128.0.4}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-capstone_db}
+      POSTGRES_USER: ${POSTGRES_USER:-capstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_TOMTOM_TABLE: ${POSTGRES_TOMTOM_TABLE:-traffic_tomtom_incidents}
+      PG_BATCH_SIZE: ${PG_BATCH_SIZE:-200}
+      PG_POOL_MAX_CONN: ${PG_POOL_MAX_CONN:-4}
+      OPEN_METEO_ENDPOINT: ${OPEN_METEO_ENDPOINT:-https://api.open-meteo.com/v1/forecast}
+      OPEN_METEO_ARCHIVE_ENDPOINT: ${OPEN_METEO_ARCHIVE_ENDPOINT:-https://archive-api.open-meteo.com/v1/archive}
+      OPEN_METEO_TIMEOUT_SECONDS: ${OPEN_METEO_TIMEOUT_SECONDS:-5}
+      STREAMING_LOG_LEVEL: ${STREAMING_LOG_LEVEL:-INFO}
+    volumes:
+      - ../..:/opt/traffic:ro
+    networks:
+      - capstone-net
+    depends_on:
+      kafka-topic-init:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ==========================================================
   # Flink JobManager
   # ==========================================================
@@ -327,8 +370,11 @@ services:
     command: >
       bash -c "
         mkdir -p /opt/flink/checkpoints &&
+        mkdir -p /opt/flink/tmp &&
         chown -R flink:flink /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/tmp &&
         chmod -R 775 /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/tmp &&
         /docker-entrypoint.sh jobmanager
       "
     ports:
@@ -340,9 +386,13 @@ services:
         rest.bind-address: 0.0.0.0
         state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
         execution.checkpointing.interval: ${FLINK_CHECKPOINT_INTERVAL:-30000}
+        execution.checkpointing.timeout: ${FLINK_CHECKPOINT_TIMEOUT:-1800000}
+        execution.checkpointing.min-pause: ${FLINK_CHECKPOINT_MIN_PAUSE:-120000}
+        execution.checkpointing.tolerable-failed-checkpoints: ${FLINK_TOLERABLE_FAILED_CHECKPOINTS:-10}
     volumes:
       - ../..:/opt/traffic:ro
       - flink_data:/opt/flink/checkpoints
+      - flink_tmp:/opt/flink/tmp
     networks:
       - capstone-net
     depends_on:
@@ -366,8 +416,11 @@ services:
     command: >
       bash -c "
         mkdir -p /opt/flink/checkpoints &&
+        mkdir -p /opt/flink/tmp &&
         chown -R flink:flink /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/tmp &&
         chmod -R 775 /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/tmp &&
         /docker-entrypoint.sh taskmanager
       "
     environment:
@@ -377,9 +430,14 @@ services:
         taskmanager.numberOfTaskSlots: 4
         taskmanager.memory.process.size: 1536m
         state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
+        execution.checkpointing.timeout: ${FLINK_CHECKPOINT_TIMEOUT:-1800000}
+        execution.checkpointing.min-pause: ${FLINK_CHECKPOINT_MIN_PAUSE:-120000}
+        execution.checkpointing.tolerable-failed-checkpoints: ${FLINK_TOLERABLE_FAILED_CHECKPOINTS:-10}
+        taskmanager.tmp.dirs: ${FLINK_TMP_DIR:-/opt/flink/tmp}
     volumes:
       - ../..:/opt/traffic:ro
       - flink_data:/opt/flink/checkpoints
+      - flink_tmp:/opt/flink/tmp
     networks:
       - capstone-net
     depends_on:
@@ -424,8 +482,11 @@ services:
     command: >
       bash -c "
         mkdir -p /opt/flink/checkpoints &&
+        mkdir -p /opt/flink/tmp &&
         chown -R flink:flink /opt/flink/checkpoints &&
+        chown -R flink:flink /opt/flink/tmp &&
         chmod -R 775 /opt/flink/checkpoints &&
+        chmod -R 775 /opt/flink/tmp &&
         /opt/flink/bin/flink run -d -m flink-jobmanager:8081 -pyclientexec /opt/flink/pyenv/bin/python -pyexec /opt/flink/pyenv/bin/python -pyfs processing -py processing/flink_streaming.py &&
         tail -f /dev/null
       "
@@ -439,8 +500,12 @@ services:
       FLINK_TOMTOM_GROUP: ${FLINK_TOMTOM_GROUP:-flink-tomtom-inference}
       FLINK_PARALLELISM: ${FLINK_PARALLELISM:-4}
       FLINK_CHECKPOINT_INTERVAL: ${FLINK_CHECKPOINT_INTERVAL:-30000}
+      FLINK_CHECKPOINT_TIMEOUT: ${FLINK_CHECKPOINT_TIMEOUT:-1800000}
+      FLINK_CHECKPOINT_MIN_PAUSE: ${FLINK_CHECKPOINT_MIN_PAUSE:-120000}
+      FLINK_TOLERABLE_FAILED_CHECKPOINTS: ${FLINK_TOLERABLE_FAILED_CHECKPOINTS:-10}
       FLINK_CHECKPOINT_DIR: ${FLINK_CHECKPOINT_DIR:-gs://big-data-group-4-backups/checkpoints/flink}
       FLINK_LOCAL_CHECKPOINT_DIR: ${FLINK_LOCAL_CHECKPOINT_DIR:-file:///opt/flink/checkpoints/unified-traffic-streaming}
+      FLINK_TMP_DIR: ${FLINK_TMP_DIR:-/opt/flink/tmp}
       FLINK_KAFKA_CONNECTOR_JAR: ${FLINK_KAFKA_CONNECTOR_JAR:-file:///opt/flink/connectors/flink-connector-kafka-3.2.0-1.19.jar,file:///opt/flink/connectors/kafka-clients-3.6.1.jar}
       SILVER_FEATURES_PATH: ${SILVER_FEATURES_PATH:-gs://big-data-group-4-silver/process/flink_features}
       MLFLOW_SERVING_ENDPOINT: ${MLFLOW_SERVING_ENDPOINT:-http://10.128.0.4:5001/invocations}
@@ -461,6 +526,7 @@ services:
     volumes:
       - ../..:/opt/traffic:ro
       - flink_data:/opt/flink/checkpoints
+      - flink_tmp:/opt/flink/tmp
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
     networks:
       - capstone-net
@@ -483,4 +549,5 @@ volumes:
   kafka_data_2:
   kafka_data_3:
   flink_data:
+  flink_tmp:
   redis_data:

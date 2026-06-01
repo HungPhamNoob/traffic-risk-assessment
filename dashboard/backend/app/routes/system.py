@@ -24,7 +24,9 @@ def get_system_status() -> dict:
         "flink": {
             "job_name": "Flink Traffic Risk Prediction",
             "status": "configured",
-            "checkpoint_dir": settings.flink_checkpoint_dir,
+            "checkpoint_dir": settings.flink_local_checkpoint_dir
+            or settings.flink_checkpoint_dir,
+            "checkpoint_dir_remote": settings.flink_checkpoint_dir,
             "checkpoint_interval_ms": settings.flink_checkpoint_interval_ms,
         },
         "spark": {

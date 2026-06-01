@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         default="gs://big-data-group-4-backups/checkpoints/flink",
         alias="FLINK_CHECKPOINT_DIR",
     )
+    flink_local_checkpoint_dir: str = Field(
+        default="file:///opt/flink/checkpoints/unified-traffic-streaming",
+        alias="FLINK_LOCAL_CHECKPOINT_DIR",
+    )
     flink_checkpoint_interval_ms: int = Field(
         default=30000, alias="FLINK_CHECKPOINT_INTERVAL"
     )

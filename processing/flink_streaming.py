@@ -40,6 +40,7 @@ from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.datastream.functions import SinkFunction
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
 from processing.feature_engineering import build_features
 from processing.streaming_enrichment import enrich_tomtom_event
@@ -80,6 +81,15 @@ FLINK_INFERENCE_GROUP = os.getenv("FLINK_INFERENCE_GROUP", "flink-dual-inference
 FLINK_TOMTOM_GROUP = os.getenv("FLINK_TOMTOM_GROUP", "flink-dual-tomtom")
 FLINK_PARALLELISM = int(os.getenv("FLINK_PARALLELISM", "2"))
 FLINK_CHECKPOINT_INTERVAL = int(os.getenv("FLINK_CHECKPOINT_INTERVAL", "30000"))
+FLINK_CHECKPOINT_TIMEOUT = int(
+    os.getenv("FLINK_CHECKPOINT_TIMEOUT", "1800000")
+)
+FLINK_CHECKPOINT_MIN_PAUSE = int(
+    os.getenv("FLINK_CHECKPOINT_MIN_PAUSE", "120000")
+)
+FLINK_TOLERABLE_FAILED_CHECKPOINTS = int(
+    os.getenv("FLINK_TOLERABLE_FAILED_CHECKPOINTS", "10")
+)
 FLINK_CHECKPOINT_DIR = os.getenv(
     "FLINK_LOCAL_CHECKPOINT_DIR",
     os.getenv("FLINK_CHECKPOINT_DIR", "file:///tmp/flink-checkpoints/traffic-risk"),
@@ -527,7 +537,7 @@ def _extract_prediction(prediction: Any) -> Tuple[Optional[int], Optional[float]
 
 
 def _call_mlflow_batch(
-    batch: List[Tuple[Dict[str, Any], str, float]]
+    batch: List[Tuple[Dict[str, Any], Optional[str], float]]
 ) -> List[Tuple[Optional[int], Optional[float]]]:
     """Call MLflow Serving with a micro-batch of features for throughput.
 
@@ -664,7 +674,9 @@ def call_mlflow_model(
     MLflow Serving endpoint as a single HTTP request with multiple rows.
     """
     start = time.time()
-    ingestion_time = str(features.get("ingestion_time", features.get("_ingested_at_utc", "")))
+    ingestion_time = normalize_optional_timestamp(
+        features.get("ingestion_time", features.get("_ingested_at_utc"))
+    )
 
     _ML_INFERENCE_BUFFER.append((features, ingestion_time, start))
 
@@ -690,6 +702,23 @@ def parse_latency_ms(ingestion_time: Any, processed_time: str) -> Optional[float
         )
         processed_dt = datetime.fromisoformat(processed_time.replace("Z", "+00:00"))
         return (processed_dt - ingestion_dt).total_seconds() * 1000
+    except ValueError:
+        return None
+
+
+def normalize_optional_timestamp(value: Any) -> Optional[str]:
+    """Return an ISO timestamp string or None for blank/invalid timestamp values."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
     except ValueError:
         return None
 
@@ -735,8 +764,15 @@ def _batch_insert_us(rows: List[Dict[str, Any]]) -> None:
                 template = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))"
                 values = []
                 for r in rows:
+                    event_time = normalize_optional_timestamp(r.get("event_time"))
+                    ingestion_time = normalize_optional_timestamp(
+                        r.get("ingestion_time")
+                    )
+                    processed_time = normalize_optional_timestamp(
+                        r.get("processed_time")
+                    )
                     values.append((
-                        r.get("event_id"), r.get("event_year"), r.get("event_time"),
+                        r.get("event_id"), r.get("event_year"), event_time,
                         r.get("lat"), r.get("lon"), r.get("true_severity"),
                         r.get("predicted_severity"), r.get("risk_score"),
                         r.get("weather_code"), r.get("temperature_f"),
@@ -748,8 +784,8 @@ def _batch_insert_us(rows: List[Dict[str, Any]]) -> None:
                         r.get("is_roundabout"), r.get("is_stop"),
                         r.get("is_station"), r.get("is_railway"),
                         r.get("is_night"), r.get("model_status"),
-                        r.get("inference_latency_ms"), r.get("ingestion_time"),
-                        r.get("processed_time"), r.get("end_to_end_latency_ms"),
+                        r.get("inference_latency_ms"), ingestion_time,
+                        processed_time, r.get("end_to_end_latency_ms"),
                         r.get("lon"), r.get("lat"),
                     ))
                 psycopg2.extras.execute_values(
@@ -780,7 +816,20 @@ def _batch_insert_tomtom(rows: List[Dict[str, Any]]) -> None:
                 template = "(" + ", ".join(["%s"] * (len(TOMTOM_COLUMNS))) + ", ST_SetSRID(ST_MakePoint(%s, %s), 4326))"
                 values = []
                 for r in rows:
-                    vals = tuple(r.get(col) for col in TOMTOM_COLUMNS) + (r.get("lon"), r.get("lat"))
+                    row = dict(r)
+                    row["event_time"] = normalize_optional_timestamp(
+                        row.get("event_time")
+                    )
+                    row["ingestion_time"] = normalize_optional_timestamp(
+                        row.get("ingestion_time")
+                    )
+                    row["processed_time"] = normalize_optional_timestamp(
+                        row.get("processed_time")
+                    )
+                    vals = tuple(row.get(col) for col in TOMTOM_COLUMNS) + (
+                        row.get("lon"),
+                        row.get("lat"),
+                    )
                     values.append(vals)
                 psycopg2.extras.execute_values(
                     cursor,
@@ -841,10 +890,11 @@ def process_us_message(raw_message: str) -> str:
     """
     try:
         raw_row = json.loads(raw_message)
-        ingestion_time = raw_row.get("_ingested_at_utc")
+        ingestion_time = normalize_optional_timestamp(raw_row.get("_ingested_at_utc"))
         features = build_features(raw_row)
         if features is None:
             raise ValueError("US feature engineering returned no record")
+        features["ingestion_time"] = ingestion_time
 
         # Silver layer write (optional, can be disabled for throughput testing)
         write_to_gcs_silver(features)
@@ -869,8 +919,8 @@ def process_tomtom_message(raw_message: str) -> str:
     """
     try:
         raw_row = json.loads(raw_message)
-        ingestion_time = raw_row.get("_ingested_at_utc") or raw_row.get(
-            "ingestion_time"
+        ingestion_time = normalize_optional_timestamp(
+            raw_row.get("_ingested_at_utc") or raw_row.get("ingestion_time")
         )
         enriched = enrich_tomtom_event(raw_row)
         if enriched is None:
@@ -981,6 +1031,14 @@ def main() -> None:
     env.enable_checkpointing(FLINK_CHECKPOINT_INTERVAL)
 
     checkpoint_config = env.get_checkpoint_config()
+    if hasattr(checkpoint_config, "set_checkpoint_timeout"):
+        checkpoint_config.set_checkpoint_timeout(FLINK_CHECKPOINT_TIMEOUT)
+    if hasattr(checkpoint_config, "set_min_pause_between_checkpoints"):
+        checkpoint_config.set_min_pause_between_checkpoints(FLINK_CHECKPOINT_MIN_PAUSE)
+    if hasattr(checkpoint_config, "set_tolerable_checkpoint_failure_number"):
+        checkpoint_config.set_tolerable_checkpoint_failure_number(
+            FLINK_TOLERABLE_FAILED_CHECKPOINTS
+        )
     if FileSystemCheckpointStorage is not None:
         checkpoint_config.set_checkpoint_storage(
             FileSystemCheckpointStorage(FLINK_CHECKPOINT_DIR)
@@ -1019,6 +1077,13 @@ def main() -> None:
 
     if FLINK_PRINT_EACH_EVENT:
         us_stream.union(tomtom_stream).print()
+    else:
+        us_stream.add_sink(
+            SinkFunction("org.apache.flink.streaming.api.functions.sink.DiscardingSink")
+        )
+        tomtom_stream.add_sink(
+            SinkFunction("org.apache.flink.streaming.api.functions.sink.DiscardingSink")
+        )
 
     # Flush any remaining buffered rows before the job exits.
     import atexit
