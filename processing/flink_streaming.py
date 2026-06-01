@@ -41,7 +41,11 @@ from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.functions import SinkFunction
-from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
+from pyflink.datastream.connectors.kafka import (
+    KafkaOffsetResetStrategy,
+    KafkaOffsetsInitializer,
+    KafkaSource,
+)
 from processing.feature_engineering import build_features
 from processing.streaming_enrichment import enrich_tomtom_event
 from shared.risk_scoring import (
@@ -988,7 +992,11 @@ def build_kafka_source(topic: str, group_id: str, source_name: str):
         .set_bootstrap_servers(KAFKA_BOOTSTRAP_SERVERS)
         .set_topics(topic)
         .set_group_id(group_id)
-        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_starting_offsets(
+            KafkaOffsetsInitializer.committed_offsets(
+                KafkaOffsetResetStrategy.EARLIEST
+            )
+        )
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )

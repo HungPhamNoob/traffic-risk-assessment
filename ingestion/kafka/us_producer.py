@@ -102,6 +102,7 @@ STREAM_LOOP_FOREVER = get_str_env("STREAM_LOOP_FOREVER", "true").lower() in {
     "true",
     "yes",
 }
+US_REPLAY_START_ROW = get_int_env("US_REPLAY_START_ROW", 0)
 PRODUCER_CLIENT_ID = get_str_env("PRODUCER_CLIENT_ID", "us-replay-producer-raw")
 PRODUCER_FLUSH_EVERY_N_RECORDS = get_int_env("PRODUCER_FLUSH_EVERY_N_RECORDS", 5000)
 
@@ -163,6 +164,8 @@ def validate_config() -> None:
         raise ValueError("STREAM_MAX_RECORDS must be >= 0")
     if STREAM_THROTTLE_SECONDS < 0:
         raise ValueError("STREAM_THROTTLE_SECONDS must be >= 0")
+    if US_REPLAY_START_ROW < 0:
+        raise ValueError("US_REPLAY_START_ROW must be >= 0")
     if PRODUCER_QUEUE_BACKOFF_SECONDS < 0:
         raise ValueError("PRODUCER_QUEUE_BACKOFF_SECONDS must be >= 0")
 
@@ -231,6 +234,7 @@ def print_startup_log() -> None:
     logger.info("CSV:   %s", DATA_FILE_PATH)
     logger.info("Producer: %s/%s", PRODUCER_INDEX + 1, TOTAL_PRODUCERS)
     logger.info("Loop forever: %s", STREAM_LOOP_FOREVER)
+    logger.info("Replay start row: %s", f"{US_REPLAY_START_ROW:,}")
     logger.info("=" * 80)
 
 
@@ -251,6 +255,10 @@ def stream_dataset_once(
 
         for row_index, row in enumerate(reader):
             scanned_rows += 1
+
+            if row_index < US_REPLAY_START_ROW:
+                skipped_rows += 1
+                continue
 
             if not should_send_row(row_index):
                 skipped_rows += 1

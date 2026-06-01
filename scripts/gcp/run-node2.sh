@@ -75,6 +75,74 @@ compose_cmd() {
   COMPOSE_PROJECT_NAME="${NODE2_COMPOSE_PROJECT_NAME}" docker compose "$@"
 }
 
+compute_us_replay_start_row() {
+  local default_value="${US_REPLAY_START_ROW:-0}"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "${default_value}"
+    return 0
+  fi
+
+  local resume_row
+  resume_row="$(
+    python3 - <<'PY'
+import json
+import os
+import urllib.request
+
+default_value = os.getenv("US_REPLAY_START_ROW", "0")
+table_name = (
+    os.getenv("POSTGRES_US_PREDICTION_TABLE")
+    or os.getenv("POSTGRES_PREDICTION_TABLE")
+    or "traffic_risk_predictions"
+)
+postgres_host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+
+try:
+    with urllib.request.urlopen(
+        f"http://{postgres_host}:8000/api/v1/pipeline/replay-health",
+        timeout=5,
+    ) as response:
+        payload = json.load(response)
+    for source in payload.get("sources", []):
+        if source.get("table") == table_name:
+            print(max(int(source.get("row_count") or 0), 0))
+            raise SystemExit(0)
+except Exception:
+    pass
+
+try:
+    import psycopg2
+except Exception:
+    print(default_value)
+    raise SystemExit(0)
+
+try:
+    with psycopg2.connect(
+        host=postgres_host,
+        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        dbname=os.getenv("POSTGRES_DB", "capstone_db"),
+        user=os.getenv("POSTGRES_USER", "capstone"),
+        password=os.getenv("POSTGRES_PASSWORD", ""),
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            value = cursor.fetchone()[0]
+            print(max(int(value or 0), 0))
+except Exception:
+    print(default_value)
+PY
+  )"
+
+  resume_row="${resume_row//$'\r'/}"
+  resume_row="${resume_row//$'\n'/}"
+  if [ -z "${resume_row}" ]; then
+    resume_row="${default_value}"
+  fi
+
+  echo "${resume_row}"
+}
+
 ensure_us_replay_producers() {
   local missing_services=()
   local service_name
@@ -109,6 +177,9 @@ ensure_us_replay_producers() {
 
   echo "Starting missing US replay producers without resetting the healthy ones:"
   printf '  - %s\n' "${missing_services[@]}"
+  export US_REPLAY_START_ROW
+  US_REPLAY_START_ROW="$(compute_us_replay_start_row)"
+  echo "US replay producers will resume from approximate global row ${US_REPLAY_START_ROW}."
   compose_cmd \
     --project-directory "${NODE2_COMPOSE_DIR}" \
     --env-file "${ENV_FILE}" \
