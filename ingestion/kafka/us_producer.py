@@ -97,6 +97,11 @@ DATA_FILE_PATH = get_str_env(
 )
 STREAM_MAX_RECORDS = get_int_env("STREAM_MAX_RECORDS", 0)
 STREAM_THROTTLE_SECONDS = get_float_env("STREAM_THROTTLE_SECONDS", 0.0)
+STREAM_LOOP_FOREVER = get_str_env("STREAM_LOOP_FOREVER", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 PRODUCER_CLIENT_ID = get_str_env("PRODUCER_CLIENT_ID", "us-replay-producer-raw")
 PRODUCER_FLUSH_EVERY_N_RECORDS = get_int_env("PRODUCER_FLUSH_EVERY_N_RECORDS", 5000)
 
@@ -225,7 +230,63 @@ def print_startup_log() -> None:
     logger.info("Topic: %s", KAFKA_TOPIC)
     logger.info("CSV:   %s", DATA_FILE_PATH)
     logger.info("Producer: %s/%s", PRODUCER_INDEX + 1, TOTAL_PRODUCERS)
+    logger.info("Loop forever: %s", STREAM_LOOP_FOREVER)
     logger.info("=" * 80)
+
+
+def stream_dataset_once(
+    producer: Producer,
+    total_sent_so_far: int,
+    overall_start_time: float,
+    cycle_number: int,
+) -> tuple[int, int, int]:
+    """Publish one full pass of the replay dataset for this producer shard."""
+    scanned_rows = 0
+    skipped_rows = 0
+    sent_rows = 0
+
+    with open_file(DATA_FILE_PATH) as f:
+        reader = csv.DictReader(f)
+        logger.info("Cycle %s CSV columns: %s", cycle_number, reader.fieldnames)
+
+        for row_index, row in enumerate(reader):
+            scanned_rows += 1
+
+            if not should_send_row(row_index):
+                skipped_rows += 1
+                continue
+
+            key = row.get("ID") or f"row-{row_index}"
+            row["_ingested_at_utc"] = datetime.now(timezone.utc).isoformat()
+            value = json.dumps(row, ensure_ascii=False)
+
+            produce_with_backpressure(producer, KAFKA_TOPIC, key, value)
+            sent_rows += 1
+            total_sent = total_sent_so_far + sent_rows
+
+            if total_sent % 1000 == 0:
+                elapsed = max(time.time() - overall_start_time, 1e-6)
+                logger.info(
+                    "producer=%s cycle=%s sent_total=%s sent_cycle=%s scanned_cycle=%s skipped_cycle=%s rate=%.0f rows/s",
+                    PRODUCER_INDEX,
+                    cycle_number,
+                    f"{total_sent:,}",
+                    f"{sent_rows:,}",
+                    f"{scanned_rows:,}",
+                    f"{skipped_rows:,}",
+                    total_sent / elapsed,
+                )
+
+            if total_sent % PRODUCER_FLUSH_EVERY_N_RECORDS == 0:
+                producer.flush()
+
+            if STREAM_THROTTLE_SECONDS > 0:
+                time.sleep(STREAM_THROTTLE_SECONDS)
+
+            if STREAM_MAX_RECORDS > 0 and total_sent >= STREAM_MAX_RECORDS:
+                break
+
+    return scanned_rows, skipped_rows, sent_rows
 
 
 def main() -> None:
@@ -233,50 +294,40 @@ def main() -> None:
     print_startup_log()
 
     producer = Producer(build_producer_config())
-    scanned_rows = 0
-    skipped_rows = 0
-    sent_rows = 0
+    total_scanned_rows = 0
+    total_skipped_rows = 0
+    total_sent_rows = 0
+    cycle_number = 0
     start_time = time.time()
 
     try:
-        with open_file(DATA_FILE_PATH) as f:
-            reader = csv.DictReader(f)
-            logger.info("CSV columns: %s", reader.fieldnames)
+        while True:
+            cycle_number += 1
+            logger.info("Starting replay cycle %s for producer shard %s.", cycle_number, PRODUCER_INDEX)
+            scanned_rows, skipped_rows, sent_rows = stream_dataset_once(
+                producer=producer,
+                total_sent_so_far=total_sent_rows,
+                overall_start_time=start_time,
+                cycle_number=cycle_number,
+            )
+            total_scanned_rows += scanned_rows
+            total_skipped_rows += skipped_rows
+            total_sent_rows += sent_rows
+            producer.flush()
 
-            for row_index, row in enumerate(reader):
-                scanned_rows += 1
+            logger.info(
+                "Completed replay cycle %s. cycle_sent=%s total_sent=%s",
+                cycle_number,
+                f"{sent_rows:,}",
+                f"{total_sent_rows:,}",
+            )
 
-                if not should_send_row(row_index):
-                    skipped_rows += 1
-                    continue
+            if STREAM_MAX_RECORDS > 0 and total_sent_rows >= STREAM_MAX_RECORDS:
+                break
+            if not STREAM_LOOP_FOREVER:
+                break
 
-                key = row.get("ID") or f"row-{row_index}"
-                row["_ingested_at_utc"] = datetime.now(timezone.utc).isoformat()
-                value = json.dumps(row, ensure_ascii=False)
-
-                produce_with_backpressure(producer, KAFKA_TOPIC, key, value)
-                sent_rows += 1
-
-                if sent_rows % 1000 == 0:
-                    elapsed = max(time.time() - start_time, 1e-6)
-                    logger.info(
-                        "producer=%s sent=%s scanned=%s skipped=%s rate=%.0f rows/s",
-                        PRODUCER_INDEX,
-                        f"{sent_rows:,}",
-                        f"{scanned_rows:,}",
-                        f"{skipped_rows:,}",
-                        sent_rows / elapsed,
-                    )
-
-                if sent_rows % PRODUCER_FLUSH_EVERY_N_RECORDS == 0:
-                    producer.flush()
-
-                if STREAM_THROTTLE_SECONDS > 0:
-                    time.sleep(STREAM_THROTTLE_SECONDS)
-
-                if STREAM_MAX_RECORDS > 0 and sent_rows >= STREAM_MAX_RECORDS:
-                    break
-
+            time.sleep(2)
     except KeyboardInterrupt:
         logger.warning("Interrupted")
     except Exception as exc:
@@ -288,9 +339,9 @@ def main() -> None:
         logger.info("=" * 80)
         logger.info(
             "Done. Sent: %s | Skipped: %s | Rate: %.0f rows/s",
-            f"{sent_rows:,}",
-            f"{skipped_rows:,}",
-            sent_rows / elapsed,
+            f"{total_sent_rows:,}",
+            f"{total_skipped_rows:,}",
+            total_sent_rows / elapsed,
         )
         logger.info("=" * 80)
 

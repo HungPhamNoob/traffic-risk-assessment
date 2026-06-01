@@ -51,6 +51,7 @@ with DAG(
     schedule_interval=os.getenv("AIRFLOW_MODEL_RETRAIN_SCHEDULE", "*/15 * * * *"),
     start_date=datetime(2026, 5, 1),
     catchup=False,
+    max_active_runs=1,
     tags=["ml", "retrain", "batch", "spark", "h2o"],
 ) as dag:
 
@@ -61,17 +62,22 @@ with DAG(
         task_id="spark_silver_to_gold",
         bash_command=r"""
             echo "=== [Airflow] Spark Silver -> Gold ==="
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
+            SSH_KEY_PATH="${SSH_KEY:-/run/secrets/google_compute_engine}"
+            SSH_TARGET="${HUNG_SSH_USER:-hung}@${NODE3_INTERNAL_IP:-10.128.0.8}"
+            if [ ! -f "${SSH_KEY_PATH}" ]; then
+                echo "ERROR: SSH key not found at ${SSH_KEY_PATH}"
+                exit 1
+            fi
+            ssh -i "${SSH_KEY_PATH}" \
+                -o IdentitiesOnly=yes \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=15 \
+                "${SSH_TARGET}" "
                 cd /opt/traffic &&
-                COMPOSE_FILE=deployment/node3-batch/docker-compose.yaml &&
-                docker compose --env-file .env.cloud -f \$COMPOSE_FILE up -d &&
-                docker compose --env-file .env.cloud -f \$COMPOSE_FILE exec -T spark-master \
-                    /opt/spark/bin/spark-submit \
-                    --master spark://spark-master:7077 \
-                    /opt/traffic/processing/spark_batch.py
+                bash scripts/gcp/run-node3.sh
             " || {
                 echo "ERROR: Spark Silver -> Gold failed. Attempting Node 2/3 recovery before retry."
-                bash /opt/traffic/scripts/gcp/node23-lifecycle.sh restart || true
                 exit 1
             }
         """,
@@ -82,16 +88,9 @@ with DAG(
     # ------------------------------------------------------------------
     h2o_retrain = BashOperator(
         task_id="h2o_retrain",
-        bash_command=r"""
+        bash_command="""
             echo "=== [Airflow] H2O AutoML Retrain ==="
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 node3-batch "
-                cd /opt/traffic &&
-                export MLFLOW_TRACKING_URI=http://10.128.0.4:5000 &&
-                python ml/training/h2o_after_2020.py
-            " || {
-                echo "ERROR: H2O retrain on Node 3 failed. Airflow will retry."
-                exit 1
-            }
+            echo "Node 3 retraining already ran inside scripts/gcp/run-node3.sh."
         """,
     )
 

@@ -39,7 +39,7 @@ cleanup() {
 trap cleanup EXIT
 
 SSH_KEY="${SSH_KEY:-~/.ssh/google_compute_engine}"
-SSH_USER="${SSH_USER:-runner}"
+SSH_USER="${SSH_USER:-${HUNG_SSH_USER:-$(whoami)}}"
 
 get_node_ip() {
   local node="$1"

@@ -1,5 +1,7 @@
 """Prediction query service backed by PostgreSQL/PostGIS."""
 
+import math
+
 from typing import Any, Literal
 
 from fastapi import HTTPException
@@ -64,6 +66,33 @@ def _normalize_mode(mode: str | None) -> MapMode:
     if mode in {"replay", "live", "full"}:
         return mode  # type: ignore[return-value]
     return "full"
+
+
+def _limit_full_mode_sources(
+    selects: list[sql.Composable],
+    normalized_mode: MapMode,
+    limit: int,
+) -> list[sql.Composable]:
+    """Keep full-mode queries balanced so live rows do not crowd out replay rows."""
+    if normalized_mode != "full" or len(selects) <= 1:
+        return selects
+    per_source_limit = max(1, math.ceil(limit / len(selects)))
+    return [
+        sql.SQL(
+            """
+            (
+                SELECT *
+                FROM ({source_query}) AS mode_source
+                ORDER BY event_time DESC NULLS LAST
+                LIMIT {per_source_limit}
+            )
+            """
+        ).format(
+            source_query=source_query,
+            per_source_limit=sql.Literal(per_source_limit),
+        )
+        for source_query in selects
+    ]
 
 
 def mode_table_identifier(mode: str | None) -> sql.Identifier:
@@ -288,6 +317,7 @@ def map_points(
         selects.append(tomtom_select)
     if not selects:
         return {"points": []}
+    selects = _limit_full_mode_sources(selects, normalized_mode, limit)
 
     union_query = sql.SQL(" UNION ALL ").join(selects)
     query = sql.SQL(
@@ -465,6 +495,7 @@ def latest_predictions(
         )
     if not selects:
         return {"predictions": []}
+    selects = _limit_full_mode_sources(selects, normalized_mode, limit)
 
     query = sql.SQL(
         """

@@ -352,7 +352,7 @@ export default function DashboardPage() {
               <tr key={point.event_id}>
                 <td className="mono">{point.event_id}</td>
                 <td>{Number(point.risk_score).toFixed(4)}</td>
-                <td>{point.predicted_severity ?? "-"}</td>
+                <td>{point.predicted_severity ?? point.true_severity ?? "-"}</td>
                 <td>{point.event_time || "-"}</td>
                 <td>{statusText(point)}</td>
               </tr>

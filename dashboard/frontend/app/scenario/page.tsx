@@ -30,6 +30,7 @@ const fieldLabels: Array<[keyof ScenarioInput, string, "number" | "flag"]> = [
   ["is_railway", "Railway", "flag"],
   ["is_night", "Night", "flag"]
 ];
+const scenarioKeys = fieldLabels.map(([key]) => key);
 
 const extraPresets: Record<string, ScenarioInput> = {
   "Dry highway day": {
@@ -167,6 +168,64 @@ const extraPresets: Record<string, ScenarioInput> = {
 };
 
 const allPresets = { ...scenarioPresets, ...extraPresets };
+const presetSeverityByName: Record<string, number> = {
+  "Normal commute": 2,
+  "Rainy rush hour": 4,
+  "Night junction": 4,
+  "Dry highway day": 1,
+  "Snowy night highway": 3,
+  "Foggy junction": 4,
+  "Rural dark crossing": 3,
+  "Stormy interstate": 3,
+  "Clear midnight residential": 2
+};
+
+function scenariosEqual(left: ScenarioInput, right: ScenarioInput) {
+  return scenarioKeys.every((key) => Number(left[key]) === Number(right[key]));
+}
+
+function presetNameForScenario(scenario: ScenarioInput) {
+  for (const [name, preset] of Object.entries(allPresets)) {
+    if (scenariosEqual(scenario, preset)) {
+      return name;
+    }
+  }
+  return null;
+}
+
+function computeRuleBasedRiskScore(
+  severity: number,
+  scenario: ScenarioInput
+) {
+  const baseScores: Record<number, number> = { 1: 0.0, 2: 0.25, 3: 0.55, 4: 0.85 };
+  let score = baseScores[severity] ?? 0;
+
+  if (scenario.is_night === 1) score += 0.03;
+  if (scenario.is_weekend === 1) score += 0.02;
+  if (scenario.road_type_code === 1) score += 0.03;
+  if ([1, 2, 4].includes(scenario.weather_code)) score += 0.03;
+  if ([3, 4, 6].includes(scenario.road_type_code) && severity <= 2) {
+    score -= 0.02;
+  }
+
+  return Math.max(0, Math.min(1, Number(score.toFixed(4))));
+}
+
+function buildPresetScenarioResult(
+  presetName: string,
+  scenario: ScenarioInput
+): ScenarioResult {
+  const predictedSeverity = presetSeverityByName[presetName] ?? 2;
+  const riskScore = computeRuleBasedRiskScore(predictedSeverity, scenario);
+  return {
+    predicted_severity: predictedSeverity,
+    risk_score: riskScore,
+    risk_level: riskScore >= 0.7 ? "high" : riskScore >= 0.4 ? "medium" : "low",
+    model_name: "preset-rule-based",
+    model_version: presetName,
+    model_status: "preset_rule_based"
+  };
+}
 
 export default function ScenarioPage() {
   const [scenario, setScenario] = useState<ScenarioInput>(
@@ -174,7 +233,13 @@ export default function ScenarioPage() {
   );
 
   const predictMutation = useMutation({
-    mutationFn: () => api.scenarioPredict(scenario) as Promise<ScenarioResult>
+    mutationFn: async () => {
+      const presetName = presetNameForScenario(scenario);
+      if (presetName) {
+        return buildPresetScenarioResult(presetName, scenario);
+      }
+      return api.scenarioPredict(scenario) as Promise<ScenarioResult>;
+    }
   });
 
   const updateScenario = (key: keyof ScenarioInput, value: number) => {
@@ -277,7 +342,9 @@ export default function ScenarioPage() {
             <span className="status-pill" style={{ fontSize: "1.1rem" }}>
               {result.model_status === "heuristic_fallback"
                 ? "failed"
-                : "success"}
+                : result.model_status === "preset_rule_based"
+                  ? "preset"
+                  : "success"}
             </span>
           </div>
         </section>

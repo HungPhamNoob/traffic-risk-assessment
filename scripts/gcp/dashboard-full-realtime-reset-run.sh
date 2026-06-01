@@ -11,7 +11,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/opt/traffic}"
 ENV_FILE="${PIPELINE_RUNTIME_ENV_FILE:-/app/.env.cloud}"
 SSH_KEY="${SSH_KEY:-/run/secrets/google_compute_engine}"
-SSH_USER="${SSH_USER:-runner}"
+SSH_USER="${SSH_USER:-${HUNG_SSH_USER:-hung}}"
 
 NODE1_HOST="${NODE1_SSH_HOST:-${NODE1_INTERNAL_IP:-10.128.0.4}}"
 NODE2_HOST="${NODE2_SSH_HOST:-${NODE2_INTERNAL_IP:-10.128.0.5}}"

@@ -1,5 +1,7 @@
 """Historical analytics queries for charts."""
 
+import logging
+
 from typing import Any
 
 from psycopg2 import sql
@@ -15,6 +17,8 @@ from app.services.risk_sql import (
     effective_tomtom_risk_score_expr,
     effective_us_risk_score_expr,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def timeseries(
@@ -156,7 +160,11 @@ def severity_distribution(mode: str | None = None) -> dict[str, Any]:
         ORDER BY severity
         """
     ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
-    return {"distribution": fetch_all(query)}
+    try:
+        return {"distribution": fetch_all(query)}
+    except Exception:
+        logger.exception("Severity distribution query failed for mode=%s", mode)
+        return {"distribution": []}
 
 
 def risk_by_hour(mode: str | None = None) -> dict[str, Any]:
@@ -194,7 +202,11 @@ def risk_by_hour(mode: str | None = None) -> dict[str, Any]:
         ORDER BY hour
         """
     ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
-    return {"data": fetch_all(query)}
+    try:
+        return {"data": fetch_all(query)}
+    except Exception:
+        logger.exception("Risk-by-hour query failed for mode=%s", mode)
+        return {"data": []}
 
 
 def risk_by_weather() -> dict[str, Any]:
@@ -267,7 +279,12 @@ def weather_histogram(mode: str | None = None) -> dict[str, Any]:
                 else 100
             ),
         )
-        rows = fetch_all(query)
+        try:
+            rows = fetch_all(query)
+        except Exception:
+            logger.exception("Weather histogram query failed for mode=%s metric=%s", mode, label)
+            result["histogram"][label] = []
+            continue
         result["histogram"][label] = [
             {
                 "bin": f"{row['bin_min']:.0f}-{row['bin_max']:.0f}",

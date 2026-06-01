@@ -394,8 +394,16 @@ def initialize_schemas() -> None:
     global _SCHEMA_INITIALIZED
     if _SCHEMA_INITIALIZED:
         return
-    pool = get_pg_pool()
-    connection = pool.getconn()
+    # Use a one-off connection here so the global pool stays uninitialized
+    # until the worker functions run inside Flink. Pre-creating the pool in
+    # the driver makes PyFlink attempt to pickle a live psycopg2 connection.
+    connection = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        dbname=PG_DB,
+        user=PG_USER,
+        password=PG_PASSWORD,
+    )
     try:
         with connection:
             with connection.cursor() as cursor:
@@ -404,7 +412,7 @@ def initialize_schemas() -> None:
         _SCHEMA_INITIALIZED = True
         logger.info("PostgreSQL schemas initialized for %s and %s", PG_US_TABLE, PG_TOMTOM_TABLE)
     finally:
-        pool.putconn(connection)
+        connection.close()
 
 
 # ---------------------------------------------------------------------------

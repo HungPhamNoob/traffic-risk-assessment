@@ -173,7 +173,9 @@ export function RiskMap({
             point.predicted_severity ?? point.true_severity ?? "N/A";
           return `${point.event_id}\nSeverity ${severity}\nDisplay risk ${riskText}`;
         }
-        return `${point.event_id}\nRisk ${riskText}`;
+        const predictedSeverity = point.predicted_severity ?? "N/A";
+        const trueSeverity = point.true_severity ?? "N/A";
+        return `${point.event_id}\nPredicted severity ${predictedSeverity}\nTrue severity ${trueSeverity}\nRisk ${riskText}`;
       }}
     >
       <Map reuseMaps mapStyle={MAP_STYLE} />

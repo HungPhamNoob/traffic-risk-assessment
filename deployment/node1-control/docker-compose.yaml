@@ -71,12 +71,17 @@ services:
       - PROJECT_ROOT=/opt/traffic
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - SSH_KEY=/run/secrets/google_compute_engine
+      - HUNG_SSH_USER=${HUNG_SSH_USER:-hung}
+      - NODE2_INTERNAL_IP=${NODE2_INTERNAL_IP:-10.128.0.5}
+      - NODE3_INTERNAL_IP=${NODE3_INTERNAL_IP:-10.128.0.8}
     volumes:
       - ../../orchestration/dags:/opt/airflow/dags:ro
       - ../../orchestration/logs:/opt/airflow/logs
       - ../..:/opt/traffic:ro
       - ../../data:/data:ro
       - ${GCP_SERVICE_ACCOUNT_KEY:-/dev/null}:/secrets/gcp-key.json:ro
+      - ${FASTAPI_SSH_KEY_PATH:-/home/runner/.ssh/google_compute_engine}:/run/secrets/google_compute_engine:ro
     ports:
       - "8080:8080"
     command: >

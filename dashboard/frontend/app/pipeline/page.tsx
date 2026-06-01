@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -13,7 +12,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Activity, Database, GitBranch, RadioTower, RotateCcw, ServerCog } from "lucide-react";
+import { Activity, Database, GitBranch, RadioTower, ServerCog } from "lucide-react";
 import { api } from "@/lib/api";
 import { KpiCard } from "@/components/DataState";
 
@@ -43,7 +42,6 @@ function formatPercent(value: unknown) {
 }
 
 export default function PipelinePage() {
-  const [resetLaunchResult, setResetLaunchResult] = useState<AnyRecord | null>(null);
   const health = useQuery({ queryKey: ["health"], queryFn: api.health });
   const system = useQuery({
     queryKey: ["system"],
@@ -81,24 +79,6 @@ export default function PipelinePage() {
     queryFn: api.performanceTrend,
     refetchInterval: 60_000
   });
-  const resetStatus = useQuery({
-    queryKey: ["full-realtime-reset-status"],
-    queryFn: api.fullRealtimeResetStatus,
-    refetchInterval: 10_000
-  });
-  const resetMutation = useMutation({
-    mutationFn: () => api.fullRealtimeReset(false),
-    onSuccess: (data) => {
-      setResetLaunchResult((data as AnyRecord) || null);
-      resetStatus.refetch();
-    },
-    onError: (error) => {
-      setResetLaunchResult({
-        status: "request_failed",
-        message: error instanceof Error ? error.message : "Reset request failed"
-      });
-    }
-  });
 
   const throughputData = throughput.data as AnyRecord | undefined;
   const latencyData = latency.data as AnyRecord | undefined;
@@ -108,14 +88,6 @@ export default function PipelinePage() {
   const replayData = replay.data as AnyRecord | undefined;
   const retrainData = retrain.data as AnyRecord | undefined;
   const trendData = trend.data as AnyRecord | undefined;
-  const resetData = resetStatus.data as AnyRecord | undefined;
-  const resetStatusText = String(
-    resetData?.status || resetLaunchResult?.status || "not_started"
-  );
-  const resetMessage =
-    (typeof resetLaunchResult?.message === "string" && resetLaunchResult.message) ||
-    (typeof resetData?.message === "string" && resetData.message) ||
-    null;
 
   const latencyChart = latencyData?.latency_ms
     ? Object.entries(latencyData.latency_ms).map(([metric, value]) => ({
@@ -124,6 +96,8 @@ export default function PipelinePage() {
       }))
     : [];
   const trendSeries = (trendData?.series as AnyRecord[] | undefined) || [];
+  const replaySources = (replayData?.sources as AnyRecord[] | undefined) || [];
+  const latestRetrainRun = ((retrainData?.runs as AnyRecord[] | undefined) || [])[0];
 
   const serviceRows = [
     [
@@ -154,40 +128,34 @@ export default function PipelinePage() {
     ["FastAPI", "fastapi", "configured", "REST API & docs"],
     ["Grafana", "grafana", "configured", "Monitoring dashboards"]
   ];
-  const airflowConfigRows = [
-    {
-      label: "Executor",
-      keyName: "AIRFLOW__CORE__EXECUTOR",
-      value: systemData?.airflow?.executor || "unavailable"
-    },
-    {
-      label: "Retrain schedule",
-      keyName: "AIRFLOW_MODEL_RETRAIN_SCHEDULE",
-      value: systemData?.airflow?.model_retrain_schedule || "unavailable"
-    },
-    {
-      label: "Stream health schedule",
-      keyName: "AIRFLOW_STREAM_HEALTH_SCHEDULE",
-      value: systemData?.airflow?.stream_health_schedule || "unavailable"
-    },
-    {
-      label: "Flink checkpoint interval",
-      keyName: "FLINK_CHECKPOINT_INTERVAL",
-      value: systemData?.flink?.checkpoint_interval_ms
-        ? `${systemData.flink.checkpoint_interval_ms} ms`
-        : "unavailable"
-    },
-    {
-      label: "Reset script",
-      keyName: "PIPELINE_RESET_SCRIPT",
-      value: systemData?.pipeline?.full_realtime_reset_script || "unavailable"
-    },
-    {
-      label: "Reset log directory",
-      keyName: "PIPELINE_RESET_LOG_DIR",
-      value: systemData?.pipeline?.reset_log_dir || "unavailable"
-    }
-  ];
+  const throughputDetail =
+    throughputData?.status === "stale" && throughputData?.window_anchor
+      ? `Latest active window ended ${String(throughputData.window_anchor)}`
+      : `${throughputData?.event_count || 0} events / ${throughputData?.window || "5m"}`;
+  const flowState =
+    throughputData?.status === "ok"
+      ? "Flowing"
+      : throughputData?.status === "stale"
+        ? "Stalled"
+        : throughputData?.event_count
+          ? "Draining"
+          : "Blocked";
+  const flowDetail =
+    (throughputData?.sources as AnyRecord[] | undefined)
+      ?.map((source) => `${String(source.table)}: ${Number(source.event_count || 0).toLocaleString()}`)
+      .join(" | ") || "No recent source activity";
+  const latencyDetail =
+    latencyData?.status === "stale" && latencyData?.window_anchor
+      ? `Latest active window ended ${String(latencyData.window_anchor)}`
+      : statusText(latencyData);
+  const avgLatencyDetail =
+    latencyData?.status === "stale" && latencyData?.window_anchor
+      ? `Latest active window ended ${String(latencyData.window_anchor)}`
+      : `Recent window: ${String(latencyData?.window || "5m")}`;
+  const retrainState = String(latestRetrainRun?.status || "unavailable");
+  const retrainDetail = latestRetrainRun?.start_time
+    ? `Last run: ${String(latestRetrainRun.start_time)}`
+    : "No retrain run metadata yet";
 
   return (
     <div className="page-stack">
@@ -206,7 +174,7 @@ export default function PipelinePage() {
         <KpiCard
           label="Throughput"
           value={`${Number(throughputData?.events_per_second || 0).toFixed(2)} msg/s`}
-          detail={`${throughputData?.event_count || 0} events / ${throughputData?.window || "5m"}`}
+          detail={throughputDetail}
         />
         <KpiCard
           label="P95 latency"
@@ -215,7 +183,7 @@ export default function PipelinePage() {
               ? "N/A"
               : `${Number(latencyData.value_ms).toFixed(1)}ms`
           }
-          detail={statusText(latencyData)}
+          detail={latencyDetail}
         />
         <KpiCard
           label="Avg latency"
@@ -224,7 +192,7 @@ export default function PipelinePage() {
               ? "N/A"
               : `${Number(latencyData.latency_ms.avg).toFixed(1)}ms`
           }
-          detail={`Recent window: ${String(latencyData?.window || "5m")}`}
+          detail={avgLatencyDetail}
         />
         <KpiCard
           label="Prediction rows"
@@ -237,97 +205,18 @@ export default function PipelinePage() {
           detail={modelData?.model_name || "traffic-risk-model"}
         />
         <KpiCard
-          label="Retrain runs"
-          value={(retrainData?.runs as unknown[] | undefined)?.length || 0}
-          detail={statusText(retrainData)}
+          label="Stream flow"
+          value={flowState}
+          detail={flowDetail}
         />
         <KpiCard
-          label="Reset job"
-          value={String(resetData?.status || "not_started")}
-          detail={
-            resetData?.run_id
-              ? `Run: ${String(resetData.run_id)}`
-              : resetLaunchResult?.run_id
-                ? `Run: ${String(resetLaunchResult.run_id)}`
-                : "No active reset"
-          }
+          label="Retrain loop"
+          value={retrainState}
+          detail={retrainDetail}
         />
-      </section>
-
-      <section className="card">
-        <div className="card-header">
-          <h2 className="card-title">Cloud realtime reset</h2>
-          <RotateCcw size={18} />
-        </div>
-        <div style={{ display: "grid", gap: 12 }}>
-          <p className="muted" style={{ margin: 0 }}>
-            Trigger the end-to-end realtime reset script from the backend host and
-            follow the live execution log from this page.
-          </p>
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => resetMutation.mutate()}
-              disabled={resetMutation.isPending || resetData?.status === "running"}
-            >
-              {resetMutation.isPending
-                ? "Starting..."
-                : "Run full realtime reset on cloud VMs"}
-            </button>
-            <span className="status-pill">{resetStatusText}</span>
-          </div>
-          {resetMessage && (
-            <p className="muted" style={{ margin: 0 }}>
-              {resetMessage}
-            </p>
-          )}
-          <p className="mono muted" style={{ margin: 0 }}>
-            Script: {String(systemData?.pipeline?.full_realtime_reset_script || "unavailable")}
-          </p>
-          {resetData?.log_path && (
-            <p className="mono muted" style={{ margin: 0 }}>
-              {String(resetData.log_path)}
-            </p>
-          )}
-          {!!resetData?.last_log_lines?.length && (
-            <pre
-              className="mono"
-              style={{
-                margin: 0,
-                maxHeight: 220,
-                overflow: "auto",
-                padding: 12,
-                borderRadius: 10,
-                background: "rgba(2, 6, 23, 0.55)",
-                border: "1px solid rgba(148, 163, 184, 0.2)"
-              }}
-            >
-              {(resetData.last_log_lines as string[]).join("\n")}
-            </pre>
-          )}
-        </div>
       </section>
 
       <section className="grid pipeline-grid">
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Airflow configuration</h2>
-            <ServerCog size={18} />
-          </div>
-          <div className="side-list">
-            {airflowConfigRows.map((row) => (
-              <div className="row-item" key={row.keyName}>
-                <div className="row-top">
-                  <strong>{row.label}</strong>
-                </div>
-                <span className="mono muted">{row.keyName}</span>
-                <span className="mono">{String(row.value)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">System topology</h2>
@@ -370,23 +259,38 @@ export default function PipelinePage() {
 
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Checkpoint freshness</h2>
+            <h2 className="card-title">Source freshness</h2>
             <Database size={18} />
           </div>
           <div className="side-list">
-            {["flink", "gold"].map((key) => {
-              const item = checkpointData?.[key] || {};
-              return (
-                <div className="row-item" key={key}>
-                  <div className="row-top">
-                    <strong>{key.toUpperCase()}</strong>
-                    <span className="status-pill">{item.status || "unavailable"}</span>
+            {replaySources.length
+              ? replaySources.map((item) => (
+                  <div className="row-item" key={String(item.table)}>
+                    <div className="row-top">
+                      <strong>{String(item.table)}</strong>
+                      <span className="status-pill">{String(item.status || "unavailable")}</span>
+                    </div>
+                    <span className="muted">
+                      rows: {Number(item.row_count || 0).toLocaleString()} | latest event: {String(item.latest_event_time || "n/a")}
+                    </span>
+                    <span className="muted">
+                      latest insert: {String(item.latest_created_at || "n/a")}
+                    </span>
                   </div>
-                  <span className="muted">{item.path || "Not configured"}</span>
-                  <span className="muted">{item.last_modified || item.note || ""}</span>
-                </div>
-              );
-            })}
+                ))
+              : ["flink", "gold"].map((key) => {
+                  const item = checkpointData?.[key] || {};
+                  return (
+                    <div className="row-item" key={key}>
+                      <div className="row-top">
+                        <strong>{key.toUpperCase()}</strong>
+                        <span className="status-pill">{item.status || "unavailable"}</span>
+                      </div>
+                      <span className="muted">{item.path || "Not configured"}</span>
+                      <span className="muted">{item.last_modified || item.note || ""}</span>
+                    </div>
+                  );
+                })}
           </div>
         </div>
       </section>

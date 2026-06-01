@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import os
@@ -17,6 +17,8 @@ from psycopg2 import sql
 from app.core.config import get_settings
 from app.core.database import fetch_all, fetch_one
 from app.services.prediction_service import table_identifier
+
+LATENCY_SANITY_MAX_MS = 3_600_000.0
 
 
 def _prediction_table_name() -> str:
@@ -72,11 +74,46 @@ def _time_column(columns: set[str]) -> str | None:
     return None
 
 
+def _coerce_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _latest_table_timestamp(table_name: str, column: str) -> datetime | None:
+    query = sql.SQL(
+        """
+        SELECT MAX({time_column}) AS latest_time
+        FROM {table}
+        """
+    ).format(
+        table=table_identifier(table_name),
+        time_column=sql.Identifier(column),
+    )
+    row = fetch_one(query) or {}
+    return _coerce_utc_timestamp(row.get("latest_time"))
+
+
+def _window_anchor(
+    latest_times: list[datetime],
+    window_seconds: int,
+) -> tuple[datetime, bool]:
+    now = datetime.now(timezone.utc)
+    if not latest_times:
+        return now, True
+    latest_time = max(latest_times)
+    if latest_time >= now - timedelta(seconds=window_seconds):
+        return now, True
+    return latest_time, False
+
+
 def throughput(window: str) -> dict[str, Any]:
     """Return event throughput over the requested lookback window."""
     window_seconds = _parse_window_seconds(window)
-    total_count = 0
     sources = []
+    latest_times: list[datetime] = []
 
     for table_name in _prediction_table_names():
         columns = _columns_for_table(table_name)
@@ -88,33 +125,26 @@ def throughput(window: str) -> dict[str, Any]:
                     "status": "unavailable",
                     "event_count": 0,
                     "time_column": None,
+                    "latest_timestamp": None,
                 }
             )
             continue
-
-        query = sql.SQL(
-            """
-            SELECT COUNT(*)::BIGINT AS event_count
-            FROM {table}
-            WHERE {time_column} >= NOW() - (%(window_seconds)s * INTERVAL '1 second')
-            """
-        ).format(
-            table=table_identifier(table_name),
-            time_column=sql.Identifier(column),
-        )
-        row = fetch_one(query, {"window_seconds": window_seconds}) or {}
-        count = int(row.get("event_count") or 0)
-        total_count += count
+        latest_timestamp = _latest_table_timestamp(table_name, column)
+        if latest_timestamp:
+            latest_times.append(latest_timestamp)
         sources.append(
             {
                 "table": table_name,
-                "status": "ok" if count else "not_enough_data",
-                "event_count": count,
                 "time_column": column,
+                "latest_timestamp": (
+                    latest_timestamp.isoformat() if latest_timestamp else None
+                ),
             }
         )
 
-    if not sources or all(source["status"] == "unavailable" for source in sources):
+    if not sources or all(
+        source.get("status") == "unavailable" for source in sources
+    ):
         return {
             "status": "unavailable",
             "window": window,
@@ -124,10 +154,50 @@ def throughput(window: str) -> dict[str, Any]:
             "sources": [],
         }
 
+    window_anchor, anchored_to_now = _window_anchor(latest_times, window_seconds)
+    anchor_params = {
+        "window_seconds": window_seconds,
+        "window_anchor": window_anchor.replace(tzinfo=None),
+    }
+    total_count = 0
+    for source in sources:
+        if not source.get("time_column"):
+            continue
+        query = sql.SQL(
+            """
+            SELECT COUNT(*)::BIGINT AS event_count
+            FROM {table}
+            WHERE {time_column} >= (%(window_anchor)s - (%(window_seconds)s * INTERVAL '1 second'))
+              AND {time_column} <= %(window_anchor)s
+            """
+        ).format(
+            table=table_identifier(str(source["table"])),
+            time_column=sql.Identifier(str(source["time_column"])),
+        )
+        row = fetch_one(query, anchor_params) or {}
+        count = int(row.get("event_count") or 0)
+        total_count += count
+        source["event_count"] = count
+        source["status"] = (
+            "ok"
+            if count and anchored_to_now
+            else "stale"
+            if count
+            else "not_enough_data"
+        )
+
     return {
-        "status": "ok" if total_count else "not_enough_data",
+        "status": (
+            "ok"
+            if total_count and anchored_to_now
+            else "stale"
+            if total_count
+            else "not_enough_data"
+        ),
         "window": window,
         "window_seconds": window_seconds,
+        "window_anchor": window_anchor.isoformat(),
+        "is_live_window": anchored_to_now,
         "event_count": total_count,
         "events_per_minute": round(total_count / (window_seconds / 60.0), 4),
         "events_per_second": round(total_count / window_seconds, 4),
@@ -140,38 +210,55 @@ def latency(metric: str, window: str = "5m") -> dict[str, Any]:
     window_seconds = _parse_window_seconds(window)
     selects: list[sql.Composable] = []
     source_columns: dict[str, dict[str, Any]] = {}
+    latest_times: list[datetime] = []
     for table_name in _prediction_table_names():
         columns = _columns_for_table(table_name)
         latency_columns = [
             column
-            for column in ("end_to_end_latency_ms", "inference_latency_ms")
+            for column in (
+                "processing_latency_ms",
+                "inference_latency_ms",
+                "end_to_end_latency_ms",
+            )
             if column in columns
         ]
         time_column = _time_column(columns)
         if not latency_columns or not time_column:
             continue
         column = latency_columns[0]
+        latest_timestamp = _latest_table_timestamp(table_name, time_column)
+        if latest_timestamp:
+            latest_times.append(latest_timestamp)
         source_columns[table_name] = {
             "latency_columns": latency_columns,
             "time_column": time_column,
+            "latest_timestamp": (
+                latest_timestamp.isoformat() if latest_timestamp else None
+            ),
         }
+
+    if not source_columns:
+        return {"status": "unavailable", "metric": metric, "window": window, "columns": []}
+
+    window_anchor, anchored_to_now = _window_anchor(latest_times, window_seconds)
+    for table_name, metadata in source_columns.items():
         selects.append(
             sql.SQL(
                 """
                 SELECT {latency_column} AS latency_ms
                 FROM {table}
                 WHERE {latency_column} IS NOT NULL
-                  AND {time_column} >= NOW() - (%(window_seconds)s * INTERVAL '1 second')
+                  AND {latency_column} >= 0
+                  AND {latency_column} <= %(latency_sanity_max_ms)s
+                  AND {time_column} >= (%(window_anchor)s - (%(window_seconds)s * INTERVAL '1 second'))
+                  AND {time_column} <= %(window_anchor)s
                 """
             ).format(
                 table=table_identifier(table_name),
-                latency_column=sql.Identifier(column),
-                time_column=sql.Identifier(time_column),
+                latency_column=sql.Identifier(str(metadata["latency_columns"][0])),
+                time_column=sql.Identifier(str(metadata["time_column"])),
             )
         )
-
-    if not selects:
-        return {"status": "unavailable", "metric": metric, "window": window, "columns": []}
 
     query = sql.SQL(
         """
@@ -184,14 +271,29 @@ def latency(metric: str, window: str = "5m") -> dict[str, Any]:
         FROM ({union_query}) AS latency_samples
         """
     ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
-    row = fetch_one(query, {"window_seconds": window_seconds}) or {}
+    row = fetch_one(
+        query,
+        {
+            "latency_sanity_max_ms": LATENCY_SANITY_MAX_MS,
+            "window_seconds": window_seconds,
+            "window_anchor": window_anchor.replace(tzinfo=None),
+        },
+    ) or {}
     allowed = {"p50", "p95", "p99", "avg"}
     metric_key = metric if metric in allowed else "p95"
     return {
-        "status": "ok" if row.get("sample_count") else "not_enough_data",
+        "status": (
+            "ok"
+            if row.get("sample_count") and anchored_to_now
+            else "stale"
+            if row.get("sample_count")
+            else "not_enough_data"
+        ),
         "metric": metric_key,
         "window": window,
         "window_seconds": window_seconds,
+        "window_anchor": window_anchor.isoformat(),
+        "is_live_window": anchored_to_now,
         "value_ms": row.get(metric_key),
         "latency_ms": {
             "p50": row.get("p50"),

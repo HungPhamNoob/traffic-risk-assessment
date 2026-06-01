@@ -1,10 +1,13 @@
 from datetime import date
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
 BACKEND_PATH = Path(__file__).resolve().parents[2] / "dashboard" / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
+
+from psycopg2 import sql  # noqa: E402
 
 from app.services import analytics_service, pipeline_service  # noqa: E402
 
@@ -44,6 +47,28 @@ def test_analytics_empty_sources_return_empty_payload(monkeypatch):
     }
 
 
+def test_severity_distribution_returns_empty_when_query_fails(monkeypatch):
+    monkeypatch.setattr(
+        analytics_service,
+        "_mode_sources",
+        lambda mode=None: [
+            {
+                "table": sql.Identifier("traffic_risk_predictions"),
+                "severity_column": sql.Identifier("true_severity"),
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        analytics_service,
+        "fetch_all",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = analytics_service.severity_distribution("replay")
+
+    assert result == {"distribution": []}
+
+
 def test_throughput_handles_missing_prediction_table(monkeypatch):
     monkeypatch.setattr(pipeline_service, "_table_columns", lambda: set())
 
@@ -61,3 +86,26 @@ def test_latency_handles_missing_latency_columns(monkeypatch):
 
     assert result["status"] == "unavailable"
     assert result["columns"] == []
+
+
+def test_throughput_uses_latest_active_window_when_stream_is_stale(monkeypatch):
+    monkeypatch.setattr(
+        pipeline_service, "_prediction_table_names", lambda: ["traffic_risk_predictions"]
+    )
+    monkeypatch.setattr(
+        pipeline_service, "_columns_for_table", lambda table_name: {"created_at"}
+    )
+    monkeypatch.setattr(
+        pipeline_service,
+        "_latest_table_timestamp",
+        lambda table_name, column: datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        pipeline_service, "fetch_one", lambda *args, **kwargs: {"event_count": 25}
+    )
+
+    result = pipeline_service.throughput("5m")
+
+    assert result["status"] == "stale"
+    assert result["event_count"] == 25
+    assert result["is_live_window"] is False
