@@ -73,7 +73,7 @@ services:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
       - SSH_KEY=/run/secrets/google_compute_engine
-      - HUNG_SSH_USER=${HUNG_SSH_USER:-hung}
+      - HUNG_SSH_USER=${HUNG_SSH_USER:-runner}
       - NODE2_INTERNAL_IP=${NODE2_INTERNAL_IP:-10.128.0.5}
       - NODE3_INTERNAL_IP=${NODE3_INTERNAL_IP:-10.128.0.8}
     volumes:
@@ -262,7 +262,7 @@ services:
       - PIPELINE_RESET_SCRIPT=/app/scripts/gcp/dashboard-full-realtime-reset-run.sh
       - PIPELINE_RUNTIME_ENV_FILE=/app/.env.cloud
       - SSH_KEY=/run/secrets/google_compute_engine
-      - SSH_USER=${HUNG_SSH_USER:-hung}
+      - SSH_USER=${HUNG_SSH_USER:-runner}
     depends_on:
       postgres:
         condition: service_healthy

@@ -515,10 +515,16 @@ traffic_api_request_latency_seconds{method, path}
 
 ### Key Features
 
-- **Non-destructive deployment:** Uses `git pull --ff-only` to update code; runs `docker compose up -d --build` which restarts only changed services
+- **Non-destructive deployment:** GitHub Actions creates a source archive from the pushed commit, syncs it into `/opt/traffic` with `rsync`, and then runs the node-specific launch scripts so stateful services keep their data volumes
 - **Safe Node 1 restart:** Skips restart if active H2O training process is detected (PID file check)
 - **No full reset:** Preserves Kafka topics, Flink checkpoints, PostgreSQL data, and MLflow models
+- **Runtime SSH consistency:** CI/CD must write the same `HUNG_SSH_USER` that matches the private key copied into Node 1; otherwise Airflow cannot SSH to Node 3 for `model_retrain_hourly`
 - **Concurrency:** `cancel-in-progress: true` prevents overlapping deployments
+
+### Deployment Safety Notes
+
+- Node 1/2/3 deploy helpers must invoke `/opt/traffic/scripts/gcp/run-node*.sh` with absolute paths after syncing code into `/opt/traffic`; invoking `scripts/gcp/run-node*.sh` from an unrelated working directory can fail even when the files exist on disk.
+- CI/CD source sync should exclude generated frontend directories such as `dashboard/frontend/node_modules/` and `dashboard/frontend/.next/` so `rsync --delete` does not fight with the running Next.js container.
 
 ### Deployment Commands (per Node)
 
@@ -560,6 +566,7 @@ POSTGRES_HOST=10.128.0.4
 NODE1_INTERNAL_IP=10.128.0.4
 NODE2_INTERNAL_IP=10.128.0.5
 NODE3_INTERNAL_IP=10.128.0.8
+HUNG_SSH_USER=runner            # Must match the private key mounted into Node 1 / Airflow
 
 # Streaming
 STREAM_LOOP_FOREVER=false          # Single-pass US replay

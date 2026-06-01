@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     postgres_db: str = Field(default="capstone_db", alias="POSTGRES_DB")
     postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+    postgres_pool_min_conn: int = Field(default=1, alias="PG_POOL_MIN_CONN")
+    postgres_pool_max_conn: int = Field(default=8, alias="PG_POOL_MAX_CONN")
     prediction_table: str = Field(
         default="traffic_risk_predictions",
         alias="POSTGRES_PREDICTION_TABLE",

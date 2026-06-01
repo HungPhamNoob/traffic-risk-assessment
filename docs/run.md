@@ -266,9 +266,15 @@ Required GitHub secrets:
 
 Optional GitHub variables:
 
-- `HUNG_SSH_USER=hung`
+- `HUNG_SSH_USER=runner`
 - `DEPLOY_STREAMING=true`
 - `DEPLOY_BATCH=true`
+
+`HUNG_SSH_USER` must match the private key stored in `HUNG_SSH_PRIVATE_KEY`.
+The current CI/CD flow copies that private key into Node 1 and Airflow uses it
+for inter-node SSH to Node 3 during retraining. If the user/key pair does not
+match, `model_retrain_hourly` will stay in `up_for_retry` or `failed` because
+Airflow cannot SSH into Node 3.
 
 If CI fails with `node3-batch not found`, run:
 
@@ -436,6 +442,16 @@ Reset replay/checkpoint state before a clean streaming demo:
 make -f makefile/gcp/Makefile reset-realtime
 ```
 
+Replay the US dataset again from the beginning of the 2020 split:
+
+```bash
+make -f makefile/gcp/Makefile full-reset-run-realtime
+```
+
+That command resets PostgreSQL realtime tables, Kafka/Flink state, Spark local
+state, Silver/Gold retrain outputs, and then restarts Node 2 plus Node 3 so
+the replay starts again from row 0 of `us_pipeline_from_2020.csv`.
+
 Restart Node 2 and Node 3 as a pair:
 
 ```bash
@@ -451,6 +467,7 @@ gcloud compute ssh node3-batch --zone=us-central1-a --project=big-data-group-4 -
 - Airflow unhealthy after restart: the compose command uses `airflow db migrate || airflow db init`; check `docker logs node1-airflow`.
 - Flink import fails: verify `PYTHONPATH=/opt/traffic` and that `processing.feature_engineering` exists on the VM.
 - Backend returns empty JSON: this is valid if `traffic_risk_predictions` has no rows yet. Run streaming replay first.
+- Retraining stays `queued`, `up_for_retry`, or `failed`: verify that `HUNG_SSH_USER` matches the private key mounted at `/run/secrets/google_compute_engine` inside `node1-airflow`, then test `ssh -i /run/secrets/google_compute_engine ${HUNG_SSH_USER}@${NODE3_INTERNAL_IP} hostname` from the container.
 - Local Docker cannot stop containers: repair Snap AppArmor as shown in Section 1.
 
 ## 11. Git Ignore Notes

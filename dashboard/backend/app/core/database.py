@@ -21,8 +21,8 @@ def get_pg_pool() -> SimpleConnectionPool:
     if PG_POOL is None:
         settings = get_settings()
         PG_POOL = SimpleConnectionPool(
-            minconn=1,
-            maxconn=4,
+            minconn=max(1, settings.postgres_pool_min_conn),
+            maxconn=max(1, settings.postgres_pool_max_conn),
             host=settings.postgres_host,
             port=settings.postgres_port,
             dbname=settings.postgres_db,
@@ -36,13 +36,30 @@ def get_pg_pool() -> SimpleConnectionPool:
 def get_connection():
     """Borrow a PostgreSQL connection from the shared pool."""
     pool = get_pg_pool()
-    connection = pool.getconn()
+    borrowed_from_pool = True
+    try:
+        connection = pool.getconn()
+    except psycopg2.pool.PoolError:
+        settings = get_settings()
+        # Fall back to a direct connection instead of returning HTTP 500 when
+        # a burst of dashboard requests temporarily exhausts the shared pool.
+        connection = psycopg2.connect(
+            host=settings.postgres_host,
+            port=settings.postgres_port,
+            dbname=settings.postgres_db,
+            user=settings.postgres_user,
+            password=settings.postgres_password,
+        )
+        borrowed_from_pool = False
     try:
         yield connection
     finally:
-        try:
-            pool.putconn(connection)
-        except Exception:
+        if borrowed_from_pool:
+            try:
+                pool.putconn(connection)
+            except Exception:
+                connection.close()
+        else:
             connection.close()
 
 

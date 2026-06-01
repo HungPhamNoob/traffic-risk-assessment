@@ -63,7 +63,7 @@ with DAG(
         bash_command=r"""
             echo "=== [Airflow] Spark Silver -> Gold ==="
             SSH_KEY_PATH="${SSH_KEY:-/run/secrets/google_compute_engine}"
-            SSH_TARGET="${HUNG_SSH_USER:-hung}@${NODE3_INTERNAL_IP:-10.128.0.8}"
+            SSH_TARGET="${HUNG_SSH_USER:-runner}@${NODE3_INTERNAL_IP:-10.128.0.8}"
             if [ ! -f "${SSH_KEY_PATH}" ]; then
                 echo "ERROR: SSH key not found at ${SSH_KEY_PATH}"
                 exit 1

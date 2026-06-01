@@ -216,7 +216,7 @@ jobs:
           echo "=== Uploading .env.cloud to GCS ==="
           echo '${{ secrets.ENV_CLOUD }}' > .env.cloud
           SSH_USER="${{ vars.HUNG_SSH_USER }}"
-          SSH_USER="${SSH_USER:-hung}"
+          SSH_USER="${SSH_USER:-runner}"
           {
             printf '\n# CI/CD deployment overrides. These values keep stale GitHub secret content from pointing VMs at retired buckets.\n'
             NODE1_INTERNAL_IP="$(gcloud compute instances describe node1-control --zone="$GCP_ZONE" --project="$GCP_PROJECT_ID" --format='get(networkInterfaces[0].networkIP)')"
@@ -229,6 +229,7 @@ jobs:
             printf 'NODE1_INTERNAL_IP=%s\n' "$NODE1_INTERNAL_IP"
             printf 'NODE2_INTERNAL_IP=%s\n' "$NODE2_INTERNAL_IP"
             printf 'NODE3_INTERNAL_IP=%s\n' "$NODE3_INTERNAL_IP"
+            printf 'HUNG_SSH_USER=%s\n' "$SSH_USER"
             printf 'POSTGRES_HOST=%s\n' "$NODE1_INTERNAL_IP"
             printf 'POSTGRES_US_PREDICTION_TABLE=traffic_risk_predictions\n'
             printf 'POSTGRES_TOMTOM_TABLE=traffic_tomtom_incidents\n'
@@ -416,6 +417,8 @@ jobs:
               --exclude '.venv-node3/' \
               --exclude 'secrets/' \
               --exclude 'data/' \
+              --exclude 'dashboard/frontend/node_modules/' \
+              --exclude 'dashboard/frontend/.next/' \
               --exclude 'logs/' \
               --exclude '__pycache__/' \
               "${DEPLOY_SRC_DIR}/" /opt/traffic/
@@ -434,7 +437,8 @@ jobs:
                 echo "Node 1 deployment is considered successful because the active full-training run owns MLflow until it completes."
                 exit 0
             else
-                sudo -E bash scripts/gcp/run-node1.sh
+                cd /opt/traffic
+                sudo -E bash /opt/traffic/scripts/gcp/run-node1.sh
             fi
 
             echo "=== Verifying Node 1 containers are running ==="
@@ -583,6 +587,8 @@ jobs:
               --exclude '.venv-node3/' \
               --exclude 'secrets/' \
               --exclude 'data/' \
+              --exclude 'dashboard/frontend/node_modules/' \
+              --exclude 'dashboard/frontend/.next/' \
               --exclude 'logs/' \
               --exclude '__pycache__/' \
               "${DEPLOY_SRC_DIR}/" /opt/traffic/
@@ -591,7 +597,8 @@ jobs:
             echo "=== Restarting streaming services ==="
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env
-            sudo -E bash scripts/gcp/run-node2.sh
+            cd /opt/traffic
+            sudo -E bash /opt/traffic/scripts/gcp/run-node2.sh
 
             echo "=== Verifying Node 2 containers are running ==="
             cd /opt/traffic/deployment/node2-streaming
@@ -729,6 +736,8 @@ jobs:
               --exclude '.venv-node3/' \
               --exclude 'secrets/' \
               --exclude 'data/' \
+              --exclude 'dashboard/frontend/node_modules/' \
+              --exclude 'dashboard/frontend/.next/' \
               --exclude 'logs/' \
               --exclude '__pycache__/' \
               "${DEPLOY_SRC_DIR}/" /opt/traffic/
@@ -743,7 +752,8 @@ jobs:
             echo "=== Restarting batch services ==="
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env.cloud
             sudo install -D -m 600 ~/traffic.env.cloud /opt/traffic/.env
-            sudo -E bash scripts/gcp/run-node3.sh
+            cd /opt/traffic
+            sudo -E bash /opt/traffic/scripts/gcp/run-node3.sh
 
             echo "=== Verifying Node 3 containers are running ==="
             cd /opt/traffic/deployment/node3-batch
