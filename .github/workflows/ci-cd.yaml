@@ -320,6 +320,16 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
+            "${SSH_USER}@${NODE1_IP}" 'if docker ps --format "{{.Names}}" | grep -q "^node1-airflow-db$"; then active_runs="$(docker exec node1-airflow-db psql -U airflow -d airflow -Atc "SELECT COUNT(*) FROM dag_run WHERE dag_id='\''model_retrain_hourly'\'' AND state='\''running'\'';" 2>/dev/null || echo 0)"; if [ "${active_runs}" != "0" ]; then echo "NODE1_AIRFLOW_RETRAIN_ACTIVE ${active_runs}"; exit 0; fi; fi; exit 1'; then
+            echo "Airflow retraining is active on Node 1. Skipping deploy sync/restart to avoid interrupting the current pipeline run."
+            exit 0
+          fi
+
+          if ssh -i ~/.ssh/hung_vm_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
             "${SSH_USER}@${NODE1_IP}" 'TRAINING_PID_FILE="/opt/traffic/logs/cloud_h2o_before_2020.pid"; if [ -f "${TRAINING_PID_FILE}" ] && ps -p "$(cat "${TRAINING_PID_FILE}")" >/dev/null 2>&1; then echo "NODE1_BOOTSTRAP_ACTIVE $(cat "${TRAINING_PID_FILE}")"; exit 0; fi; exit 1'; then
             echo "Node 1 bootstrap training is already active. Skipping deploy sync/restart to avoid interrupting it."
             exit 0
