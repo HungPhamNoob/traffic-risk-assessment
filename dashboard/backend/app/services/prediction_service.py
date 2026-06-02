@@ -30,6 +30,7 @@ MapMode = Literal["replay", "live", "full"]
 OVERVIEW_CACHE_TTL_SECONDS = 20.0
 MAP_POINTS_CACHE_TTL_SECONDS = 15.0
 LATEST_PREDICTIONS_CACHE_TTL_SECONDS = 15.0
+OVERVIEW_RISK_SAMPLE_LIMIT = 5_000
 
 
 def _public_table_name(value: str) -> str:
@@ -64,6 +65,84 @@ def _table_exists(table_name: str) -> bool:
     """
     row = fetch_one(query, {"table_name": _public_table_name(table_name)})
     return bool(row and row.get("exists"))
+
+
+def _table_row_estimate(table_name: str) -> int:
+    row = fetch_one(
+        """
+        SELECT COALESCE(c.reltuples, 0)::BIGINT AS row_estimate
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = %(table_name)s
+        """,
+        {"table_name": _public_table_name(table_name)},
+    )
+    return max(0, int(row.get("row_estimate") or 0)) if row else 0
+
+
+def _load_overview_source(
+    *,
+    table_name: str,
+    table: sql.Identifier,
+    risk_score: sql.Composable,
+) -> dict[str, Any]:
+    """Return fast source metrics without full-table scans on large replay tables."""
+    total_estimate = _table_row_estimate(table_name)
+    if total_estimate <= OVERVIEW_RISK_SAMPLE_LIMIT:
+        total_row = fetch_one(
+            sql.SQL("SELECT COUNT(*)::BIGINT AS total_events FROM {table}").format(
+                table=table
+            )
+        )
+        total_events = int(total_row.get("total_events") or 0) if total_row else 0
+    else:
+        total_events = total_estimate
+
+    sample_row = fetch_one(
+        sql.SQL(
+            """
+            WITH recent AS (
+                SELECT
+                    event_time,
+                    {risk_score} AS risk_score
+                FROM {table}
+                WHERE event_time IS NOT NULL
+                ORDER BY event_time DESC NULLS LAST
+                LIMIT %(sample_limit)s
+            )
+            SELECT
+                COUNT(*)::BIGINT AS sample_events,
+                COALESCE(SUM(CASE WHEN risk_score >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_events,
+                COALESCE(SUM(risk_score), 0)::DOUBLE PRECISION AS risk_score_sum,
+                MAX(event_time) AS latest_event_time
+            FROM recent
+            WHERE risk_score IS NOT NULL
+            """
+        ).format(risk_score=risk_score, table=table),
+        {"sample_limit": OVERVIEW_RISK_SAMPLE_LIMIT},
+    )
+    sample_events = int(sample_row.get("sample_events") or 0) if sample_row else 0
+    sample_high_risk = (
+        int(sample_row.get("high_risk_events") or 0) if sample_row else 0
+    )
+    sample_risk_sum = (
+        float(sample_row.get("risk_score_sum") or 0.0) if sample_row else 0.0
+    )
+    avg_risk_score = sample_risk_sum / sample_events if sample_events else 0.0
+    high_risk_events = (
+        int(round((sample_high_risk / sample_events) * total_events))
+        if sample_events
+        else 0
+    )
+
+    return {
+        "total_events": total_events,
+        "high_risk_events": high_risk_events,
+        "avg_risk_score": avg_risk_score,
+        "latest_event_time": (
+            sample_row.get("latest_event_time") if sample_row else None
+        ),
+    }
 
 
 def _normalize_mode(mode: str | None) -> MapMode:
@@ -127,76 +206,56 @@ def overview_summary(mode: str | None = None) -> dict[str, Any]:
 def _load_overview_summary(normalized_mode: MapMode) -> dict[str, Any]:
     """Load high-level metrics for the selected dashboard mode."""
     settings = get_settings()
-    selects: list[sql.Composable] = []
+    source_metrics: list[dict[str, Any]] = []
     us_risk_score = effective_us_risk_score_expr()
     tomtom_risk_score = effective_tomtom_risk_score_expr()
 
     if normalized_mode in {"replay", "full"} and _table_exists(
         settings.us_prediction_table
     ):
-        selects.append(
-            sql.SQL(
-                """
-                SELECT
-                    COUNT(*)::BIGINT AS total_events,
-                    COALESCE(SUM(CASE WHEN {risk_score} >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_events,
-                    COALESCE(SUM({risk_score}), 0)::DOUBLE PRECISION AS risk_score_sum,
-                    MAX(event_time) AS latest_event_time
-                FROM {table}
-                """
-            ).format(
-                risk_score=us_risk_score,
+        source_metrics.append(
+            _load_overview_source(
+                table_name=settings.us_prediction_table,
                 table=us_table_identifier(),
+                risk_score=us_risk_score,
             )
         )
     if normalized_mode in {"live", "full"} and _table_exists(
         settings.tomtom_events_table
     ):
-        selects.append(
-            sql.SQL(
-                """
-                SELECT
-                    COUNT(*)::BIGINT AS total_events,
-                    COALESCE(SUM(CASE WHEN {risk_score} >= 0.7 THEN 1 ELSE 0 END), 0)::BIGINT AS high_risk_events,
-                    COALESCE(SUM({risk_score}), 0)::DOUBLE PRECISION AS risk_score_sum,
-                    MAX(event_time) AS latest_event_time
-                FROM {table}
-                """
-            ).format(
-                risk_score=tomtom_risk_score,
+        source_metrics.append(
+            _load_overview_source(
+                table_name=settings.tomtom_events_table,
                 table=tomtom_table_identifier(),
+                risk_score=tomtom_risk_score,
             )
         )
 
-    row = None
-    if selects:
-        query = sql.SQL(
-            """
-            SELECT
-                COALESCE(SUM(total_events), 0)::BIGINT AS total_events,
-                COALESCE(SUM(high_risk_events), 0)::BIGINT AS high_risk_events,
-                CASE
-                    WHEN COALESCE(SUM(total_events), 0) = 0 THEN 0::DOUBLE PRECISION
-                    ELSE COALESCE(SUM(risk_score_sum), 0)::DOUBLE PRECISION
-                        / SUM(total_events)::DOUBLE PRECISION
-                END AS avg_risk_score,
-                MAX(latest_event_time) AS latest_event_time
-            FROM ({union_query}) AS overview_events
-            """
-        ).format(union_query=sql.SQL(" UNION ALL ").join(selects))
-        row = fetch_one(query)
+    total_events = sum(int(row["total_events"]) for row in source_metrics)
+    high_risk_events = sum(int(row["high_risk_events"]) for row in source_metrics)
+    avg_risk_score = (
+        sum(
+            float(row["avg_risk_score"]) * int(row["total_events"])
+            for row in source_metrics
+        )
+        / total_events
+        if total_events
+        else 0.0
+    )
+    latest_event_time = max(
+        (row["latest_event_time"] for row in source_metrics if row["latest_event_time"]),
+        default=None,
+    )
 
     # Fetch latest model performance metrics from MLflow.
     model_metrics = _fetch_latest_model_metrics()
 
     return {
-        "total_events": row["total_events"] if row else 0,
-        "high_risk_events": row["high_risk_events"] if row else 0,
-        "avg_risk_score": round(float(row["avg_risk_score"]), 4) if row else 0,
+        "total_events": total_events,
+        "high_risk_events": high_risk_events,
+        "avg_risk_score": round(avg_risk_score, 4),
         "latest_event_time": (
-            row["latest_event_time"].isoformat()
-            if row and row["latest_event_time"]
-            else None
+            latest_event_time.isoformat() if latest_event_time else None
         ),
         "latest_model_version": (
             "TomTom rule-based severity"

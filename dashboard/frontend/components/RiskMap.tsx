@@ -19,13 +19,34 @@ const COUNTRY_FEATURES = feature(
 const MAP_STYLE: StyleSpecification = {
   version: 8,
   name: "traffic-risk-local",
-  sources: {},
+  sources: {
+    "carto-dark": {
+      type: "raster",
+      tiles: [
+        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+        "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+      ],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors © CARTO"
+    }
+  },
   layers: [
     {
       id: "background",
       type: "background",
       paint: {
         "background-color": "#081423"
+      }
+    },
+    {
+      id: "carto-dark",
+      type: "raster",
+      source: "carto-dark",
+      paint: {
+        "raster-opacity": 0.95,
+        "raster-saturation": -0.35,
+        "raster-contrast": 0.15
       }
     }
   ]
@@ -180,8 +201,8 @@ const RiskMapInner = memo(function RiskMapInner({
       pickable: false,
       stroked: false,
       filled: true,
-      opacity: 0.98,
-      getFillColor: [19, 42, 66, 240],
+      opacity: 0.18,
+      getFillColor: [8, 20, 35, 95],
       getLineColor: [0, 0, 0, 0],
       lineWidthMinPixels: 0
     }),

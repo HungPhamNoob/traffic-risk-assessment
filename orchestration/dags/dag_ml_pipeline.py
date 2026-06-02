@@ -76,7 +76,7 @@ with DAG(
                 -o ConnectTimeout=15 \
                 "${SSH_TARGET}" "
                 cd /opt/traffic &&
-                bash scripts/gcp/run-node3.sh
+                NODE3_LOCK_BUSY_EXIT_CODE=0 bash scripts/gcp/run-node3.sh
             "
         """,
         execution_timeout=timedelta(hours=6),

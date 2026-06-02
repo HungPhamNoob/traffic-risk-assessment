@@ -264,6 +264,7 @@ jobs:
             printf 'TOMTOM_FLUSH_INTERVAL_SECONDS=15\n'
             printf 'STREAM_LOOP_FOREVER=true\n'
             printf 'FASTAPI_SSH_KEY_PATH=/opt/traffic/secrets/inter_node_google_compute_engine\n'
+            printf 'AIRFLOW_MODEL_RETRAIN_SCHEDULE=*/15 * * * *\n'
             printf 'TOMTOM_BBOXES=US:New_York:-74.25909,40.477399,-73.700181,40.917577\n'
           } >> .env.cloud
           printf '\nFASTAPI_IMAGE=us-central1-docker.pkg.dev/%s/capstone/fastapi:latest\n' "$GCP_PROJECT_ID" >> .env.cloud
